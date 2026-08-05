@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +40,7 @@ func testServer(t *testing.T, upstream string, ids ...string) *server {
 	return &server{
 		pool:     pool,
 		sticky:   newSticky(),
+		stats:    newStats(),
 		upstream: upstream,
 		client:   &http.Client{},
 		log:      slog.New(slog.DiscardHandler),
@@ -233,4 +235,22 @@ func TestWebsocketHandshakeGets426(t *testing.T) {
 	if rec.Body.Len() != 0 {
 		t.Fatalf("426 must carry no body, got %q", rec.Body)
 	}
+}
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func replayUpstream(t *testing.T, s *server, stream string) *httptest.ResponseRecorder {
+	t.Helper()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, stream)
+	}))
+	t.Cleanup(upstream.Close)
+	s.upstream = upstream.URL
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))
+	req.Header.Set("session-id", "thread-1")
+	s.responses(rec, req)
+	return rec
 }

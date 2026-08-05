@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -32,10 +33,30 @@ type Account struct {
 	inflight    chan struct{}
 	lastRefresh error
 
-	cooldown time.Time
-	dead     string
-	pressure float64
-	lastUsed time.Time
+	cooldown  time.Time
+	dead      string
+	primary   window
+	secondary window
+	lastUsed  time.Time
+}
+
+type window struct {
+	usedPercent float64
+	minutes     int
+	resetsAt    time.Time
+	seenAt      time.Time
+}
+
+func (w window) known() bool { return !w.seenAt.IsZero() }
+
+func (a *Account) pressure() float64 {
+	return math.Max(a.primary.usedPercent, a.secondary.usedPercent)
+}
+
+func (a *Account) health() (primary, secondary window, cooldown time.Time, reauth string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.primary, a.secondary, a.cooldown, a.dead
 }
 
 type persistedAccount Account

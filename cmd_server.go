@@ -6,11 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 const serverHelp = `Serve the balancing proxy.
@@ -43,6 +46,7 @@ func serverCmd(args []string) error {
 	key := fs.String("key", os.Getenv("CODEX_BALANCER_KEY"), "bearer key clients must present (env CODEX_BALANCER_KEY)")
 	insecure := fs.Bool("no-auth", false, "serve without a bearer key; any local process can spend your quota")
 	jsonLogs := fs.Bool("json", false, "emit logs as JSON")
+	dash := fs.Bool("tui", false, "show the live dashboard instead of logging to stderr")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -61,11 +65,13 @@ func serverCmd(args []string) error {
 		return fmt.Errorf("no accounts in %s; add one with: codex-balancer accounts add", *path)
 	}
 
-	log := newLogger(*jsonLogs)
+	stats := newStats()
+	log := newLogger(*jsonLogs, *dash)
 	sticky := newSticky()
 	srv := &server{
 		pool:     pool,
 		sticky:   sticky,
+		stats:    stats,
 		upstream: *upstream,
 		key:      *key,
 		client:   newProxyClient(),
@@ -90,11 +96,32 @@ func serverCmd(args []string) error {
 		httpServer.Shutdown(shutdown)
 	}()
 
-	log.Info("listening", "addr", *addr, "accounts", len(pool.accounts), "upstream", *upstream)
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	listener, err := net.Listen("tcp", *addr)
+	if err != nil {
 		return err
 	}
-	return nil
+
+	serving := make(chan error, 1)
+	go func() {
+		err := httpServer.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		serving <- err
+	}()
+
+	if *dash {
+		board := dashboard{pool: pool, stats: stats, addr: listener.Addr().String()}
+		if _, err := tea.NewProgram(board, tea.WithContext(ctx)).Run(); err != nil &&
+			!errors.Is(err, context.Canceled) {
+			return err
+		}
+		httpServer.Shutdown(context.Background())
+		return <-serving
+	}
+
+	log.Info("listening", "addr", listener.Addr().String(), "accounts", len(pool.accounts), "upstream", *upstream)
+	return <-serving
 }
 
 func sweepSticky(ctx context.Context, s *Sticky) {
@@ -110,9 +137,13 @@ func sweepSticky(ctx context.Context, s *Sticky) {
 	}
 }
 
-func newLogger(asJSON bool) *slog.Logger {
-	if asJSON {
+func newLogger(asJSON, quiet bool) *slog.Logger {
+	switch {
+	case quiet:
+		return slog.New(slog.DiscardHandler)
+	case asJSON:
 		return slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	default:
+		return slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, nil))
 }

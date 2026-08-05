@@ -32,8 +32,17 @@ Treat the balancer as the owner of every account you give it.
 
 ```sh
 export CODEX_BALANCER_KEY=$(openssl rand -hex 16)
-codex-balancer server
+codex-balancer server         # logs to stderr
+codex-balancer server -tui    # live dashboard
 ```
+
+The dashboard shows each account's two rate limit windows as gauges with their
+reset countdowns, a sparkline of the last twelve minutes, which thread is
+pinned to which account, token counts, failovers and a rolling event feed.
+
+Limits come from the headers on every upstream reply, so they are exact but
+only move when a turn runs. A gauge that has not been refreshed for over a
+minute says how old it is.
 
 ## Point Codex at it
 

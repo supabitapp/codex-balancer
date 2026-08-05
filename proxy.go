@@ -28,6 +28,7 @@ func newProxyClient() *http.Client {
 type server struct {
 	pool     *Pool
 	sticky   *Sticky
+	stats    *Stats
 	upstream string
 	key      string
 	client   *http.Client
@@ -101,9 +102,11 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		sent := time.Now()
 		resp, err := s.forward(r, body, account)
 		if err != nil {
 			s.log.Warn("upstream unreachable", "account", id, "error", err)
+			s.stats.failedOver(id, "unreachable")
 			account.failed(attempt)
 			skip[id] = true
 			continue
@@ -125,17 +128,21 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			skip[id] = true
 			if status == http.StatusTooManyRequests {
 				s.log.Info("rate limited", "account", id)
+				account.observe(resp.Header)
 				account.rateLimited(resp.Header, attempt)
+				s.stats.rateLimited(id)
 			} else {
 				s.log.Warn("upstream refused the turn", "account", id, "status", status)
 				account.failed(attempt)
+				s.stats.failedOver(id, resp.Status)
 			}
 			continue
 		}
 
 		account.observe(resp.Header)
 		s.sticky.bind(key, id)
-		s.relay(w, resp)
+		s.stats.routed(key, id)
+		s.relay(w, resp, key, id, sent)
 		return
 	}
 	writeError(w, http.StatusServiceUnavailable, "every account failed this turn")
@@ -177,12 +184,14 @@ func (s *server) forward(r *http.Request, body []byte, account *Account) (*http.
 	return s.client.Do(req)
 }
 
-func (s *server) relay(w http.ResponseWriter, resp *http.Response) {
+func (s *server) relay(w http.ResponseWriter, resp *http.Response, thread, account string, sent time.Time) {
 	defer resp.Body.Close()
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
 	control := http.NewResponseController(w)
+	var seen sniffer
+	var ttfb time.Duration
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := resp.Body.Read(buf)
@@ -191,11 +200,16 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response) {
 				return
 			}
 			control.Flush()
+			if ttfb == 0 {
+				ttfb = time.Since(sent)
+			}
+			seen.feed(buf[:n])
 		}
 		if err != nil {
 			if err != io.EOF {
 				s.log.Warn("stream cut short", "error", err)
 			}
+			s.stats.completed(thread, account, seen.usage, ttfb)
 			return
 		}
 	}

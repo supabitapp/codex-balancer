@@ -126,7 +126,7 @@ func (a *Account) roomierThan(b *Account) bool {
 func (a *Account) load() (pressure float64, lastUsed time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.pressure, a.lastUsed
+	return a.pressure(), a.lastUsed
 }
 
 func (p *Pool) sorted() []*Account {
@@ -135,23 +135,33 @@ func (p *Pool) sorted() []*Account {
 	return out
 }
 
-var usedPercentHeaders = []string{
-	"x-codex-primary-used-percent",
-	"x-codex-secondary-primary-used-percent",
+func readWindow(h http.Header, prefix string) window {
+	used, err := strconv.ParseFloat(h.Get(prefix+"-used-percent"), 64)
+	if err != nil {
+		return window{}
+	}
+	w := window{usedPercent: used, seenAt: time.Now()}
+	if minutes, err := strconv.Atoi(h.Get(prefix + "-window-minutes")); err == nil {
+		w.minutes = minutes
+	}
+	if secs, err := strconv.ParseInt(h.Get(prefix+"-reset-at"), 10, 64); err == nil {
+		w.resetsAt = time.Unix(secs, 0)
+	}
+	return w
 }
 
 func (a *Account) observe(h http.Header) {
-	pressure, seen := 0.0, false
-	for _, name := range usedPercentHeaders {
-		if v, err := strconv.ParseFloat(h.Get(name), 64); err == nil {
-			pressure, seen = math.Max(pressure, v), true
-		}
-	}
+	primary := readWindow(h, "x-codex-primary")
+	secondary := readWindow(h, "x-codex-secondary-primary")
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.lastUsed = time.Now()
-	if seen {
-		a.pressure = pressure
+	if primary.known() {
+		a.primary = primary
+	}
+	if secondary.known() {
+		a.secondary = secondary
 	}
 }
 
@@ -162,7 +172,6 @@ func (a *Account) rateLimited(h http.Header, attempt int) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.pressure = 100
 	a.cooldown = until
 }
 
