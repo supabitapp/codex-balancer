@@ -42,8 +42,11 @@ The dashboard shows each account's two rate limit windows as gauges with their
 reset countdowns, a sparkline of the last twelve minutes, which conversation is
 pinned where, and a rolling event feed.
 
-Every upstream reply carries the current limits, so the gauges are exact as of
-the last turn that account served. They do not move while it is idle.
+Limits come from two places. Every upstream reply carries them, and every couple
+of minutes the balancer reads `backend-api/wham/usage` for each account, which
+costs no quota. So the gauges keep moving while you are idle, and an account
+parked by a 429 comes back the moment upstream says its window has room rather
+than when the reset header guessed. `-poll 0` turns the reads off.
 
 ## Point Codex at it
 

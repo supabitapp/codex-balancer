@@ -12,9 +12,18 @@ var usageEndpoint = "https://chatgpt.com/backend-api/wham/usage"
 
 type usagePayload struct {
 	RateLimit struct {
+		LimitReached    *bool       `json:"limit_reached"`
 		PrimaryWindow   usageWindow `json:"primary_window"`
 		SecondaryWindow usageWindow `json:"secondary_window"`
 	} `json:"rate_limit"`
+}
+
+func (p usagePayload) spent() bool {
+	if p.RateLimit.LimitReached != nil {
+		return *p.RateLimit.LimitReached
+	}
+	return p.RateLimit.PrimaryWindow.window().usedPercent >= 100 ||
+		p.RateLimit.SecondaryWindow.window().usedPercent >= 100
 }
 
 type usageWindow struct {
@@ -66,7 +75,7 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return err
 	}
-	account.adopt(payload.RateLimit.PrimaryWindow.window(), payload.RateLimit.SecondaryWindow.window())
+	account.adopt(payload.RateLimit.PrimaryWindow.window(), payload.RateLimit.SecondaryWindow.window(), payload.spent())
 	return nil
 }
 
@@ -77,9 +86,7 @@ func (s *server) reauthorize(account *Account) error {
 	return nil
 }
 
-// adopt records freshly polled windows and lifts a cooldown the moment upstream
-// says the window that caused it has room again.
-func (a *Account) adopt(primary, secondary window) {
+func (a *Account) adopt(primary, secondary window, spent bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if primary.known() {
@@ -88,7 +95,7 @@ func (a *Account) adopt(primary, secondary window) {
 	if secondary.known() {
 		a.secondary = secondary
 	}
-	if a.dead == "" && !a.cooldown.IsZero() && a.pressure() < 100 {
+	if a.dead == "" && !spent {
 		a.cooldown = time.Time{}
 	}
 }

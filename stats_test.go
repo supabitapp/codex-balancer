@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -179,5 +180,111 @@ func TestCooldownWaitsForTheExhaustedWindow(t *testing.T) {
 	}
 	if !a.available(weekly.Add(time.Minute)) {
 		t.Fatal("account never came back after its weekly window reset")
+	}
+}
+
+func withUsageEndpoint(t *testing.T, h http.HandlerFunc) {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	original := usageEndpoint
+	usageEndpoint = srv.URL
+	t.Cleanup(func() {
+		usageEndpoint = original
+		srv.Close()
+	})
+}
+
+const usageBody = `{"plan_type":"pro","rate_limit":{
+  "primary_window":{"used_percent":12.5,"reset_at":%d,"limit_window_seconds":18000},
+  "secondary_window":{"used_percent":64,"reset_at":%d,"limit_window_seconds":604800}}}`
+
+func TestUsagePollFillsBothWindows(t *testing.T) {
+	fiveHours := time.Now().Add(3 * time.Hour).Unix()
+	weekly := time.Now().Add(96 * time.Hour).Unix()
+	var auth, account string
+	withUsageEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+		auth, account = r.Header.Get("Authorization"), r.Header.Get("chatgpt-account-id")
+		fmt.Fprintf(w, usageBody, fiveHours, weekly)
+	})
+
+	s := testServer(t, "http://unused", "acct-a")
+	if err := s.pollUsage(t.Context(), s.pool.accounts[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	if auth != "Bearer token-acct-a" || account != "acct-a" {
+		t.Fatalf("upstream saw auth=%q account=%q", auth, account)
+	}
+	primary, secondary, _, _ := s.pool.accounts[0].health()
+	if primary.usedPercent != 12.5 || primary.minutes != 300 {
+		t.Fatalf("primary = %+v, want 12.5%% over a 300 minute window", primary)
+	}
+	if secondary.usedPercent != 64 || secondary.minutes != 10080 {
+		t.Fatalf("secondary = %+v, want 64%% over a weekly window", secondary)
+	}
+}
+
+func TestUsagePollLiftsACooldownOnceTheWindowHasRoom(t *testing.T) {
+	withUsageEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, usageBody, time.Now().Add(3*time.Hour).Unix(), time.Now().Add(96*time.Hour).Unix())
+	})
+
+	s := testServer(t, "http://unused", "acct-a")
+	a := s.pool.accounts[0]
+
+	limited := http.Header{}
+	limited.Set("x-codex-secondary-primary-used-percent", "100")
+	limited.Set("x-codex-secondary-primary-reset-at", strconv.FormatInt(time.Now().Add(96*time.Hour).Unix(), 10))
+	a.rateLimited(limited, 0)
+	if a.available(time.Now()) {
+		t.Fatal("account should be cooling after a 429")
+	}
+
+	if err := s.pollUsage(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if !a.available(time.Now()) {
+		t.Fatal("upstream reported room but the account stayed parked")
+	}
+}
+
+func TestUsagePollLeavesAnExhaustedAccountParked(t *testing.T) {
+	withUsageEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"rate_limit":{"secondary_window":{"used_percent":100,"reset_at":%d,"limit_window_seconds":604800}}}`,
+			time.Now().Add(96*time.Hour).Unix())
+	})
+
+	s := testServer(t, "http://unused", "acct-a")
+	a := s.pool.accounts[0]
+
+	limited := http.Header{}
+	limited.Set("x-codex-secondary-primary-used-percent", "100")
+	limited.Set("x-codex-secondary-primary-reset-at", strconv.FormatInt(time.Now().Add(96*time.Hour).Unix(), 10))
+	a.rateLimited(limited, 0)
+
+	if err := s.pollUsage(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if a.available(time.Now()) {
+		t.Fatal("account still at 100% must stay parked")
+	}
+}
+
+func TestUsagePollTrustsTheLimitReachedFlag(t *testing.T) {
+	withUsageEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"rate_limit":{"limit_reached":true,"primary_window":
+			{"used_percent":4,"reset_at":%d,"limit_window_seconds":604800}}}`,
+			time.Now().Add(96*time.Hour).Unix())
+	})
+
+	s := testServer(t, "http://unused", "acct-a")
+	a := s.pool.accounts[0]
+	a.rateLimited(http.Header{}, 0)
+
+	if err := s.pollUsage(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if a.available(time.Now()) {
+		t.Fatal("upstream said the limit is reached; a low percentage must not release the account")
 	}
 }
