@@ -3,9 +3,9 @@
 Spread Codex turns across several ChatGPT accounts. One proxy endpoint, no
 dashboard, no database.
 
-A turn sticks to the account that served its thread; otherwise it goes to the
-account with the most headroom. Rate limits and dead connections fail over to
-another account before the first byte reaches the client.
+A conversation stays on the account that started it. New ones go to the account
+with the most quota left. If an account is rate limited or fails, the turn moves
+to another one.
 
 ## Install
 
