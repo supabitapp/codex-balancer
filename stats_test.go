@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -78,5 +79,23 @@ func TestRelayForwardsBytesUntouched(t *testing.T) {
 	}
 	if s.stats.snapshot().TTFB <= 0 {
 		t.Fatal("time to first byte not recorded")
+	}
+}
+
+var ansi = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func TestGaugeReportsHeadroomNotConsumption(t *testing.T) {
+	for _, tc := range []struct {
+		used float64
+		want string
+	}{
+		{used: 97, want: "  3% left"},
+		{used: 0, want: "100% left"},
+		{used: 100, want: "  0% left"},
+	} {
+		got := ansi.ReplaceAllString(gauge("5h", window{usedPercent: tc.used, seenAt: time.Now()}), "")
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("gauge at %.0f%% used = %q, want it to contain %q", tc.used, got, tc.want)
+		}
 	}
 }

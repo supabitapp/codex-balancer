@@ -149,14 +149,14 @@ func gauge(fallback string, w window) string {
 	if !w.known() {
 		return sDim.Render(fmt.Sprintf("%s %s  waiting for a turn", name, strings.Repeat("░", 24)))
 	}
-	filled := int(w.usedPercent / 100 * 24)
-	filled = min(max(filled, 0), 24)
+	left := min(max(100-w.usedPercent, 0), 100)
+	filled := int(left / 100 * 24)
 
 	style := sGood
 	switch {
-	case w.usedPercent >= 90:
+	case left <= 10:
 		style = sBad
-	case w.usedPercent >= 70:
+	case left <= 30:
 		style = lipgloss.NewStyle().Foreground(cWarn)
 	}
 
@@ -165,7 +165,7 @@ func gauge(fallback string, w window) string {
 	if !w.resetsAt.IsZero() {
 		tail = sDim.Render("  resets " + short(time.Until(w.resetsAt)))
 	}
-	return fmt.Sprintf("%s %s %s%s", sDim.Render(name), bar, style.Render(fmt.Sprintf("%3.0f%%", w.usedPercent)), tail)
+	return fmt.Sprintf("%s %s %s%s", sDim.Render(name), bar, style.Render(fmt.Sprintf("%3.0f%% left", left)), tail)
 }
 
 func windowName(minutes int) string {
