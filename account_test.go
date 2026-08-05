@@ -162,3 +162,29 @@ func TestPoolRoundTripsThroughDisk(t *testing.T) {
 		t.Fatalf("round trip lost data: %+v", got)
 	}
 }
+
+func TestWaitersSeeTheLeadersRefreshFailure(t *testing.T) {
+	withTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"refresh_token_invalidated"}`))
+	})
+
+	a := &Account{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"}
+	errs := make([]error, 4)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = a.refresh(context.Background(), http.DefaultClient)
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err == nil {
+			t.Fatalf("caller %d saw success; a waiter that reports nil retries with a stale token", i)
+		}
+	}
+}

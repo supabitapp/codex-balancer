@@ -27,8 +27,10 @@ type Account struct {
 	AccountID    string    `json:"account_id,omitempty"`
 	LastRefresh  time.Time `json:"last_refresh"`
 
-	mu       sync.Mutex
-	inflight chan struct{}
+	mu          sync.Mutex
+	inflight    chan struct{}
+	lastRefresh error
+
 	cooldown time.Time
 	dead     string
 	pressure float64
@@ -133,7 +135,9 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client) error {
 		a.mu.Unlock()
 		select {
 		case <-wait:
-			return nil
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			return a.lastRefresh
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -152,6 +156,7 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client) error {
 
 	a.mu.Lock()
 	a.inflight = nil
+	a.lastRefresh = err
 	switch {
 	case err != nil && permanent:
 		a.dead = err.Error()
