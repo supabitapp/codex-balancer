@@ -18,8 +18,6 @@ type Stats struct {
 	turns    int64
 	failures int64
 	limited  int64
-	inTok    int64
-	outTok   int64
 	ttfbSum  time.Duration
 	ttfbN    int64
 	accounts map[string]*accountStats
@@ -29,8 +27,6 @@ type Stats struct {
 
 type accountStats struct {
 	turns    int64
-	inTok    int64
-	outTok   int64
 	limited  int64
 	activity [activityLen]int64
 	bucket   int64
@@ -40,8 +36,6 @@ type threadStats struct {
 	key     string
 	account string
 	turns   int64
-	inTok   int64
-	outTok  int64
 	last    time.Time
 }
 
@@ -137,53 +131,35 @@ func (s *Stats) trimThreads() {
 	delete(s.threads, oldest)
 }
 
-func (s *Stats) completed(thread, account string, u tokenUsage, ttfb time.Duration) {
+func (s *Stats) answered(ttfb time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	s.inTok += u.input
-	s.outTok += u.output
-	if ttfb > 0 {
-		s.ttfbSum += ttfb
-		s.ttfbN++
-	}
-	a := s.account(account)
-	a.inTok += u.input
-	a.outTok += u.output
-	if t := s.threads[thread]; t != nil {
-		t.inTok += u.input
-		t.outTok += u.output
-	}
+	s.ttfbSum += ttfb
+	s.ttfbN++
 }
 
 type Snapshot struct {
-	Uptime    time.Duration
-	Turns     int64
-	Failures  int64
-	Limited   int64
-	InTokens  int64
-	OutTokens int64
-	TTFB      time.Duration
-	Accounts  map[string]AccountSnapshot
-	Threads   []ThreadSnapshot
-	Events    []Event
+	Uptime   time.Duration
+	Turns    int64
+	Failures int64
+	Limited  int64
+	TTFB     time.Duration
+	Accounts map[string]AccountSnapshot
+	Threads  []ThreadSnapshot
+	Events   []Event
 }
 
 type AccountSnapshot struct {
-	Turns     int64
-	InTokens  int64
-	OutTokens int64
-	Limited   int64
-	Activity  []int64
+	Turns    int64
+	Limited  int64
+	Activity []int64
 }
 
 type ThreadSnapshot struct {
-	Key       string
-	Account   string
-	Turns     int64
-	InTokens  int64
-	OutTokens int64
-	Last      time.Time
+	Key     string
+	Account string
+	Turns   int64
+	Last    time.Time
 }
 
 func (s *Stats) snapshot() Snapshot {
@@ -191,36 +167,30 @@ func (s *Stats) snapshot() Snapshot {
 	defer s.mu.Unlock()
 
 	out := Snapshot{
-		Uptime:    time.Since(s.started),
-		Turns:     s.turns,
-		Failures:  s.failures,
-		Limited:   s.limited,
-		InTokens:  s.inTok,
-		OutTokens: s.outTok,
-		Accounts:  make(map[string]AccountSnapshot, len(s.accounts)),
-		Threads:   make([]ThreadSnapshot, 0, len(s.threads)),
-		Events:    append([]Event(nil), s.events...),
+		Uptime:   time.Since(s.started),
+		Turns:    s.turns,
+		Failures: s.failures,
+		Limited:  s.limited,
+		Accounts: make(map[string]AccountSnapshot, len(s.accounts)),
+		Threads:  make([]ThreadSnapshot, 0, len(s.threads)),
+		Events:   append([]Event(nil), s.events...),
 	}
 	if s.ttfbN > 0 {
 		out.TTFB = s.ttfbSum / time.Duration(s.ttfbN)
 	}
 	for id, a := range s.accounts {
 		out.Accounts[id] = AccountSnapshot{
-			Turns:     a.turns,
-			InTokens:  a.inTok,
-			OutTokens: a.outTok,
-			Limited:   a.limited,
-			Activity:  append([]int64(nil), a.activity[:]...),
+			Turns:    a.turns,
+			Limited:  a.limited,
+			Activity: append([]int64(nil), a.activity[:]...),
 		}
 	}
 	for _, t := range s.threads {
 		out.Threads = append(out.Threads, ThreadSnapshot{
-			Key:       t.key,
-			Account:   t.account,
-			Turns:     t.turns,
-			InTokens:  t.inTok,
-			OutTokens: t.outTok,
-			Last:      t.last,
+			Key:     t.key,
+			Account: t.account,
+			Turns:   t.turns,
+			Last:    t.last,
 		})
 	}
 	return out

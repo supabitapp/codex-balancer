@@ -39,3 +39,50 @@ func TestTurnStateDoesNotRebindTheThread(t *testing.T) {
 		t.Fatalf("per-turn token moved the thread between accounts: %v", served)
 	}
 }
+
+func TestPinnedThreadTakesThe429RatherThanAnotherAccount(t *testing.T) {
+	var mu sync.Mutex
+	var served []string
+	limit := false
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("chatgpt-account-id")
+		mu.Lock()
+		served = append(served, id)
+		refuse := limit
+		mu.Unlock()
+		if refuse {
+			w.Header().Set("x-codex-primary-reset-at", "1785943171")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		sse(w, id)
+	}))
+	defer upstream.Close()
+
+	s := testServer(t, upstream.URL, "acct-a", "acct-b")
+
+	turn := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))
+		req.Header.Set("session-id", "thread-1")
+		s.responses(rec, req)
+		return rec
+	}
+
+	turn()
+	mu.Lock()
+	limit = true
+	mu.Unlock()
+	rec := turn()
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want the upstream 429", rec.Code)
+	}
+	if got := rec.Header().Get("x-codex-primary-reset-at"); got != "1785943171" {
+		t.Fatalf("reset header = %q, want it relayed so Codex can report the window", got)
+	}
+	if len(served) != 2 || served[0] != served[1] {
+		t.Fatalf("thread was replayed onto another account: %v", served)
+	}
+}

@@ -96,12 +96,15 @@ func (p *Pool) remove(id string) error {
 	return p.save()
 }
 
-func (p *Pool) pick(prefer string, skip map[string]bool) *Account {
-	now := time.Now()
-	if a := p.find(prefer); a != nil && !skip[prefer] && a.available(now) {
-		return a
+func (p *Pool) pick(pinned string, skip map[string]bool) *Account {
+	if pinned != "" {
+		if a := p.find(pinned); a != nil && !skip[pinned] {
+			return a
+		}
+		return nil
 	}
 
+	now := time.Now()
 	var best *Account
 	for _, a := range p.accounts {
 		if skip[a.id()] || !a.available(now) {

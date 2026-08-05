@@ -24,7 +24,6 @@ var (
 	cMuted  = lipgloss.Color("#45475a")
 
 	sTitle   = lipgloss.NewStyle().Foreground(cAccent).Bold(true)
-	sHead    = lipgloss.NewStyle().Foreground(cDim).Bold(true)
 	sDim     = lipgloss.NewStyle().Foreground(cDim)
 	sText    = lipgloss.NewStyle().Foreground(cText)
 	sBad     = lipgloss.NewStyle().Foreground(cBad)
@@ -123,9 +122,9 @@ func (d dashboard) accounts() string {
 
 		share := ""
 		if d.snap.Turns > 0 {
-			share = fmt.Sprintf("  %d%%", stat.Turns*100/d.snap.Turns)
+			share = fmt.Sprintf("  %d%% of traffic", stat.Turns*100/d.snap.Turns)
 		}
-		summary := sDim.Render(fmt.Sprintf("%d turns%s  %s", stat.Turns, share, tokens(stat.InTokens+stat.OutTokens)))
+		summary := sDim.Render(fmt.Sprintf("%d turns%s", stat.Turns, share))
 
 		rows = append(rows,
 			fmt.Sprintf("  %s %s %s", name, plan, state),
@@ -145,9 +144,10 @@ func label(a *Account) string {
 	return a.id()
 }
 
-func gauge(name string, w window) string {
+func gauge(fallback string, w window) string {
+	name := pad(cmp.Or(windowName(w.minutes), fallback), 3)
 	if !w.known() {
-		return sDim.Render(fmt.Sprintf("%s  %s  no data yet", name, strings.Repeat("░", 24)))
+		return sDim.Render(fmt.Sprintf("%s %s  waiting for a turn", name, strings.Repeat("░", 24)))
 	}
 	filled := int(w.usedPercent / 100 * 24)
 	filled = min(max(filled, 0), 24)
@@ -165,11 +165,20 @@ func gauge(name string, w window) string {
 	if !w.resetsAt.IsZero() {
 		tail = sDim.Render("  resets " + short(time.Until(w.resetsAt)))
 	}
-	age := ""
-	if time.Since(w.seenAt) > time.Minute {
-		age = sDim.Render(fmt.Sprintf("  (%s old)", short(time.Since(w.seenAt))))
+	return fmt.Sprintf("%s %s %s%s", sDim.Render(name), bar, style.Render(fmt.Sprintf("%3.0f%%", w.usedPercent)), tail)
+}
+
+func windowName(minutes int) string {
+	switch {
+	case minutes <= 0:
+		return ""
+	case minutes%(24*60) == 0:
+		return fmt.Sprintf("%dd", minutes/(24*60))
+	case minutes%60 == 0:
+		return fmt.Sprintf("%dh", minutes/60)
+	default:
+		return fmt.Sprintf("%dm", minutes)
 	}
-	return fmt.Sprintf("%s  %s %s%s%s", sDim.Render(name), bar, style.Render(fmt.Sprintf("%3.0f%%", w.usedPercent)), tail, age)
 }
 
 var sparkRunes = []rune("▁▂▃▄▅▆▇█")
@@ -206,12 +215,12 @@ func (d dashboard) threads() string {
 		if i >= 8 {
 			break
 		}
-		rows = append(rows, fmt.Sprintf("  %s  %s %s  %s  %s",
+		rows = append(rows, fmt.Sprintf("  %s  %s %s  %s%s",
 			sText.Render(pad(shortKey(t.Key), 10)),
 			sDim.Render("→"),
 			lipgloss.NewStyle().Foreground(cAccent).Render(pad(byID[t.Account], 12)),
 			sDim.Render(pad(fmt.Sprintf("%d turns", t.Turns), 9)),
-			sDim.Render(pad(tokens(t.InTokens+t.OutTokens), 7))+sDim.Render(ago(t.Last))))
+			sDim.Render(ago(t.Last))))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -221,8 +230,7 @@ func (d dashboard) totals() string {
 	rows := []string{
 		sSection.Render("TOTALS"),
 		stat("turns", fmt.Sprintf("%d", s.Turns)),
-		stat("tokens in", tokens(s.InTokens)),
-		stat("tokens out", tokens(s.OutTokens)),
+		stat("threads", fmt.Sprintf("%d", len(s.Threads))),
 		stat("failovers", fmt.Sprintf("%d", s.Failures)),
 		stat("rate limits", fmt.Sprintf("%d", s.Limited)),
 		stat("ttfb", short(s.TTFB)),
@@ -281,17 +289,6 @@ func shortKey(s string) string {
 		return s[:8]
 	}
 	return s
-}
-
-func tokens(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.0fk", float64(n)/1e3)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
 }
 
 func short(d time.Duration) string {

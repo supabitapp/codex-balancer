@@ -3,9 +3,11 @@
 Spread Codex turns across several ChatGPT accounts. One proxy endpoint, no
 dashboard, no database.
 
-A conversation stays on the account that started it. New ones go to the account
-with the most quota left. If an account is rate limited or fails, the turn moves
-to another one.
+New conversations go to the account with the most quota left, and then they stay
+there. A conversation replays its whole history every turn, and that history
+carries reasoning only the account that wrote it can read, so moving one mid-way
+would break it. When a pinned account runs out, its conversations wait for the
+window to reset; start a new conversation to use another account.
 
 ## Install
 
@@ -37,12 +39,11 @@ codex-balancer server -tui    # live dashboard
 ```
 
 The dashboard shows each account's two rate limit windows as gauges with their
-reset countdowns, a sparkline of the last twelve minutes, which thread is
-pinned to which account, token counts, failovers and a rolling event feed.
+reset countdowns, a sparkline of the last twelve minutes, which conversation is
+pinned where, and a rolling event feed.
 
-Limits come from the headers on every upstream reply, so they are exact but
-only move when a turn runs. A gauge that has not been refreshed for over a
-minute says how old it is.
+Every upstream reply carries the current limits, so the gauges are exact as of
+the last turn that account served. They do not move while it is idle.
 
 ## Point Codex at it
 

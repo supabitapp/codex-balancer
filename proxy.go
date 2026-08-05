@@ -83,11 +83,12 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := stickyKey(r.Header)
+	pinned := s.sticky.get(key)
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		account := s.pool.pick(s.sticky.get(key), skip)
+		account := s.pool.pick(pinned, skip)
 		if account == nil {
 			writeError(w, http.StatusServiceUnavailable, "no account available")
 			return
@@ -124,8 +125,6 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 
 		if status := resp.StatusCode; status == http.StatusTooManyRequests ||
 			status == http.StatusUnauthorized || status >= 500 {
-			resp.Body.Close()
-			skip[id] = true
 			if status == http.StatusTooManyRequests {
 				s.log.Info("rate limited", "account", id)
 				account.observe(resp.Header)
@@ -134,15 +133,25 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			} else {
 				s.log.Warn("upstream refused the turn", "account", id, "status", status)
 				account.failed(attempt)
-				s.stats.failedOver(id, resp.Status)
 			}
+			if pinned != "" {
+				s.log.Info("thread stays on its account", "account", id, "status", status)
+				copyHeaders(w.Header(), resp.Header)
+				w.WriteHeader(status)
+				io.Copy(w, resp.Body)
+				resp.Body.Close()
+				return
+			}
+			resp.Body.Close()
+			s.stats.failedOver(id, resp.Status)
+			skip[id] = true
 			continue
 		}
 
 		account.observe(resp.Header)
 		s.sticky.bind(key, id)
 		s.stats.routed(key, id)
-		s.relay(w, resp, key, id, sent)
+		s.relay(w, resp, sent)
 		return
 	}
 	writeError(w, http.StatusServiceUnavailable, "every account failed this turn")
@@ -184,14 +193,13 @@ func (s *server) forward(r *http.Request, body []byte, account *Account) (*http.
 	return s.client.Do(req)
 }
 
-func (s *server) relay(w http.ResponseWriter, resp *http.Response, thread, account string, sent time.Time) {
+func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time) {
 	defer resp.Body.Close()
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
 	control := http.NewResponseController(w)
-	var seen sniffer
-	var ttfb time.Duration
+	first := true
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := resp.Body.Read(buf)
@@ -200,16 +208,15 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response, thread, accou
 				return
 			}
 			control.Flush()
-			if ttfb == 0 {
-				ttfb = time.Since(sent)
+			if first {
+				s.stats.answered(time.Since(sent))
+				first = false
 			}
-			seen.feed(buf[:n])
 		}
 		if err != nil {
 			if err != io.EOF {
 				s.log.Warn("stream cut short", "error", err)
 			}
-			s.stats.completed(thread, account, seen.usage, ttfb)
 			return
 		}
 	}
