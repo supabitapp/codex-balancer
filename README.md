@@ -56,6 +56,18 @@ Authenticate the CLI against the balancer once:
 printenv CODEX_BALANCER_KEY | codex login --with-api-key
 ```
 
+This rewrites `~/.codex/auth.json` as an API key record, replacing whatever
+ChatGPT session it held. To leave that file alone, name the variable in the
+provider instead and skip the login:
+
+```toml
+env_key = "CODEX_BALANCER_KEY"
+```
+
+Codex reads the provider credential before it consults `auth.json`, so the
+variable wins wherever it is set, and the CLI runs with no `auth.json` at all.
+The cost is that every shell running `codex` must export it.
+
 ## What it serves
 
 | Method | Path | |
