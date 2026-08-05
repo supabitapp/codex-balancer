@@ -153,3 +153,31 @@ func TestAmbiguousEmailAsksForAnID(t *testing.T) {
 		t.Fatalf("the id must still resolve: %v", err)
 	}
 }
+
+func TestCooldownWaitsForTheExhaustedWindow(t *testing.T) {
+	fiveHours := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	weekly := time.Now().Add(4*24*time.Hour + 7*time.Hour).Truncate(time.Second)
+
+	h := http.Header{}
+	h.Set("x-codex-primary-used-percent", "40")
+	h.Set("x-codex-primary-window-minutes", "300")
+	h.Set("x-codex-primary-reset-at", strconv.FormatInt(fiveHours.Unix(), 10))
+	h.Set("x-codex-secondary-primary-used-percent", "100")
+	h.Set("x-codex-secondary-primary-window-minutes", "10080")
+	h.Set("x-codex-secondary-primary-reset-at", strconv.FormatInt(weekly.Unix(), 10))
+
+	a := &Account{IDToken: jwtFor("acct-a")}
+	a.rateLimited(h, 0)
+
+	_, _, cooldown, _ := a.health()
+	if !cooldown.Equal(weekly) {
+		t.Fatalf("cooldown = %s, want the exhausted weekly window at %s; waking on the 5h reset earns an instant 429",
+			cooldown, weekly)
+	}
+	if a.available(fiveHours.Add(time.Minute)) {
+		t.Fatal("account came back when only the unexhausted window had reset")
+	}
+	if !a.available(weekly.Add(time.Minute)) {
+		t.Fatal("account never came back after its weekly window reset")
+	}
+}

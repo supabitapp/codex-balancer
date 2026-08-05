@@ -202,10 +202,14 @@ func (a *Account) rateLimited(h http.Header, attempt int) {
 }
 
 func resetHeader(h http.Header) time.Time {
-	for _, name := range []string{"x-codex-primary-reset-at", "x-codex-secondary-primary-reset-at"} {
-		if secs, err := strconv.ParseInt(h.Get(name), 10, 64); err == nil {
-			return time.Unix(secs, 0)
+	binding := window{usedPercent: -1}
+	for _, prefix := range []string{"x-codex-primary", "x-codex-secondary-primary"} {
+		if w := readWindow(h, prefix); w.known() && w.usedPercent > binding.usedPercent {
+			binding = w
 		}
+	}
+	if !binding.resetsAt.IsZero() {
+		return binding.resetsAt
 	}
 	if secs, err := strconv.Atoi(h.Get("retry-after")); err == nil {
 		return time.Now().Add(time.Duration(secs) * time.Second)
