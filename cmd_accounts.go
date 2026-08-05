@@ -15,7 +15,7 @@ import (
 const accountsHelp = `Manage the account pool.
 
 Usage:
-  codex-balancer accounts add [file]   Import a Codex auth.json (default ~/.codex/auth.json, "-" for stdin)
+  codex-balancer accounts add [file...] Import Codex auth.json files (default ~/.codex/auth.json, "-" for stdin)
   codex-balancer accounts list         Show pooled accounts
   codex-balancer accounts rm <id>      Drop an account
 
@@ -45,7 +45,7 @@ func accountsCmd(args []string) error {
 
 	switch args[0] {
 	case "add":
-		return addAccount(pool, fs.Arg(0))
+		return addAccounts(pool, fs.Args())
 	case "list":
 		return listAccounts(pool, *asJSON)
 	case "rm":
@@ -76,11 +76,19 @@ type codexAuthFile struct {
 	LastRefresh time.Time `json:"last_refresh"`
 }
 
-func addAccount(pool *Pool, source string) error {
-	if source == "" {
-		source = filepath.Join(homeDir(), ".codex", "auth.json")
+func addAccounts(pool *Pool, sources []string) error {
+	if len(sources) == 0 {
+		sources = []string{filepath.Join(homeDir(), ".codex", "auth.json")}
 	}
+	for _, source := range sources {
+		if err := addAccount(pool, source); err != nil {
+			return fmt.Errorf("%s: %w", source, err)
+		}
+	}
+	return nil
+}
 
+func addAccount(pool *Pool, source string) error {
 	var data []byte
 	var err error
 	if source == "-" {
@@ -94,10 +102,10 @@ func addAccount(pool *Pool, source string) error {
 
 	var file codexAuthFile
 	if err := json.Unmarshal(data, &file); err != nil {
-		return fmt.Errorf("parse %s: %w", source, err)
+		return err
 	}
 	if file.Tokens.RefreshToken == "" {
-		return fmt.Errorf("%s carries no ChatGPT refresh token; log in with ChatGPT first", source)
+		return errors.New("no ChatGPT refresh token; log in with ChatGPT first")
 	}
 
 	account := &Account{
@@ -140,11 +148,23 @@ func listAccounts(pool *Pool, asJSON bool) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tEMAIL\tPLAN")
+	fmt.Fprintln(w, "ID\tEMAIL\tPLAN\tTOKEN")
 	for _, a := range accounts {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", a.ID(), a.Email(), a.Plan())
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.ID(), a.Email(), a.Plan(), tokenAge(a))
 	}
 	return w.Flush()
+}
+
+func tokenAge(a *Account) string {
+	expiry := a.Expires()
+	switch {
+	case expiry.IsZero():
+		return "unknown"
+	case time.Now().After(expiry):
+		return "expired, refreshes on first use"
+	default:
+		return "valid for " + time.Until(expiry).Round(time.Minute).String()
+	}
 }
 
 func defaultAccountsPath() string {

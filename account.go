@@ -57,18 +57,33 @@ type authClaims struct {
 	} `json:"https://api.openai.com/auth"`
 }
 
-func (a *Account) claims() authClaims {
-	var c authClaims
-	parts := strings.Split(a.IDToken, ".")
+func jwtClaims(token string, into any) {
+	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return c
+		return
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return c
+		return
 	}
-	json.Unmarshal(raw, &c)
+	json.Unmarshal(raw, into)
+}
+
+func (a *Account) claims() authClaims {
+	var c authClaims
+	jwtClaims(a.IDToken, &c)
 	return c
+}
+
+func (a *Account) Expires() time.Time {
+	var c struct {
+		Exp int64 `json:"exp"`
+	}
+	jwtClaims(a.AccessToken, &c)
+	if c.Exp == 0 {
+		return time.Time{}
+	}
+	return time.Unix(c.Exp, 0)
 }
 
 func (a *Account) ID() string {

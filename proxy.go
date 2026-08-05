@@ -52,8 +52,17 @@ var hopByHop = map[string]bool{
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/responses", s.responses)
+	mux.HandleFunc("GET /v1/responses", s.refuseUpgrade)
 	mux.HandleFunc("GET /v1/models", s.models)
 	return mux
+}
+
+func (s *server) refuseUpgrade(w http.ResponseWriter, r *http.Request) {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.WriteHeader(http.StatusUpgradeRequired)
 }
 
 func (s *server) models(w http.ResponseWriter, r *http.Request) {
