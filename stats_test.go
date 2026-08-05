@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,14 +31,6 @@ func TestWindowsReadBothRateLimitHeaders(t *testing.T) {
 	}
 	if got := a.pressure(); got != 91 {
 		t.Fatalf("pressure = %v, want the fuller of the two windows", got)
-	}
-}
-
-func TestWindowNameFollowsTheReportedWindow(t *testing.T) {
-	for minutes, want := range map[int]string{300: "5h", 10080: "7d", 90: "90m", 0: "?"} {
-		if got := windowName(minutes); got != want {
-			t.Errorf("windowName(%d) = %q, want %q", minutes, got, want)
-		}
 	}
 }
 
@@ -82,25 +73,6 @@ func TestRelayForwardsBytesUntouched(t *testing.T) {
 		t.Fatal("time to first byte not recorded")
 	}
 }
-
-var ansi = regexp.MustCompile("\x1b\\[[0-9;]*m")
-
-func TestGaugeReportsHeadroomNotConsumption(t *testing.T) {
-	for _, tc := range []struct {
-		used float64
-		want string
-	}{
-		{used: 97, want: "  3% left"},
-		{used: 0, want: "100% left"},
-		{used: 100, want: "  0% left"},
-	} {
-		got := ansi.ReplaceAllString(gauge(window{usedPercent: tc.used, minutes: 300, seenAt: time.Now()}, 24), "")
-		if !strings.Contains(got, tc.want) {
-			t.Errorf("gauge at %.0f%% used = %q, want it to contain %q", tc.used, got, tc.want)
-		}
-	}
-}
-
 func TestAccountsResolveByEmailOrID(t *testing.T) {
 	pool := &Pool{path: t.TempDir() + "/accounts.json"}
 	for _, id := range []string{"acct-a", "acct-b"} {

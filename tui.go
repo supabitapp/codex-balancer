@@ -139,46 +139,93 @@ func rate(s Snapshot) string {
 
 func (d dashboard) accounts() string {
 	accounts := d.pool.sorted()
-	name := 0
-	for _, a := range accounts {
-		name = max(name, lipgloss.Width(label(a)))
+	if len(accounts) == 0 {
+		return sSection.Render("ACCOUNTS") + "\n" + sDim.Render("  (none)")
 	}
-	bar := min(max((d.width-name-58)/2, 14), 40)
-	indent := strings.Repeat(" ", name+6)
 
-	rows := []string{sSection.Render("ACCOUNTS"), ""}
+	nameW := 9
 	for _, a := range accounts {
-		primary, secondary, cooldown, reauth := a.health()
+		nameW = max(nameW, lipgloss.Width(label(a)))
+	}
+
+	gap := 2
+	planW := 6
+	statusW := 16
+	weeklyW := 8
+	turnsW := 7
+	trafficW := 8
+	limitsW := 6
+
+	fixedCols := planW + statusW + weeklyW + turnsW + trafficW + limitsW + 6*gap + 2
+	activityW := max(8, d.width-fixedCols-nameW)
+
+	pad2 := strings.Repeat(" ", gap)
+
+	hdr := fmt.Sprintf("  %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
+		sSection.Render(pad("Account", nameW)), pad2,
+		sSection.Render(pad("Plan", planW)), pad2,
+		sSection.Render(pad("Status", statusW)), pad2,
+		sSection.Render(pad("Weekly", weeklyW)), pad2,
+		sSection.Render(pad("Turns", turnsW)), pad2,
+		sSection.Render(pad("Traffic", trafficW)), pad2,
+		sSection.Render(pad("Limits", limitsW)), pad2,
+		sSection.Render(pad("Activity", activityW)))
+
+	sep := sDim.Render(strings.Repeat("─", d.width-2))
+
+	rows := []string{sSection.Render("ACCOUNTS"), "", hdr, sep}
+
+	for _, a := range accounts {
+		w, _, cooldown, reauth := a.health()
 		stat := d.snap.Accounts[a.id()]
 
-		var state string
+		var status string
 		switch {
 		case reauth != "":
-			state = sBad.Render("✕ " + reauth)
+			status = sBad.Render(pad("✕ "+reauth, statusW))
 		case time.Now().Before(cooldown):
-			state = sHot.Render("◐ back in " + short(time.Until(cooldown)))
+			status = sHot.Render(pad("◐ "+short(time.Until(cooldown)), statusW))
 		default:
-			state = sGood.Render("● live")
+			status = sGood.Render(pad("● live", statusW))
 		}
 
-		facts := []string{plural(stat.Turns, "turn")}
+		turns := ""
+		if stat.Turns > 0 {
+			turns = fmt.Sprintf("%d", stat.Turns)
+		}
+		traffic := ""
 		if d.snap.Turns > 0 {
-			facts = append(facts, fmt.Sprintf("%d%% of traffic", stat.Turns*100/d.snap.Turns))
+			traffic = fmt.Sprintf("%d%%", stat.Turns*100/d.snap.Turns)
 		}
+		limits := ""
 		if stat.Limited > 0 {
-			facts = append(facts, plural(stat.Limited, "rate limit"))
+			limits = fmt.Sprintf("%d", stat.Limited)
 		}
 
-		rows = append(rows, fmt.Sprintf("  %s  %s  %s",
-			sText.Render(pad(label(a), name)), sDim.Render(pad(a.plan(), 8)), state))
-		windows := []window{primary, secondary}
-		slices.SortFunc(windows, func(x, y window) int { return cmp.Compare(x.minutes, y.minutes) })
-		for _, w := range windows {
-			if w.known() {
-				rows = append(rows, indent+gauge(w, bar))
+		var weekly string
+		if !w.known() {
+			weekly = sDim.Render(pad("--", weeklyW))
+		} else {
+			left := int(min(max(100-w.usedPercent, 0), 100))
+			style := sGood
+			switch {
+			case left <= 10:
+				style = sBad
+			case left <= 30:
+				style = sWarn
 			}
+			weekly = style.Render(pad(fmt.Sprintf("%d%%", left), weeklyW))
 		}
-		rows = append(rows, indent+spark(stat.Activity)+"  "+sDim.Render(strings.Join(facts, " · ")), "")
+
+		rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s  %s  %s  %s  %s",
+			sText.Render(pad(label(a), nameW)),
+			sDim.Render(pad(a.plan(), planW)),
+			status,
+			weekly,
+			sNum.Render(pad(turns, turnsW)),
+			sDim.Render(pad(traffic, trafficW)),
+			sBad.Render(pad(limits, limitsW)),
+			spark(stat.Activity)))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -192,42 +239,6 @@ func plural(n int64, noun string) string {
 
 func label(a *Account) string {
 	return cmp.Or(a.email(), a.id())
-}
-
-func gauge(w window, width int) string {
-	left := min(max(100-w.usedPercent, 0), 100)
-	filled := int(left / 100 * float64(width))
-
-	style := sGood
-	switch {
-	case left <= 10:
-		style = sBad
-	case left <= 30:
-		style = sWarn
-	}
-
-	tail := ""
-	if !w.resetsAt.IsZero() {
-		tail = sDim.Render("  resets in " + short(time.Until(w.resetsAt)))
-	}
-	return fmt.Sprintf("%s %s %s%s",
-		sDim.Render(pad(windowName(w.minutes), 4)),
-		style.Render(strings.Repeat("█", filled))+sDim.Render(strings.Repeat("░", width-filled)),
-		style.Render(fmt.Sprintf("%3.0f%% left", left)),
-		tail)
-}
-
-func windowName(minutes int) string {
-	switch {
-	case minutes <= 0:
-		return "?"
-	case minutes%(24*60) == 0:
-		return fmt.Sprintf("%dd", minutes/(24*60))
-	case minutes%60 == 0:
-		return fmt.Sprintf("%dh", minutes/60)
-	default:
-		return fmt.Sprintf("%dm", minutes)
-	}
 }
 
 var sparkRunes = []rune("▁▂▃▄▅▆▇█")
