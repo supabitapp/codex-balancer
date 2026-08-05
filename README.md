@@ -14,12 +14,17 @@ go install github.com/supabitapp/codex-balancer@latest
 Log in to Codex on each account, then import the credentials it wrote:
 
 ```sh
-codex-balancer accounts add                  # reads ~/.codex/auth.json
-codex-balancer accounts add ./other.json
+codex-balancer accounts add                        # reads ~/.codex/auth.json
+codex-balancer accounts add ~/.codex/accounts/*.auth.json
 codex-balancer accounts list
 ```
 
 Accounts live in `~/.codex-balancer/accounts.json`, mode 0600.
+
+Importing copies the refresh token, and refresh tokens rotate on use. Once the
+balancer refreshes an account, the copy Codex still holds for it is spent, so
+switching Codex back to that account directly means logging in again. Treat the
+balancer as the owner of every account you give it.
 
 ## Serve
 
