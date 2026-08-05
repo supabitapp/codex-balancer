@@ -3,6 +3,10 @@
 Spread Codex turns across several ChatGPT accounts. One proxy endpoint, no
 dashboard, no database.
 
+A turn sticks to the account that served its thread; otherwise it goes to the
+account with the most headroom. Rate limits and dead connections fail over to
+another account before the first byte reaches the client.
+
 ## Install
 
 ```sh
@@ -19,12 +23,10 @@ codex-balancer accounts add ~/.codex/accounts/*.auth.json
 codex-balancer accounts list
 ```
 
-Accounts live in `~/.codex-balancer/accounts.json`, mode 0600.
-
-Importing copies the refresh token, and refresh tokens rotate on use. Once the
-balancer refreshes an account, the copy Codex still holds for it is spent, so
-switching Codex back to that account directly means logging in again. Treat the
-balancer as the owner of every account you give it.
+Accounts live in `~/.codex-balancer/accounts.json`, mode 0600. Importing copies
+the refresh token, and refresh tokens rotate on use, so once the balancer
+refreshes an account, pointing Codex back at it directly means logging in again.
+Treat the balancer as the owner of every account you give it.
 
 ## Serve
 
@@ -44,59 +46,19 @@ model_provider = "balancer"
 name = "OpenAI"
 base_url = "http://127.0.0.1:8317/v1"
 requires_openai_auth = true
+env_key = "CODEX_BALANCER_KEY"
 ```
 
 `name` must be exactly `OpenAI`: Codex compares it verbatim to decide whether a
 provider supports remote compaction and whether to keep encrypted tool
 arguments intact.
 
-Authenticate the CLI against the balancer once:
+`env_key` reads the key from the environment, so every shell running `codex`
+must export it. To bake the key into `~/.codex/auth.json` instead, drop the line
+and log in once:
 
 ```sh
 printenv CODEX_BALANCER_KEY | codex login --with-api-key
 ```
 
-This rewrites `~/.codex/auth.json` as an API key record, replacing whatever
-ChatGPT session it held. To leave that file alone, name the variable in the
-provider instead and skip the login:
-
-```toml
-env_key = "CODEX_BALANCER_KEY"
-```
-
-Codex reads the provider credential before it consults `auth.json`, so the
-variable wins wherever it is set, and the CLI runs with no `auth.json` at all.
-The cost is that every shell running `codex` must export it.
-
-## What it serves
-
-| Method | Path | |
-| --- | --- | --- |
-| POST | `/v1/responses` | Picks an account, swaps in its credentials, streams the reply back untouched |
-| GET | `/v1/models` | `{"models":[]}`, so `codex doctor` passes and Codex keeps its built-in catalog |
-
-Everything else Codex can reach is either unused or belongs to a dashboard we
-do not have.
-
-## How it routes
-
-A turn sticks to the account that served its thread, keyed on the session
-headers Codex already sends. Bindings expire after 12 idle hours. When the
-bound account is rate limited the turn goes elsewhere and the binding stays, so
-traffic returns once the window resets.
-
-Otherwise it picks the account with the most headroom, read from the
-`x-codex-*-used-percent` headers on every upstream reply, and breaks ties by
-whichever account has idled longest.
-
-Failover happens before the first byte reaches the client: a 429, a 5xx or a
-dead connection moves the turn to another account, up to three. After the
-stream opens the turn is committed, so a mid-stream failure just closes the
-connection and Codex retries the turn itself.
-
-## Develop
-
-```sh
-go build ./...
-go test ./...
-```
+That replaces whatever ChatGPT session the file held.
