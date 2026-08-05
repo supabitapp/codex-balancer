@@ -9,11 +9,7 @@ import (
 const stickyTTL = 12 * time.Hour
 
 var stickyHeaders = []string{
-	"x-codex-turn-state",
-	"session_id",
 	"session-id",
-	"x-codex-session-id",
-	"x-codex-conversation-id",
 	"thread-id",
 }
 
