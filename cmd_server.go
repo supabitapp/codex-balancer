@@ -46,7 +46,8 @@ func serverCmd(args []string) error {
 	key := fs.String("key", os.Getenv("CODEX_BALANCER_KEY"), "bearer key clients must present (env CODEX_BALANCER_KEY)")
 	insecure := fs.Bool("no-auth", false, "serve without a bearer key; any local process can spend your quota")
 	jsonLogs := fs.Bool("json", false, "emit logs as JSON")
-	dash := fs.Bool("tui", false, "show the live dashboard instead of logging to stderr")
+	plain := fs.Bool("no-tui", false, "log to stderr instead of showing the dashboard")
+	poll := fs.Duration("poll", 2*time.Minute, "how often to read each account's limits upstream; 0 turns it off")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -66,7 +67,7 @@ func serverCmd(args []string) error {
 	}
 
 	stats := newStats()
-	log := newLogger(*jsonLogs, *dash)
+	log := newLogger(*jsonLogs, !*plain)
 	sticky := newSticky()
 	srv := &server{
 		pool:     pool,
@@ -88,6 +89,7 @@ func serverCmd(args []string) error {
 	defer stop()
 
 	go sweepSticky(ctx, sticky)
+	go srv.watchUsage(ctx, *poll)
 
 	go func() {
 		<-ctx.Done()
@@ -110,7 +112,7 @@ func serverCmd(args []string) error {
 		serving <- err
 	}()
 
-	if *dash {
+	if !*plain {
 		board := dashboard{pool: pool, stats: stats, addr: listener.Addr().String()}
 		if _, err := tea.NewProgram(board, tea.WithContext(ctx)).Run(); err != nil &&
 			!errors.Is(err, context.Canceled) {

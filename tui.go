@@ -11,7 +11,11 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-const frame = 500 * time.Millisecond
+const (
+	frame      = 500 * time.Millisecond
+	totalsWide = 24
+	columnGap  = 3
+)
 
 var (
 	cText   = lipgloss.Color("#e6e6e6")
@@ -27,10 +31,13 @@ var (
 	sDim     = lipgloss.NewStyle().Foreground(cDim)
 	sText    = lipgloss.NewStyle().Foreground(cText)
 	sBad     = lipgloss.NewStyle().Foreground(cBad)
+	sWarn    = lipgloss.NewStyle().Foreground(cWarn)
+	sHot     = lipgloss.NewStyle().Foreground(cHot)
 	sGood    = lipgloss.NewStyle().Foreground(cGood)
 	sNum     = lipgloss.NewStyle().Foreground(cText).Bold(true)
+	sSpark   = lipgloss.NewStyle().Foreground(cAccent)
 	sPanel   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cMuted).Padding(0, 2)
-	sSection = lipgloss.NewStyle().Foreground(cAccent).Bold(true).MarginBottom(1)
+	sSection = lipgloss.NewStyle().Foreground(cAccent).Bold(true)
 )
 
 type dashboard struct {
@@ -71,107 +78,149 @@ func (d dashboard) View() tea.View {
 }
 
 func (d dashboard) render() string {
-	if d.width < 60 {
-		return sDim.Render("terminal too narrow")
+	if d.width < 80 || d.height < 16 {
+		return sDim.Render("terminal too small")
 	}
-	body := lipgloss.JoinVertical(lipgloss.Left,
-		d.header(),
-		"",
-		d.accounts(),
-		"",
-		lipgloss.JoinHorizontal(lipgloss.Top, d.threads(), "  ", d.totals()),
-		"",
-		d.events(),
+	head := d.header()
+	accounts := d.accounts()
+
+	spare := d.width - totalsWide - 2*columnGap
+	threadsWide := spare * 9 / 20
+	rows := max(d.height-lipgloss.Height(head)-lipgloss.Height(accounts)-3, 5)
+
+	bottom := lipgloss.JoinHorizontal(lipgloss.Top,
+		d.threads(threadsWide, rows),
+		strings.Repeat(" ", columnGap),
+		d.events(spare-threadsWide, rows),
+		strings.Repeat(" ", columnGap),
+		d.totals(totalsWide),
 	)
-	return body
+	return lipgloss.JoinVertical(lipgloss.Left, head, "", accounts, bottom)
 }
 
-const panelChrome = 6
-
 func (d dashboard) header() string {
-	inner := d.width - panelChrome
-	left := sTitle.Render("CODEX BALANCER")
-	right := sDim.Render(fmt.Sprintf("%s   up %s   q to quit", d.addr, short(d.snap.Uptime)))
-	gap := max(inner-lipgloss.Width(left)-lipgloss.Width(right), 1)
+	live, cooling, dead := 0, 0, 0
+	now := time.Now()
+	for _, a := range d.pool.accounts {
+		switch _, _, cooldown, reauth := a.health(); {
+		case reauth != "":
+			dead++
+		case now.Before(cooldown):
+			cooling++
+		default:
+			live++
+		}
+	}
+
+	parts := []string{sGood.Render(fmt.Sprintf("%d live", live))}
+	if cooling > 0 {
+		parts = append(parts, sHot.Render(fmt.Sprintf("%d cooling", cooling)))
+	}
+	if dead > 0 {
+		parts = append(parts, sBad.Render(fmt.Sprintf("%d need reauth", dead)))
+	}
+
+	left := sTitle.Render("CODEX BALANCER") + sDim.Render("   "+strings.Join(parts, sDim.Render(" · ")))
+	right := sDim.Render(fmt.Sprintf("%s · %s · up %s · q quits", d.addr, rate(d.snap), short(d.snap.Uptime)))
+	gap := max(d.width-6-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	return sPanel.Width(d.width).Render(left + strings.Repeat(" ", gap) + right)
 }
 
-func (d dashboard) accounts() string {
-	rows := []string{sSection.Render("ACCOUNTS")}
-	accounts := d.pool.sorted()
-	widest := 0
-	for _, a := range accounts {
-		widest = max(widest, len(label(a)))
+func rate(s Snapshot) string {
+	var recent int64
+	for _, a := range s.Accounts {
+		for _, v := range a.Activity {
+			recent += v
+		}
 	}
+	span := float64(activityLen) * activitySpan.Minutes()
+	return fmt.Sprintf("%.1f turns/min", float64(recent)/span)
+}
 
+func (d dashboard) accounts() string {
+	accounts := d.pool.sorted()
+	name := 0
+	for _, a := range accounts {
+		name = max(name, lipgloss.Width(label(a)))
+	}
+	bar := min(max((d.width-name-58)/2, 14), 40)
+	indent := strings.Repeat(" ", name+6)
+
+	rows := []string{sSection.Render("ACCOUNTS"), ""}
 	for _, a := range accounts {
 		primary, secondary, cooldown, reauth := a.health()
 		stat := d.snap.Accounts[a.id()]
-		name := sText.Render(pad(label(a), widest))
-		plan := sDim.Render(pad(a.plan(), 9))
 
 		var state string
 		switch {
 		case reauth != "":
-			state = sBad.Render("✕ needs reauth")
+			state = sBad.Render("✕ " + reauth)
 		case time.Now().Before(cooldown):
-			state = lipgloss.NewStyle().Foreground(cHot).Render("◐ cooling " + short(time.Until(cooldown)))
+			state = sHot.Render("◐ back in " + short(time.Until(cooldown)))
 		default:
 			state = sGood.Render("● live")
 		}
 
-		share := ""
+		facts := []string{plural(stat.Turns, "turn")}
 		if d.snap.Turns > 0 {
-			share = fmt.Sprintf("  %d%% of traffic", stat.Turns*100/d.snap.Turns)
+			facts = append(facts, fmt.Sprintf("%d%% of traffic", stat.Turns*100/d.snap.Turns))
 		}
-		summary := sDim.Render(fmt.Sprintf("%d turns%s", stat.Turns, share))
+		if stat.Limited > 0 {
+			facts = append(facts, plural(stat.Limited, "rate limit"))
+		}
 
-		rows = append(rows,
-			fmt.Sprintf("  %s %s %s", name, plan, state),
-			fmt.Sprintf("  %s%s", strings.Repeat(" ", widest+1), gauge("5h", primary)),
-			fmt.Sprintf("  %s%s", strings.Repeat(" ", widest+1), gauge("7d", secondary)),
-			fmt.Sprintf("  %s%s  %s", strings.Repeat(" ", widest+1), spark(stat.Activity), summary),
-			"",
-		)
+		rows = append(rows, fmt.Sprintf("  %s  %s  %s",
+			sText.Render(pad(label(a), name)), sDim.Render(pad(a.plan(), 8)), state))
+		windows := []window{primary, secondary}
+		slices.SortFunc(windows, func(x, y window) int { return cmp.Compare(x.minutes, y.minutes) })
+		for _, w := range windows {
+			if w.known() {
+				rows = append(rows, indent+gauge(w, bar))
+			}
+		}
+		rows = append(rows, indent+spark(stat.Activity)+"  "+sDim.Render(strings.Join(facts, " · ")), "")
 	}
 	return strings.Join(rows, "\n")
 }
 
-func label(a *Account) string {
-	if e := a.email(); e != "" {
-		return e
+func plural(n int64, noun string) string {
+	if n == 1 {
+		return "1 " + noun
 	}
-	return a.id()
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-func gauge(fallback string, w window) string {
-	name := pad(cmp.Or(windowName(w.minutes), fallback), 3)
-	if !w.known() {
-		return sDim.Render(fmt.Sprintf("%s %s  waiting for a turn", name, strings.Repeat("░", 24)))
-	}
+func label(a *Account) string {
+	return cmp.Or(a.email(), a.id())
+}
+
+func gauge(w window, width int) string {
 	left := min(max(100-w.usedPercent, 0), 100)
-	filled := int(left / 100 * 24)
+	filled := int(left / 100 * float64(width))
 
 	style := sGood
 	switch {
 	case left <= 10:
 		style = sBad
 	case left <= 30:
-		style = lipgloss.NewStyle().Foreground(cWarn)
+		style = sWarn
 	}
 
-	bar := style.Render(strings.Repeat("█", filled)) + sDim.Render(strings.Repeat("░", 24-filled))
 	tail := ""
 	if !w.resetsAt.IsZero() {
-		tail = sDim.Render("  resets " + short(time.Until(w.resetsAt)))
+		tail = sDim.Render("  resets in " + short(time.Until(w.resetsAt)))
 	}
-	return fmt.Sprintf("%s %s %s%s", sDim.Render(name), bar, style.Render(fmt.Sprintf("%3.0f%% left", left)), tail)
+	return fmt.Sprintf("%s %s %s%s",
+		sDim.Render(pad(windowName(w.minutes), 4)),
+		style.Render(strings.Repeat("█", filled))+sDim.Render(strings.Repeat("░", width-filled)),
+		style.Render(fmt.Sprintf("%3.0f%% left", left)),
+		tail)
 }
 
 func windowName(minutes int) string {
 	switch {
 	case minutes <= 0:
-		return ""
+		return "?"
 	case minutes%(24*60) == 0:
 		return fmt.Sprintf("%dd", minutes/(24*60))
 	case minutes%60 == 0:
@@ -184,104 +233,116 @@ func windowName(minutes int) string {
 var sparkRunes = []rune("▁▂▃▄▅▆▇█")
 
 func spark(activity []int64) string {
-	if len(activity) == 0 {
-		return sDim.Render(strings.Repeat("▁", activityLen))
-	}
 	peak := int64(1)
 	for _, v := range activity {
 		peak = max(peak, v)
 	}
 	var b strings.Builder
 	for i := len(activity) - 1; i >= 0; i-- {
-		idx := int(activity[i] * int64(len(sparkRunes)-1) / peak)
-		b.WriteRune(sparkRunes[idx])
+		b.WriteRune(sparkRunes[activity[i]*int64(len(sparkRunes)-1)/peak])
 	}
-	return lipgloss.NewStyle().Foreground(cAccent).Render(b.String())
+	return sSpark.Render(b.String())
 }
 
-func (d dashboard) threads() string {
+func column(title string, rows []string, width, limit int) string {
+	out := []string{sSection.Render(title), ""}
+	for _, row := range rows {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, truncate(row, width))
+	}
+	return lipgloss.NewStyle().Width(width).Render(strings.Join(out, "\n"))
+}
+
+func (d dashboard) threads(width, height int) string {
 	threads := slices.Clone(d.snap.Threads)
 	slices.SortFunc(threads, func(x, y ThreadSnapshot) int { return cmp.Compare(y.Last.UnixNano(), x.Last.UnixNano()) })
 
-	rows := []string{sSection.Render("THREADS")}
-	if len(threads) == 0 {
-		rows = append(rows, sDim.Render("  nothing routed yet"))
-	}
-	byID := map[string]string{}
-	for _, a := range d.pool.sorted() {
-		byID[a.id()] = shortName(label(a))
-	}
-	for i, t := range threads {
-		if i >= 8 {
-			break
-		}
-		rows = append(rows, fmt.Sprintf("  %s  %s %s  %s%s",
-			sText.Render(pad(shortKey(t.Key), 10)),
+	names := d.shortNames()
+	rows := []string{}
+	for _, t := range threads {
+		rows = append(rows, fmt.Sprintf("%s %s %s %s %s",
+			sText.Render(pad(shortKey(t.Key), 9)),
 			sDim.Render("→"),
-			lipgloss.NewStyle().Foreground(cAccent).Render(pad(byID[t.Account], 12)),
-			sDim.Render(pad(fmt.Sprintf("%d turns", t.Turns), 9)),
+			sSpark.Render(pad(names[t.Account], 14)),
+			sDim.Render(pad(plural(t.Turns, "turn"), 9)),
 			sDim.Render(ago(t.Last))))
 	}
-	return strings.Join(rows, "\n")
+	if len(rows) == 0 {
+		rows = []string{sDim.Render("nothing routed yet")}
+	}
+	return column(fmt.Sprintf("THREADS  %d", len(threads)), rows, width, height)
 }
 
-func (d dashboard) totals() string {
+func (d dashboard) events(width, height int) string {
+	names := d.shortNames()
+	rows := []string{}
+	for i := len(d.snap.Events) - 1; i >= 0; i-- {
+		e := d.snap.Events[i]
+		style := sDim
+		switch e.Kind {
+		case "failover":
+			style = sBad
+		case "rate limited":
+			style = sHot
+		}
+		rows = append(rows, fmt.Sprintf("%s %s %s %s",
+			sDim.Render(e.At.Format("15:04:05")),
+			style.Render(pad(e.Kind, 13)),
+			sText.Render(pad(names[e.Account], 14)),
+			sDim.Render(e.Detail)))
+	}
+	if len(rows) == 0 {
+		rows = []string{sDim.Render("quiet")}
+	}
+	return column("EVENTS", rows, width, height)
+}
+
+func (d dashboard) totals(width int) string {
 	s := d.snap
 	rows := []string{
-		sSection.Render("TOTALS"),
 		stat("turns", fmt.Sprintf("%d", s.Turns)),
 		stat("threads", fmt.Sprintf("%d", len(s.Threads))),
+		stat("accounts", fmt.Sprintf("%d", len(d.pool.accounts))),
+		"",
 		stat("failovers", fmt.Sprintf("%d", s.Failures)),
 		stat("rate limits", fmt.Sprintf("%d", s.Limited)),
+		"",
 		stat("ttfb", short(s.TTFB)),
+		stat("uptime", short(s.Uptime)),
 	}
-	return strings.Join(rows, "\n")
+	return column("TOTALS", rows, width, len(rows)+2)
 }
 
 func stat(name, value string) string {
-	return fmt.Sprintf("  %s %s", sDim.Render(pad(name, 12)), sNum.Render(value))
+	if name == "" {
+		return ""
+	}
+	return sDim.Render(pad(name, 12)) + sNum.Render(value)
 }
 
-func (d dashboard) events() string {
-	rows := []string{sSection.Render("EVENTS")}
-	events := d.snap.Events
-	if len(events) == 0 {
-		rows = append(rows, sDim.Render("  quiet"))
+func (d dashboard) shortNames() map[string]string {
+	out := map[string]string{}
+	for _, a := range d.pool.accounts {
+		name, _, _ := strings.Cut(label(a), "@")
+		out[a.id()] = name
 	}
-	shown := 6
-	if len(events) < shown {
-		shown = len(events)
-	}
-	byID := map[string]string{}
-	for _, a := range d.pool.sorted() {
-		byID[a.id()] = shortName(label(a))
-	}
-	for _, e := range events[len(events)-shown:] {
-		style := sDim
-		if e.Kind == "failover" {
-			style = sBad
-		}
-		rows = append(rows, fmt.Sprintf("  %s  %s  %s %s",
-			sDim.Render(e.At.Format("15:04:05")),
-			style.Render(pad(e.Kind, 14)),
-			sText.Render(byID[e.Account]),
-			sDim.Render(e.Detail)))
-	}
-	return strings.Join(rows, "\n")
+	return out
 }
 
 func pad(s string, n int) string {
-	if len(s) >= n {
-		return s
-	}
-	return s + strings.Repeat(" ", n-len(s))
-}
-
-func shortName(s string) string {
-	if at := strings.IndexByte(s, '@'); at > 0 {
-		return s[:at]
+	if w := lipgloss.Width(s); w < n {
+		return s + strings.Repeat(" ", n-w)
 	}
 	return s
+}
+
+func truncate(s string, n int) string {
+	if lipgloss.Width(s) <= n {
+		return s
+	}
+	return lipgloss.NewStyle().MaxWidth(n).Render(s)
 }
 
 func shortKey(s string) string {
@@ -309,11 +370,8 @@ func short(d time.Duration) string {
 }
 
 func ago(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
 	if since := time.Since(t); since >= time.Second {
-		return "  " + short(since) + " ago"
+		return short(since) + " ago"
 	}
-	return "  now"
+	return "now"
 }

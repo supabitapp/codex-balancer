@@ -35,7 +35,7 @@ func TestWindowsReadBothRateLimitHeaders(t *testing.T) {
 }
 
 func TestWindowNameFollowsTheReportedWindow(t *testing.T) {
-	for minutes, want := range map[int]string{300: "5h", 10080: "7d", 90: "90m", 0: ""} {
+	for minutes, want := range map[int]string{300: "5h", 10080: "7d", 90: "90m", 0: "?"} {
 		if got := windowName(minutes); got != want {
 			t.Errorf("windowName(%d) = %q, want %q", minutes, got, want)
 		}
@@ -93,7 +93,7 @@ func TestGaugeReportsHeadroomNotConsumption(t *testing.T) {
 		{used: 0, want: "100% left"},
 		{used: 100, want: "  0% left"},
 	} {
-		got := ansi.ReplaceAllString(gauge("5h", window{usedPercent: tc.used, seenAt: time.Now()}), "")
+		got := ansi.ReplaceAllString(gauge(window{usedPercent: tc.used, minutes: 300, seenAt: time.Now()}, 24), "")
 		if !strings.Contains(got, tc.want) {
 			t.Errorf("gauge at %.0f%% used = %q, want it to contain %q", tc.used, got, tc.want)
 		}

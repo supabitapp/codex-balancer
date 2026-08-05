@@ -34,8 +34,8 @@ Treat the balancer as the owner of every account you give it.
 
 ```sh
 export CODEX_BALANCER_KEY=$(openssl rand -hex 16)
-codex-balancer server         # logs to stderr
-codex-balancer server -tui    # live dashboard
+codex-balancer server           # live dashboard
+codex-balancer server -no-tui   # log to stderr instead
 ```
 
 The dashboard shows each account's two rate limit windows as gauges with their
