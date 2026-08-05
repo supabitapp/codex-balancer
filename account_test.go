@@ -158,7 +158,7 @@ func TestPoolRoundTripsThroughDisk(t *testing.T) {
 	if len(reloaded.accounts) != 1 {
 		t.Fatalf("loaded %d accounts, want 1", len(reloaded.accounts))
 	}
-	if got := reloaded.accounts[0]; got.ID() != "acct-1" || got.RefreshToken != "RT" {
+	if got := reloaded.accounts[0]; got.id() != "acct-1" || got.RefreshToken != "RT" {
 		t.Fatalf("round trip lost data: %+v", got)
 	}
 }

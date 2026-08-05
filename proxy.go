@@ -91,12 +91,11 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "no account available")
 			return
 		}
-		id := account.ID()
+		id := account.id()
 
 		if account.stale(time.Now()) && !reauthed[id] {
 			reauthed[id] = true
-			if err := s.reauth(account); err != nil {
-				s.log.Warn("refresh failed", "account", id, "error", err)
+			if !s.refreshed(account, id) {
 				skip[id] = true
 				continue
 			}
@@ -110,36 +109,27 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		switch {
-		case resp.StatusCode == http.StatusUnauthorized && !reauthed[id]:
+		if resp.StatusCode == http.StatusUnauthorized && !reauthed[id] {
 			resp.Body.Close()
 			reauthed[id] = true
-			if err := s.reauth(account); err != nil {
-				s.log.Warn("refresh failed", "account", id, "error", err)
+			if !s.refreshed(account, id) {
 				skip[id] = true
 			}
 			attempt--
 			continue
+		}
 
-		case resp.StatusCode == http.StatusUnauthorized:
-			s.log.Warn("upstream rejected credentials", "account", id)
-			resp.Body.Close()
-			account.failed(attempt)
-			skip[id] = true
-			continue
-
-		case resp.StatusCode == http.StatusTooManyRequests:
-			s.log.Info("rate limited", "account", id)
-			account.rateLimited(resp.Header, attempt)
+		if status := resp.StatusCode; status == http.StatusTooManyRequests ||
+			status == http.StatusUnauthorized || status >= 500 {
 			resp.Body.Close()
 			skip[id] = true
-			continue
-
-		case resp.StatusCode >= 500:
-			s.log.Warn("upstream error", "account", id, "status", resp.StatusCode)
-			account.failed(attempt)
-			resp.Body.Close()
-			skip[id] = true
+			if status == http.StatusTooManyRequests {
+				s.log.Info("rate limited", "account", id)
+				account.rateLimited(resp.Header, attempt)
+			} else {
+				s.log.Warn("upstream refused the turn", "account", id, "status", status)
+				account.failed(attempt)
+			}
 			continue
 		}
 
@@ -151,13 +141,26 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusServiceUnavailable, "every account failed this turn")
 }
 
-func (s *server) reauth(account *Account) error {
+func (s *server) refreshed(account *Account, id string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
 	defer cancel()
 	if err := account.refresh(ctx, s.client); err != nil {
-		return err
+		s.log.Warn("refresh failed", "account", id, "error", err)
+		return false
 	}
-	return s.pool.save()
+	if err := s.pool.save(); err != nil {
+		s.log.Warn("could not persist refreshed tokens", "account", id, "error", err)
+	}
+	return true
+}
+
+func copyHeaders(dst, src http.Header) {
+	for name, values := range src {
+		if hopByHop[strings.ToLower(name)] {
+			continue
+		}
+		dst[name] = values
+	}
 }
 
 func (s *server) forward(r *http.Request, body []byte, account *Account) (*http.Response, error) {
@@ -165,28 +168,18 @@ func (s *server) forward(r *http.Request, body []byte, account *Account) (*http.
 	if err != nil {
 		return nil, err
 	}
-	for name, values := range r.Header {
-		if hopByHop[strings.ToLower(name)] {
-			continue
-		}
-		req.Header[name] = values
-	}
+	copyHeaders(req.Header, r.Header)
 	account.mu.Lock()
 	token := account.AccessToken
 	account.mu.Unlock()
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("chatgpt-account-id", account.ID())
+	req.Header.Set("chatgpt-account-id", account.id())
 	return s.client.Do(req)
 }
 
 func (s *server) relay(w http.ResponseWriter, resp *http.Response) {
 	defer resp.Body.Close()
-	for name, values := range resp.Header {
-		if hopByHop[strings.ToLower(name)] {
-			continue
-		}
-		w.Header()[name] = values
-	}
+	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
 	control := http.NewResponseController(w)

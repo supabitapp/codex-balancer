@@ -53,14 +53,14 @@ func sse(w http.ResponseWriter, id string) {
 
 func TestClaimsDeriveAccountIdentity(t *testing.T) {
 	a := &Account{IDToken: jwtFor("acct-7")}
-	if a.ID() != "acct-7" {
-		t.Fatalf("ID() = %q, want acct-7", a.ID())
+	if a.id() != "acct-7" {
+		t.Fatalf("ID() = %q, want acct-7", a.id())
 	}
-	if a.Email() != "acct-7@example.com" {
-		t.Fatalf("Email() = %q", a.Email())
+	if a.email() != "acct-7@example.com" {
+		t.Fatalf("Email() = %q", a.email())
 	}
-	if a.Plan() != "pro" {
-		t.Fatalf("Plan() = %q", a.Plan())
+	if a.plan() != "pro" {
+		t.Fatalf("Plan() = %q", a.plan())
 	}
 }
 

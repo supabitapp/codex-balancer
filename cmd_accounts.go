@@ -24,14 +24,18 @@ Flags:
   -json              machine-readable output, list only
 `
 
+func printAccountsHelp(w io.Writer) {
+	fmt.Fprintf(w, accountsHelp, defaultAccountsPath())
+}
+
 func accountsCmd(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, accountsHelp, defaultAccountsPath())
+		printAccountsHelp(os.Stderr)
 		return errors.New("no subcommand given")
 	}
 
 	fs := flag.NewFlagSet("accounts", flag.ContinueOnError)
-	fs.Usage = func() { fmt.Fprintf(os.Stderr, accountsHelp, defaultAccountsPath()) }
+	fs.Usage = func() { printAccountsHelp(os.Stderr) }
 	path := fs.String("accounts", defaultAccountsPath(), "account pool file")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -59,10 +63,10 @@ func accountsCmd(args []string) error {
 		fmt.Printf("removed %s\n", id)
 		return nil
 	case "help", "-h", "--help":
-		fmt.Printf(accountsHelp, defaultAccountsPath())
+		printAccountsHelp(os.Stdout)
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, accountsHelp, defaultAccountsPath())
+	printAccountsHelp(os.Stderr)
 	return fmt.Errorf("unknown subcommand %q", args[0])
 }
 
@@ -118,7 +122,7 @@ func addAccount(pool *Pool, source string) error {
 	if err := pool.add(account); err != nil {
 		return err
 	}
-	fmt.Printf("added %s (%s, %s)\n", account.ID(), account.Email(), account.Plan())
+	fmt.Printf("added %s (%s, %s)\n", account.id(), account.email(), account.plan())
 	return nil
 }
 
@@ -127,16 +131,13 @@ func listAccounts(pool *Pool, asJSON bool) error {
 	if asJSON {
 		out := make([]map[string]any, 0, len(accounts))
 		for _, a := range accounts {
-			a.mu.Lock()
 			out = append(out, map[string]any{
-				"id":           a.ID(),
-				"email":        a.Email(),
-				"plan":         a.Plan(),
-				"used_percent": a.pressure,
-				"cooldown":     a.cooldown,
-				"reauth":       a.dead,
+				"id":     a.id(),
+				"email":  a.email(),
+				"plan":   a.plan(),
+				"token":  tokenStatus(a),
+				"expiry": a.expires(),
 			})
-			a.mu.Unlock()
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -150,13 +151,13 @@ func listAccounts(pool *Pool, asJSON bool) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tEMAIL\tPLAN\tTOKEN")
 	for _, a := range accounts {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.ID(), a.Email(), a.Plan(), tokenAge(a))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.id(), a.email(), a.plan(), tokenStatus(a))
 	}
 	return w.Flush()
 }
 
-func tokenAge(a *Account) string {
-	expiry := a.Expires()
+func tokenStatus(a *Account) string {
+	expiry := a.expires()
 	switch {
 	case expiry.IsZero():
 		return "unknown"

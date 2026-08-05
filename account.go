@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,13 +43,7 @@ type persistedAccount Account
 func (a *Account) MarshalJSON() ([]byte, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return json.Marshal(&persistedAccount{
-		IDToken:      a.IDToken,
-		AccessToken:  a.AccessToken,
-		RefreshToken: a.RefreshToken,
-		AccountID:    a.AccountID,
-		LastRefresh:  a.LastRefresh,
-	})
+	return json.Marshal((*persistedAccount)(a))
 }
 
 type authClaims struct {
@@ -77,7 +72,7 @@ func (a *Account) claims() authClaims {
 	return c
 }
 
-func (a *Account) Expires() time.Time {
+func (a *Account) expires() time.Time {
 	var c struct {
 		Exp int64 `json:"exp"`
 	}
@@ -88,15 +83,15 @@ func (a *Account) Expires() time.Time {
 	return time.Unix(c.Exp, 0)
 }
 
-func (a *Account) ID() string {
+func (a *Account) id() string {
 	if a.AccountID != "" {
 		return a.AccountID
 	}
 	return a.claims().Auth.AccountID
 }
 
-func (a *Account) Email() string { return a.claims().Email }
-func (a *Account) Plan() string  { return a.claims().Auth.Plan }
+func (a *Account) email() string { return a.claims().Email }
+func (a *Account) plan() string  { return a.claims().Auth.Plan }
 
 func (a *Account) available(now time.Time) bool {
 	a.mu.Lock()
@@ -135,15 +130,15 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client) error {
 		a.mu.Unlock()
 		select {
 		case <-wait:
-			a.mu.Lock()
-			defer a.mu.Unlock()
-			return a.lastRefresh
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.lastRefresh
 	}
 	if a.dead != "" {
-		err := fmt.Errorf("account %s needs reauth: %s", a.ID(), a.dead)
+		err := fmt.Errorf("account %s needs reauth: %s", a.id(), a.dead)
 		a.mu.Unlock()
 		return err
 	}
@@ -198,10 +193,10 @@ func exchangeRefreshToken(ctx context.Context, hc *http.Client, token string) (r
 	defer resp.Body.Close()
 
 	if resp.StatusCode/100 != 2 {
-		text := readCapped(resp.Body, 4<<10)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		for _, reason := range permanentRefreshFailures {
-			if strings.Contains(text, reason) {
-				return out, true, fmt.Errorf("%s", reason)
+			if strings.Contains(string(body), reason) {
+				return out, true, errors.New(reason)
 			}
 		}
 		return out, resp.StatusCode == http.StatusUnauthorized,
@@ -211,9 +206,4 @@ func exchangeRefreshToken(ctx context.Context, hc *http.Client, token string) (r
 		return out, false, err
 	}
 	return out, false, nil
-}
-
-func readCapped(r io.Reader, limit int64) string {
-	data, _ := io.ReadAll(io.LimitReader(r, limit))
-	return string(data)
 }

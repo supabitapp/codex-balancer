@@ -1,13 +1,15 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"time"
 )
@@ -62,41 +64,36 @@ func (p *Pool) save() error {
 	return os.Rename(tmp.Name(), p.path)
 }
 
+func (p *Pool) indexOf(id string) int {
+	return slices.IndexFunc(p.accounts, func(a *Account) bool { return a.id() == id })
+}
+
 func (p *Pool) find(id string) *Account {
-	for _, a := range p.accounts {
-		if a.ID() == id {
-			return a
-		}
+	if i := p.indexOf(id); i >= 0 {
+		return p.accounts[i]
 	}
 	return nil
 }
 
 func (p *Pool) add(a *Account) error {
-	if a.ID() == "" {
-		return fmt.Errorf("credentials carry no chatgpt_account_id")
+	if a.id() == "" {
+		return errors.New("credentials carry no chatgpt_account_id")
 	}
-	if existing := p.find(a.ID()); existing != nil {
-		existing.IDToken = a.IDToken
-		existing.AccessToken = a.AccessToken
-		existing.RefreshToken = a.RefreshToken
-		existing.AccountID = a.AccountID
-		existing.LastRefresh = a.LastRefresh
-		existing.dead = ""
-		existing.cooldown = time.Time{}
-		return p.save()
+	if i := p.indexOf(a.id()); i >= 0 {
+		p.accounts[i] = a
+	} else {
+		p.accounts = append(p.accounts, a)
 	}
-	p.accounts = append(p.accounts, a)
 	return p.save()
 }
 
 func (p *Pool) remove(id string) error {
-	for i, a := range p.accounts {
-		if a.ID() == id {
-			p.accounts = append(p.accounts[:i], p.accounts[i+1:]...)
-			return p.save()
-		}
+	i := p.indexOf(id)
+	if i < 0 {
+		return fmt.Errorf("no account %q", id)
 	}
-	return fmt.Errorf("no account %q", id)
+	p.accounts = slices.Delete(p.accounts, i, i+1)
+	return p.save()
 }
 
 func (p *Pool) pick(prefer string, skip map[string]bool) *Account {
@@ -107,55 +104,55 @@ func (p *Pool) pick(prefer string, skip map[string]bool) *Account {
 
 	var best *Account
 	for _, a := range p.accounts {
-		if skip[a.ID()] || !a.available(now) {
+		if skip[a.id()] || !a.available(now) {
 			continue
 		}
-		if best == nil || less(a, best) {
+		if best == nil || a.roomierThan(best) {
 			best = a
 		}
 	}
 	return best
 }
 
-func less(a, b *Account) bool {
-	a.mu.Lock()
-	ap, at := a.pressure, a.lastUsed
-	a.mu.Unlock()
-	b.mu.Lock()
-	bp, bt := b.pressure, b.lastUsed
-	b.mu.Unlock()
-
+func (a *Account) roomierThan(b *Account) bool {
+	ap, at := a.load()
+	bp, bt := b.load()
 	if math.Abs(ap-bp) > 1 {
 		return ap < bp
 	}
 	return at.Before(bt)
 }
 
+func (a *Account) load() (pressure float64, lastUsed time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.pressure, a.lastUsed
+}
+
 func (p *Pool) sorted() []*Account {
-	out := append([]*Account(nil), p.accounts...)
-	sort.Slice(out, func(i, j int) bool { return out[i].ID() < out[j].ID() })
+	out := slices.Clone(p.accounts)
+	slices.SortFunc(out, func(x, y *Account) int { return cmp.Compare(x.id(), y.id()) })
 	return out
 }
 
+var usedPercentHeaders = []string{
+	"x-codex-primary-used-percent",
+	"x-codex-secondary-primary-used-percent",
+}
+
 func (a *Account) observe(h http.Header) {
-	pressure := math.Max(
-		percentHeader(h, "x-codex-primary-used-percent"),
-		percentHeader(h, "x-codex-secondary-primary-used-percent"),
-	)
+	pressure, seen := 0.0, false
+	for _, name := range usedPercentHeaders {
+		if v, err := strconv.ParseFloat(h.Get(name), 64); err == nil {
+			pressure, seen = math.Max(pressure, v), true
+		}
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.lastUsed = time.Now()
-	if pressure >= 0 {
+	if seen {
 		a.pressure = pressure
 	}
-}
-
-func percentHeader(h http.Header, name string) float64 {
-	v, err := strconv.ParseFloat(h.Get(name), 64)
-	if err != nil {
-		return -1
-	}
-	return v
 }
 
 func (a *Account) rateLimited(h http.Header, attempt int) {
