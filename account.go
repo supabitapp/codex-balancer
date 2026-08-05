@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,9 +15,10 @@ import (
 
 const (
 	oauthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
-	oauthTokenURL = "https://auth.openai.com/oauth/token"
 	refreshAfter  = 8 * 24 * time.Hour
 )
+
+var oauthEndpoint = "https://auth.openai.com/oauth/token"
 
 type Account struct {
 	IDToken      string    `json:"id_token"`
@@ -163,7 +165,7 @@ func exchangeRefreshToken(ctx context.Context, hc *http.Client, token string) (r
 	if err != nil {
 		return out, false, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, oauthTokenURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, oauthEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return out, false, err
 	}
@@ -189,4 +191,9 @@ func exchangeRefreshToken(ctx context.Context, hc *http.Client, token string) (r
 		return out, false, err
 	}
 	return out, false, nil
+}
+
+func readCapped(r io.Reader, limit int64) string {
+	data, _ := io.ReadAll(io.LimitReader(r, limit))
+	return string(data)
 }

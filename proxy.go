@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"io"
@@ -14,7 +15,15 @@ import (
 const (
 	maxRequestBody = 64 << 20
 	maxAttempts    = 3
+	refreshTimeout = 30 * time.Second
+	upstreamWait   = 90 * time.Second
 )
+
+func newProxyClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = upstreamWait
+	return &http.Client{Transport: transport}
+}
 
 type server struct {
 	pool     *Pool
@@ -77,7 +86,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 
 		if account.stale(time.Now()) && !reauthed[id] {
 			reauthed[id] = true
-			if err := s.reauth(r, account); err != nil {
+			if err := s.reauth(account); err != nil {
 				s.log.Warn("refresh failed", "account", id, "error", err)
 				skip[id] = true
 				continue
@@ -96,7 +105,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		case resp.StatusCode == http.StatusUnauthorized && !reauthed[id]:
 			resp.Body.Close()
 			reauthed[id] = true
-			if err := s.reauth(r, account); err != nil {
+			if err := s.reauth(account); err != nil {
 				s.log.Warn("refresh failed", "account", id, "error", err)
 				skip[id] = true
 			}
@@ -133,8 +142,10 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusServiceUnavailable, "every account failed this turn")
 }
 
-func (s *server) reauth(r *http.Request, account *Account) error {
-	if err := account.refresh(r.Context(), s.client); err != nil {
+func (s *server) reauth(account *Account) error {
+	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
+	defer cancel()
+	if err := account.refresh(ctx, s.client); err != nil {
 		return err
 	}
 	return s.pool.save()
@@ -202,9 +213,4 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]string{"message": message, "type": "balancer_error"},
 	})
-}
-
-func readCapped(r io.Reader, limit int64) string {
-	data, _ := io.ReadAll(io.LimitReader(r, limit))
-	return string(data)
 }

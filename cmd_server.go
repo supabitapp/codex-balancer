@@ -68,7 +68,7 @@ func serverCmd(args []string) error {
 		sticky:   sticky,
 		upstream: *upstream,
 		key:      *key,
-		client:   &http.Client{Timeout: 0},
+		client:   newProxyClient(),
 		log:      log,
 	}
 
