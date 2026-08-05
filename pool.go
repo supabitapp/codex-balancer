@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -87,10 +88,30 @@ func (p *Pool) add(a *Account) error {
 	return p.save()
 }
 
-func (p *Pool) remove(id string) error {
-	i := p.indexOf(id)
+func (p *Pool) resolve(query string) (*Account, error) {
+	if a := p.find(query); a != nil {
+		return a, nil
+	}
+	var matched []*Account
+	for _, a := range p.accounts {
+		if strings.EqualFold(a.email(), query) {
+			matched = append(matched, a)
+		}
+	}
+	switch len(matched) {
+	case 1:
+		return matched[0], nil
+	case 0:
+		return nil, fmt.Errorf("no account %q", query)
+	default:
+		return nil, fmt.Errorf("%q matches %d accounts; name one by id, which `accounts list -json` prints", query, len(matched))
+	}
+}
+
+func (p *Pool) remove(a *Account) error {
+	i := p.indexOf(a.id())
 	if i < 0 {
-		return fmt.Errorf("no account %q", id)
+		return fmt.Errorf("no account %q", a.id())
 	}
 	p.accounts = slices.Delete(p.accounts, i, i+1)
 	return p.save()
@@ -134,7 +155,9 @@ func (a *Account) load() (pressure float64, lastUsed time.Time) {
 
 func (p *Pool) sorted() []*Account {
 	out := slices.Clone(p.accounts)
-	slices.SortFunc(out, func(x, y *Account) int { return cmp.Compare(x.id(), y.id()) })
+	slices.SortFunc(out, func(x, y *Account) int {
+		return cmp.Or(cmp.Compare(x.email(), y.email()), cmp.Compare(x.id(), y.id()))
+	})
 	return out
 }
 

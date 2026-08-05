@@ -99,3 +99,57 @@ func TestGaugeReportsHeadroomNotConsumption(t *testing.T) {
 		}
 	}
 }
+
+func TestAccountsResolveByEmailOrID(t *testing.T) {
+	pool := &Pool{path: t.TempDir() + "/accounts.json"}
+	for _, id := range []string{"acct-a", "acct-b"} {
+		pool.accounts = append(pool.accounts, &Account{IDToken: jwtFor(id)})
+	}
+
+	for _, query := range []string{"acct-a@example.com", "ACCT-A@EXAMPLE.COM", "acct-a"} {
+		got, err := pool.resolve(query)
+		if err != nil {
+			t.Fatalf("resolve(%q): %v", query, err)
+		}
+		if got.id() != "acct-a" {
+			t.Fatalf("resolve(%q) = %s, want acct-a", query, got.id())
+		}
+	}
+
+	if _, err := pool.resolve("nobody@example.com"); err == nil {
+		t.Fatal("resolving an unknown email should fail")
+	}
+}
+
+func TestRemoveByEmailDropsOnlyThatAccount(t *testing.T) {
+	pool := &Pool{path: t.TempDir() + "/accounts.json"}
+	for _, id := range []string{"acct-a", "acct-b"} {
+		pool.accounts = append(pool.accounts, &Account{IDToken: jwtFor(id)})
+	}
+
+	account, err := pool.resolve("acct-a@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.remove(account); err != nil {
+		t.Fatal(err)
+	}
+	if len(pool.accounts) != 1 || pool.accounts[0].id() != "acct-b" {
+		t.Fatalf("pool = %v, want only acct-b left", pool.accounts)
+	}
+}
+
+func TestAmbiguousEmailAsksForAnID(t *testing.T) {
+	pool := &Pool{path: t.TempDir() + "/accounts.json"}
+	pool.accounts = append(pool.accounts,
+		&Account{IDToken: jwtFor("acct-a"), AccountID: "workspace-one"},
+		&Account{IDToken: jwtFor("acct-a"), AccountID: "workspace-two"})
+
+	_, err := pool.resolve("acct-a@example.com")
+	if err == nil || !strings.Contains(err.Error(), "matches 2 accounts") {
+		t.Fatalf("err = %v, want a request to name one by id", err)
+	}
+	if _, err := pool.resolve("workspace-two"); err != nil {
+		t.Fatalf("the id must still resolve: %v", err)
+	}
+}

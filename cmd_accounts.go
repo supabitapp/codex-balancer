@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,7 +18,7 @@ const accountsHelp = `Manage the account pool.
 Usage:
   codex-balancer accounts add [file...] Import Codex auth.json files (default ~/.codex/auth.json, "-" for stdin)
   codex-balancer accounts list         Show pooled accounts
-  codex-balancer accounts rm <id>      Drop an account
+  codex-balancer accounts rm <email>   Drop an account
 
 Flags:
   -accounts string   account pool file (default %s)
@@ -53,14 +54,18 @@ func accountsCmd(args []string) error {
 	case "list":
 		return listAccounts(pool, *asJSON)
 	case "rm":
-		id := fs.Arg(0)
-		if id == "" {
-			return errors.New("accounts rm needs an account id")
+		who := fs.Arg(0)
+		if who == "" {
+			return errors.New("accounts rm needs an email")
 		}
-		if err := pool.remove(id); err != nil {
+		account, err := pool.resolve(who)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("removed %s\n", id)
+		if err := pool.remove(account); err != nil {
+			return err
+		}
+		fmt.Printf("removed %s\n", describe(account))
 		return nil
 	case "help", "-h", "--help":
 		printAccountsHelp(os.Stdout)
@@ -122,8 +127,15 @@ func addAccount(pool *Pool, source string) error {
 	if err := pool.add(account); err != nil {
 		return err
 	}
-	fmt.Printf("added %s (%s, %s)\n", account.id(), account.email(), account.plan())
+	fmt.Printf("added %s\n", describe(account))
 	return nil
+}
+
+func describe(a *Account) string {
+	if a.email() == "" {
+		return a.id()
+	}
+	return fmt.Sprintf("%s (%s)", a.email(), a.plan())
 }
 
 func listAccounts(pool *Pool, asJSON bool) error {
@@ -149,9 +161,9 @@ func listAccounts(pool *Pool, asJSON bool) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tEMAIL\tPLAN\tTOKEN")
+	fmt.Fprintln(w, "EMAIL\tPLAN\tTOKEN")
 	for _, a := range accounts {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.id(), a.email(), a.plan(), tokenStatus(a))
+		fmt.Fprintf(w, "%s\t%s\t%s\n", cmp.Or(a.email(), a.id()), a.plan(), tokenStatus(a))
 	}
 	return w.Flush()
 }
