@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	frame      = 500 * time.Millisecond
-	totalsWide = 24
-	columnGap  = 3
+	frame     = 500 * time.Millisecond
+	columnGap = 3
 )
 
 var (
@@ -107,19 +106,22 @@ func (d dashboard) render() string {
 	}
 	head := d.header()
 	accounts := d.accounts()
+	totals := d.totals(d.width)
+	detailHeight := d.height - lipgloss.Height(head) - lipgloss.Height(accounts) - lipgloss.Height(totals) - 1
+	if detailHeight < 6 {
+		return sDim.Render("terminal too small")
+	}
+	threadsHeight := detailHeight / 2
+	eventsHeight := detailHeight - threadsHeight
 
-	spare := d.width - totalsWide - 2*columnGap
-	threadsWide := spare * 9 / 20
-	rows := max(d.height-lipgloss.Height(head)-lipgloss.Height(accounts)-3, 5)
-
-	bottom := lipgloss.JoinHorizontal(lipgloss.Top,
-		d.threads(threadsWide, rows),
-		strings.Repeat(" ", columnGap),
-		d.events(spare-threadsWide, rows),
-		strings.Repeat(" ", columnGap),
-		d.totals(totalsWide),
+	return lipgloss.JoinVertical(lipgloss.Left,
+		head,
+		"",
+		accounts,
+		totals,
+		d.threads(d.width, threadsHeight),
+		d.events(d.width, eventsHeight),
 	)
-	return lipgloss.JoinVertical(lipgloss.Left, head, "", accounts, bottom)
 }
 
 func (d dashboard) header() string {
@@ -389,16 +391,27 @@ func (d dashboard) events(width, height int) string {
 
 func (d dashboard) totals(width int) string {
 	s := d.snap
-	rows := []string{
-		stat("turns", fmt.Sprintf("%d", s.Turns)),
-		stat("threads", fmt.Sprintf("%d", len(s.Threads))),
-		stat("accounts", fmt.Sprintf("%d", len(d.pool.accounts))),
-		"",
-		stat("failovers", fmt.Sprintf("%d", s.Failures)),
-		stat("rate limits", fmt.Sprintf("%d", s.Limited)),
-		"",
-		stat("ttfb", short(s.TTFB)),
-		stat("uptime", short(s.Uptime)),
+	stats := [][]string{
+		{
+			stat("turns", fmt.Sprintf("%d", s.Turns)),
+			stat("threads", fmt.Sprintf("%d", len(s.Threads))),
+			stat("accounts", fmt.Sprintf("%d", len(d.pool.accounts))),
+			stat("failovers", fmt.Sprintf("%d", s.Failures)),
+		},
+		{
+			stat("rate limits", fmt.Sprintf("%d", s.Limited)),
+			stat("ttfb", short(s.TTFB)),
+			stat("uptime", short(s.Uptime)),
+		},
+	}
+	cellWidth := (width - 3*columnGap) / 4
+	rows := make([]string, 0, len(stats))
+	for _, statRow := range stats {
+		cells := make([]string, 0, len(statRow))
+		for _, value := range statRow {
+			cells = append(cells, lipgloss.NewStyle().Width(cellWidth).MaxWidth(cellWidth).Render(value))
+		}
+		rows = append(rows, strings.Join(cells, strings.Repeat(" ", columnGap)))
 	}
 	return column("TOTALS", rows, width, len(rows)+2)
 }
