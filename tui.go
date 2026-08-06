@@ -223,7 +223,7 @@ func (d dashboard) accounts() string {
 		case reauth != "":
 			status = sBad.Render(fit("✕ "+reauth, statusW))
 		case now.Before(cooldown):
-			status = sHot.Render(fit("◐ "+short(cooldown.Sub(now)), statusW))
+			status = sHot.Render(fit("◐ cooling", statusW))
 		default:
 			status = sGood.Render(fit("● live", statusW))
 		}
