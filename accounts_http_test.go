@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -62,39 +63,32 @@ func TestAccountEndpointCompletesDeviceLogin(t *testing.T) {
 	s.key = "secret"
 	handler := s.routes()
 
-	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/accounts", nil))
-	if unauthorized.Code != http.StatusUnauthorized || starts.Load() != 0 {
-		t.Fatalf("unauthorized request returned %d after %d provider calls", unauthorized.Code, starts.Load())
-	}
-
 	started := httptest.NewRecorder()
-	startRequest := httptest.NewRequest(http.MethodPost, "/accounts", nil)
-	startRequest.Header.Set("Authorization", "Bearer secret")
-	handler.ServeHTTP(started, startRequest)
-	if started.Code != http.StatusAccepted {
-		t.Fatalf("start status = %d, want 202: %s", started.Code, started.Body)
+	handler.ServeHTTP(started, httptest.NewRequest(http.MethodGet, "/accounts", nil))
+	if started.Code != http.StatusOK {
+		t.Fatalf("start status = %d, want 200: %s", started.Code, started.Body)
 	}
-	var pending accountLoginResponse
-	if err := json.Unmarshal(started.Body.Bytes(), &pending); err != nil {
-		t.Fatal(err)
+	if got := started.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("content type = %q", got)
 	}
-	if pending.Status != "pending" || pending.UserCode != "CODE-123" {
-		t.Fatalf("pending login = %+v", pending)
+	for _, want := range []string{issuer + "/codex/device", "CODE-123", "15 minutes", "href=\"/stats\""} {
+		if !strings.Contains(started.Body.String(), want) {
+			t.Fatalf("account page does not contain %q: %s", want, started.Body)
+		}
 	}
-	if pending.VerificationURL != issuer+"/codex/device" || pending.ExpiresAt.IsZero() {
-		t.Fatalf("pending login = %+v", pending)
-	}
-	if started.Header().Get("Location") != "" {
-		t.Fatalf("removed status endpoint returned location %q", started.Header().Get("Location"))
+	if starts.Load() != 1 {
+		t.Fatalf("provider starts = %d, want 1", starts.Load())
 	}
 
 	duplicate := httptest.NewRecorder()
-	duplicateRequest := httptest.NewRequest(http.MethodPost, "/accounts", nil)
-	duplicateRequest.Header.Set("Authorization", "Bearer secret")
-	handler.ServeHTTP(duplicate, duplicateRequest)
+	handler.ServeHTTP(duplicate, httptest.NewRequest(http.MethodGet, "/accounts", nil))
 	if duplicate.Code != http.StatusConflict || starts.Load() != 1 {
 		t.Fatalf("duplicate request returned %d after %d provider calls", duplicate.Code, starts.Load())
+	}
+	post := httptest.NewRecorder()
+	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/accounts", nil))
+	if post.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("removed POST endpoint = %d, want 405", post.Code)
 	}
 
 	removed := httptest.NewRecorder()

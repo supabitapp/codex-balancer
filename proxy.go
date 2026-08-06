@@ -65,7 +65,7 @@ var websocketHopByHop = map[string]bool{
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /accounts", s.startAccountLogin)
+	mux.HandleFunc("GET /accounts", s.accountsPage)
 	mux.HandleFunc("GET /stats", s.statsJSON)
 	mux.HandleFunc("POST /v1/responses", s.responses)
 	mux.HandleFunc("GET /v1/responses", s.responsesWebSocket)

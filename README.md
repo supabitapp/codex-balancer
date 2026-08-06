@@ -39,15 +39,11 @@ removed by another command reach routing and the dashboard without a restart.
 The server can start with an empty pool, so it can add its first account over
 HTTP.
 
-`POST /accounts` starts a device-code sign-in and returns `202 Accepted` with a
-verification URL, one-time code, and expiry. Open the URL and enter the code.
-The server adds the account in the background, and `/stats` shows it when done.
-Only one sign-in can run at a time. The endpoint uses the server's bearer key.
+Open `/accounts` in a browser to add an account. The public page shows a sign-in
+link and one-time code. The server adds the account in the background, and
+`/stats` shows it when done. Only one sign-in can run at a time.
 
-```sh
-curl -i -X POST -H "Authorization: Bearer $CODEX_BALANCER_KEY" \
-  http://127.0.0.1:8317/accounts
-```
+<http://127.0.0.1:8317/accounts>
 
 ## Serve
 

@@ -1,11 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"html/template"
 	"net/http"
 	"sync"
-	"time"
 )
 
 var errAccountLoginPending = errors.New("an account login is already pending")
@@ -31,20 +32,43 @@ func (s *accountLoginStore) release() {
 	s.pending = false
 }
 
-type accountLoginResponse struct {
-	Status          string    `json:"status"`
-	VerificationURL string    `json:"verification_url"`
-	UserCode        string    `json:"user_code"`
-	ExpiresAt       time.Time `json:"expires_at"`
+type accountLoginPageData struct {
+	VerificationURL string
+	UserCode        string
+	ExpiresIn       int
 }
 
-func (s *server) startAccountLogin(w http.ResponseWriter, r *http.Request) {
-	if !s.authorized(r) {
-		writeError(w, http.StatusUnauthorized, "missing or invalid bearer key")
-		return
-	}
+var accountLoginPage = template.Must(template.New("account-login").Parse(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add account</title>
+<style>
+:root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; background: #11111b; color: #cdd6f4 }
+body { min-height: 100vh; margin: 0; display: grid; place-items: center }
+main { width: min(32rem, calc(100% - 3rem)); padding: 2rem; border: 1px solid #45475a; border-radius: 1rem; background: #181825 }
+h1 { margin: 0 0 .75rem; font-size: 1.75rem }
+p { color: #a6adc8; line-height: 1.5 }
+code { display: block; margin: 1.5rem 0; padding: 1rem; border-radius: .6rem; background: #313244; color: #f9e2af; font: 700 1.5rem ui-monospace, monospace; letter-spacing: .08em; text-align: center }
+a { color: #89b4fa }
+.button { display: inline-block; padding: .7rem 1rem; border-radius: .5rem; background: #89b4fa; color: #11111b; font-weight: 700; text-decoration: none }
+</style>
+</head>
+<body>
+<main>
+<h1>Add an account</h1>
+<p>Open the sign-in page and enter this one-time code.</p>
+<code>{{.UserCode}}</code>
+<p><a class="button" href="{{.VerificationURL}}" target="_blank" rel="noreferrer">Open sign-in</a></p>
+<p>The code expires in {{.ExpiresIn}} minutes. The account will appear in <a href="/stats">stats</a> after sign-in.</p>
+</main>
+</body>
+</html>`))
+
+func (s *server) accountsPage(w http.ResponseWriter, r *http.Request) {
 	if err := s.logins.reserve(); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 	issuer := s.accountAuthIssuer()
@@ -55,7 +79,17 @@ func (s *server) startAccountLogin(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		s.logins.release()
-		writeError(w, http.StatusBadGateway, err.Error())
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	var page bytes.Buffer
+	if err := accountLoginPage.Execute(&page, accountLoginPageData{
+		VerificationURL: deviceVerificationURL(issuer),
+		UserCode:        device.userCode,
+		ExpiresIn:       int(deviceAuthTimeout.Minutes()),
+	}); err != nil {
+		s.logins.release()
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	ctx := s.ctx
@@ -64,12 +98,12 @@ func (s *server) startAccountLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	go s.completeAccountLogin(ctx, issuer, device)
 
-	writeJSON(w, http.StatusAccepted, accountLoginResponse{
-		Status:          "pending",
-		VerificationURL: deviceVerificationURL(issuer),
-		UserCode:        device.userCode,
-		ExpiresAt:       time.Now().Add(deviceAuthTimeout),
-	})
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Write(page.Bytes())
 }
 
 func (s *server) completeAccountLogin(ctx context.Context, issuer string, device deviceAuthorization) {
