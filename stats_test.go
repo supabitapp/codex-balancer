@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,97 @@ import (
 
 	"charm.land/lipgloss/v2"
 )
+
+func TestStatsEndpointReturnsDashboardAccountState(t *testing.T) {
+	now := time.Now()
+	account := accountFromState(accountState{
+		IDToken: jwtForEmail("khoi.nguyen@example.com", "acct-a"),
+	})
+	banked := int64(3)
+	primaryReset := now.Add(2 * time.Hour).Truncate(time.Second)
+	account.adopt(
+		window{usedPercent: 25, minutes: 300, resetsAt: primaryReset, seenAt: now},
+		window{usedPercent: 64, minutes: 10080, resetsAt: now.Add(4 * 24 * time.Hour), seenAt: now},
+		&banked,
+		false,
+	)
+	account.rateLimited(http.Header{"Retry-After": []string{"60"}}, 0)
+	stats := newStats()
+	stats.routed("thread-a", "acct-a", "", transportWebSocket)
+	stats.websocketOpened("acct-a")
+	stats.rateLimited("acct-a")
+	stats.answered(1500 * time.Microsecond)
+	s := &server{
+		pool:  &Pool{accounts: []*Account{account}},
+		stats: stats,
+		key:   "secret",
+	}
+
+	unauthorized := httptest.NewRecorder()
+	s.routes().ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/stats", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want 401", unauthorized.Code)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	s.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content type = %q, want application/json", got)
+	}
+	if strings.Contains(rec.Body.String(), "khoi.nguyen@example.com") {
+		t.Fatalf("response leaks the email: %s", rec.Body)
+	}
+
+	var got statsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Turns != 1 || got.WebSocketTurns != 1 || got.OpenWebSockets != 1 || got.Threads != 1 {
+		t.Fatalf("totals = %+v", got)
+	}
+	if got.RateLimits != 1 || got.AverageTTFBMilliseconds != 1.5 || got.UptimeSeconds <= 0 {
+		t.Fatalf("rates = %+v", got)
+	}
+	if len(got.Accounts) != 1 {
+		t.Fatalf("accounts = %d, want 1", len(got.Accounts))
+	}
+	gotAccount := got.Accounts[0]
+	if gotAccount.ID != "acct-a" || gotAccount.Email != "k***n@example.com" || gotAccount.Plan != "pro" {
+		t.Fatalf("account identity = %+v", gotAccount)
+	}
+	if gotAccount.Status != accountCooling || gotAccount.Turns != 1 || gotAccount.OpenWebSockets != 1 || gotAccount.RateLimits != 1 {
+		t.Fatalf("account status = %+v", gotAccount)
+	}
+	if gotAccount.WeeklyRemainingPercent == nil || *gotAccount.WeeklyRemainingPercent != 36 {
+		t.Fatalf("weekly remaining = %v, want 36", gotAccount.WeeklyRemainingPercent)
+	}
+	if gotAccount.BankedResets == nil || *gotAccount.BankedResets != 3 {
+		t.Fatalf("banked resets = %v, want 3", gotAccount.BankedResets)
+	}
+	if gotAccount.ResetAt == nil || !gotAccount.ResetAt.Equal(primaryReset) {
+		t.Fatalf("reset at = %v, want %s", gotAccount.ResetAt, primaryReset)
+	}
+}
+
+func TestMaskEmailHidesTheLocalPart(t *testing.T) {
+	for email, want := range map[string]string{
+		"khoi@example.com": "k***i@example.com",
+		"ab@example.com":   "a***@example.com",
+		"a@example.com":    "***@example.com",
+		"not-an-email":     "***",
+		"":                 "",
+	} {
+		if got := maskEmail(email); got != want {
+			t.Errorf("maskEmail(%q) = %q, want %q", email, got, want)
+		}
+	}
+}
 
 func TestWindowsReadBothRateLimitHeaders(t *testing.T) {
 	reset := time.Now().Add(2 * time.Hour).Unix()

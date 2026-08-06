@@ -61,6 +61,14 @@ costs no quota. So the gauges keep moving while you are idle, and an account
 parked by a 429 comes back the moment upstream says its window has room rather
 than when the reset header guessed. `-poll 0` turns the reads off.
 
+`GET /stats` returns the same live account status as JSON. It uses the server's
+bearer key unless `-no-auth` is set. Account emails keep their first and last
+local-part characters and domain, such as `k***i@example.com`.
+
+```sh
+curl -H "Authorization: Bearer $CODEX_BALANCER_KEY" http://127.0.0.1:8317/stats
+```
+
 ## Point Codex at it
 
 In `~/.codex/config.toml`:

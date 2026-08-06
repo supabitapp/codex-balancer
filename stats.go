@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -236,4 +239,103 @@ func (s *Stats) snapshot() Snapshot {
 		})
 	}
 	return out
+}
+
+type statsResponse struct {
+	UptimeSeconds           float64                `json:"uptime_seconds"`
+	Turns                   int64                  `json:"turns"`
+	WebSocketTurns          int64                  `json:"websocket_turns"`
+	OpenWebSockets          int64                  `json:"open_websockets"`
+	Threads                 int                    `json:"threads"`
+	Failovers               int64                  `json:"failovers"`
+	RateLimits              int64                  `json:"rate_limits"`
+	AverageTTFBMilliseconds float64                `json:"average_ttfb_ms"`
+	Accounts                []accountStatsResponse `json:"accounts"`
+}
+
+type accountStatsResponse struct {
+	ID                     string        `json:"id"`
+	Email                  string        `json:"email,omitempty"`
+	Plan                   string        `json:"plan"`
+	Status                 accountStatus `json:"status"`
+	WeeklyRemainingPercent *int          `json:"weekly_remaining_percent"`
+	BankedResets           *int64        `json:"banked_resets"`
+	ResetAt                *time.Time    `json:"reset_at"`
+	Turns                  int64         `json:"turns"`
+	OpenWebSockets         int64         `json:"open_websockets"`
+	RateLimits             int64         `json:"rate_limits"`
+}
+
+func (s *server) statsJSON(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "missing or invalid bearer key")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.currentStats(time.Now()))
+}
+
+func (s *server) currentStats(now time.Time) statsResponse {
+	snapshot := s.stats.snapshot()
+	out := statsResponse{
+		UptimeSeconds:           snapshot.Uptime.Seconds(),
+		Turns:                   snapshot.Turns,
+		WebSocketTurns:          snapshot.WSTurns,
+		OpenWebSockets:          snapshot.WSOpen,
+		Threads:                 len(snapshot.Threads),
+		Failovers:               snapshot.Failures,
+		RateLimits:              snapshot.Limited,
+		AverageTTFBMilliseconds: float64(snapshot.TTFB) / float64(time.Millisecond),
+		Accounts:                make([]accountStatsResponse, 0, s.pool.count()),
+	}
+	for _, account := range s.pool.sorted() {
+		claims := account.claims()
+		primary, secondary, _, _ := account.health()
+		traffic := snapshot.Accounts[claims.Auth.AccountID]
+		weekly := longestWindow(primary, secondary)
+		var weeklyRemaining *int
+		if remaining, known := remainingPercent(weekly); known {
+			weeklyRemaining = &remaining
+		}
+		var bankedResets *int64
+		if count, known := account.bankedResets(); known {
+			bankedResets = &count
+		}
+		var resetAt *time.Time
+		if reset := nextReset(now, primary, secondary); !reset.IsZero() {
+			resetAt = &reset
+		}
+		out.Accounts = append(out.Accounts, accountStatsResponse{
+			ID:                     claims.Auth.AccountID,
+			Email:                  maskEmail(claims.Email),
+			Plan:                   claims.Auth.Plan,
+			Status:                 account.status(now),
+			WeeklyRemainingPercent: weeklyRemaining,
+			BankedResets:           bankedResets,
+			ResetAt:                resetAt,
+			Turns:                  traffic.Turns,
+			OpenWebSockets:         traffic.WSOpen,
+			RateLimits:             traffic.Limited,
+		})
+	}
+	return out
+}
+
+func maskEmail(email string) string {
+	at := strings.LastIndexByte(email, '@')
+	if at <= 0 || at == len(email)-1 {
+		if email == "" {
+			return ""
+		}
+		return "***"
+	}
+	local, domain := []rune(email[:at]), email[at:]
+	switch len(local) {
+	case 1:
+		return "***" + domain
+	case 2:
+		return string(local[0]) + "***" + domain
+	default:
+		return string(local[0]) + "***" + string(local[len(local)-1]) + domain
+	}
 }

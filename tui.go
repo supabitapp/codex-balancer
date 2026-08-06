@@ -160,14 +160,14 @@ func (d dashboard) header() string {
 	live, cooling, dead, held := 0, 0, 0, 0
 	now := time.Now()
 	for _, a := range d.pool.all() {
-		switch _, _, cooldown, reauth := a.health(); {
-		case a.paused():
+		switch a.status(now) {
+		case accountPaused:
 			held++
-		case reauth != "":
+		case accountNeedsReauth:
 			dead++
-		case now.Before(cooldown):
+		case accountCooling:
 			cooling++
-		default:
+		case accountLive:
 			live++
 		}
 	}
@@ -255,20 +255,20 @@ func (d dashboard) accounts(limit int) string {
 	rows := []string{sSection.Render(title) + sDim.Render("   ↑↓ pick · space pauses"), "", hdr, sep}
 
 	for i, a := range accounts[start:end] {
-		primary, secondary, cooldown, reauth := a.health()
+		primary, secondary, _, reauth := a.health()
 		weekly := longestWindow(primary, secondary)
 		stat := d.snap.Accounts[a.id()]
 		now := time.Now()
 
 		var status string
-		switch {
-		case a.paused():
+		switch a.status(now) {
+		case accountPaused:
 			status = sDim.Render(fit("⏸ paused", statusW))
-		case reauth != "":
+		case accountNeedsReauth:
 			status = sBad.Render(fit("✕ "+reauth, statusW))
-		case now.Before(cooldown):
+		case accountCooling:
 			status = sHot.Render(fit("◐ cooling", statusW))
-		default:
+		case accountLive:
 			status = sGood.Render(fit("● live", statusW))
 		}
 

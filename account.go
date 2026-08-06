@@ -51,6 +51,15 @@ type window struct {
 	seenAt      time.Time
 }
 
+type accountStatus string
+
+const (
+	accountLive        accountStatus = "live"
+	accountCooling     accountStatus = "cooling"
+	accountPaused      accountStatus = "paused"
+	accountNeedsReauth accountStatus = "needs_reauth"
+)
+
 func (w window) known() bool { return !w.seenAt.IsZero() }
 
 func (a *Account) pressure() float64 {
@@ -61,6 +70,21 @@ func (a *Account) health() (primary, secondary window, cooldown time.Time, reaut
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.primary, a.secondary, a.cooldown, a.dead
+}
+
+func (a *Account) status(now time.Time) accountStatus {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch {
+	case a.Paused:
+		return accountPaused
+	case a.dead != "":
+		return accountNeedsReauth
+	case now.Before(a.cooldown):
+		return accountCooling
+	default:
+		return accountLive
+	}
 }
 
 func (a *Account) bankedResets() (int64, bool) {
