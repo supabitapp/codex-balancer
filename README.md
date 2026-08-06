@@ -23,9 +23,10 @@ codex-balancer accounts add     # opens a browser, sign in, repeat per account
 codex-balancer accounts list
 ```
 
-`add` runs the ChatGPT sign-in itself: it starts the OAuth flow, waits on
-`127.0.0.1:1455` for the redirect, and trades the code for tokens. Nothing reads
-or writes `~/.codex`, so the balancer and Codex hold separate sessions.
+`add` runs the ChatGPT sign-in itself: it starts the OAuth flow, accepts the
+redirect on `127.0.0.1:1455` or as a pasted callback URL, and trades the code for
+tokens. Nothing reads or writes `~/.codex`, so the balancer and Codex hold
+separate sessions.
 
 Accounts live in `~/.codex-balancer/accounts.json`, mode 0600. Each sign-in
 mints a refresh token the balancer alone rotates, so copying that file to a

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -18,6 +19,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,13 +31,47 @@ const (
 )
 
 var (
-	callbackAddr = fmt.Sprintf("127.0.0.1:%d", callbackPort)
-	redirectURI  = fmt.Sprintf("http://localhost:%d%s", callbackPort, callbackPath)
+	callbackAddr     = fmt.Sprintf("127.0.0.1:%d", callbackPort)
+	redirectURI      = fmt.Sprintf("http://localhost:%d%s", callbackPort, callbackPath)
+	errStateMismatch = errors.New("state mismatch")
+	errLoginComplete = errors.New("sign-in already completed")
 )
 
 type loginResult struct {
 	account *Account
 	err     error
+}
+
+type loginFlow struct {
+	ctx      context.Context
+	hc       *http.Client
+	verifier string
+	state    string
+	done     chan loginResult
+	once     sync.Once
+}
+
+func newLoginFlow(ctx context.Context, hc *http.Client, verifier, state string) *loginFlow {
+	return &loginFlow{
+		ctx:      ctx,
+		hc:       hc,
+		verifier: verifier,
+		state:    state,
+		done:     make(chan loginResult, 1),
+	}
+}
+
+func (f *loginFlow) complete(query url.Values) loginResult {
+	if query.Get("state") != f.state {
+		return loginResult{err: errStateMismatch}
+	}
+
+	result := loginResult{err: errLoginComplete}
+	f.once.Do(func() {
+		result.account, result.err = redeem(f.ctx, f.hc, query, f.verifier)
+		f.done <- result
+	})
+	return result
 }
 
 func login(ctx context.Context, hc *http.Client) (*Account, error) {
@@ -47,42 +83,75 @@ func login(ctx context.Context, hc *http.Client) (*Account, error) {
 
 	verifier := randomToken(64)
 	state := randomToken(32)
-	done := make(chan loginResult, 1)
+	flow := newLoginFlow(ctx, hc, verifier, state)
 
-	server := &http.Server{Handler: callbackHandler(ctx, hc, verifier, state, done)}
+	server := &http.Server{Handler: callbackHandler(flow)}
 	go server.Serve(listener)
 	defer server.Shutdown(context.Background())
 
 	link := authorizeURL(challengeFor(verifier), state)
-	fmt.Fprintf(os.Stderr, "Opening your browser to sign in.\nIf nothing opens, visit:\n\n%s\n\n", link)
+	fmt.Fprintf(os.Stderr, "Opening your browser to sign in.\nIf nothing opens, visit:\n\n%s\n\nIf the callback does not open, paste its full URL here:\n", link)
 	openBrowser(link)
+	go acceptPastedCallbacks(os.Stdin, os.Stderr, flow)
 
 	select {
-	case result := <-done:
+	case result := <-flow.done:
 		return result.account, result.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-func callbackHandler(ctx context.Context, hc *http.Client, verifier, state string, done chan<- loginResult) http.Handler {
+func callbackHandler(flow *loginFlow) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+callbackPath, func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query()
-		if query.Get("state") != state {
-			http.Error(w, "state mismatch", http.StatusBadRequest)
-			return
-		}
-		account, err := redeem(ctx, hc, query, verifier)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		result := flow.complete(r.URL.Query())
+		if result.err != nil {
+			http.Error(w, result.err.Error(), http.StatusBadRequest)
 		} else {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			fmt.Fprintf(w, successPage, html.EscapeString(describe(account)))
+			fmt.Fprintf(w, successPage, html.EscapeString(describe(result.account)))
 		}
-		done <- loginResult{account, err}
 	})
 	return mux
+}
+
+func acceptPastedCallbacks(in io.Reader, out io.Writer, flow *loginFlow) {
+	scanner := bufio.NewScanner(in)
+	for scanner.Scan() {
+		query, err := parseCallbackURL(scanner.Text())
+		if err != nil {
+			fmt.Fprintf(out, "Could not use callback URL: %v\nPaste its full URL here:\n", err)
+			continue
+		}
+		result := flow.complete(query)
+		if errors.Is(result.err, errStateMismatch) {
+			fmt.Fprintf(out, "Could not use callback URL: %v\nPaste its full URL here:\n", result.err)
+			continue
+		}
+		return
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(out, "Could not read callback URL: %v\n", err)
+	}
+}
+
+func parseCallbackURL(raw string) (url.Values, error) {
+	callback, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, err
+	}
+	expected, err := url.Parse(redirectURI)
+	if err != nil {
+		return nil, err
+	}
+	if callback.Scheme != expected.Scheme ||
+		!strings.EqualFold(callback.Hostname(), expected.Hostname()) ||
+		callback.Port() != expected.Port() ||
+		callback.Path != expected.Path {
+		return nil, fmt.Errorf("expected %s", redirectURI)
+	}
+	return callback.Query(), nil
 }
 
 func redeem(ctx context.Context, hc *http.Client, query url.Values, verifier string) (*Account, error) {

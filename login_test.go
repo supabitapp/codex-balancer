@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,8 +23,8 @@ func TestCallbackRedeemsTheCodeWithThePkceVerifier(t *testing.T) {
 		})
 	})
 
-	done := make(chan loginResult, 1)
-	handler := callbackHandler(context.Background(), http.DefaultClient, "VERIFIER", "STATE", done)
+	flow := newLoginFlow(context.Background(), http.DefaultClient, "VERIFIER", "STATE")
+	handler := callbackHandler(flow)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, callbackPath+"?code=CODE&state=STATE", nil))
@@ -44,7 +45,7 @@ func TestCallbackRedeemsTheCodeWithThePkceVerifier(t *testing.T) {
 		t.Errorf("redirect_uri = %q, want %q", sent.Get("redirect_uri"), redirectURI)
 	}
 
-	result := <-done
+	result := <-flow.done
 	if result.err != nil {
 		t.Fatal(result.err)
 	}
@@ -57,8 +58,8 @@ func TestCallbackRedeemsTheCodeWithThePkceVerifier(t *testing.T) {
 }
 
 func TestCallbackIgnoresAForeignState(t *testing.T) {
-	done := make(chan loginResult, 1)
-	handler := callbackHandler(context.Background(), http.DefaultClient, "VERIFIER", "STATE", done)
+	flow := newLoginFlow(context.Background(), http.DefaultClient, "VERIFIER", "STATE")
+	handler := callbackHandler(flow)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, callbackPath+"?code=CODE&state=OTHER", nil))
@@ -67,23 +68,54 @@ func TestCallbackIgnoresAForeignState(t *testing.T) {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 	select {
-	case result := <-done:
+	case result := <-flow.done:
 		t.Fatalf("a forged callback ended the login: %+v", result)
 	default:
 	}
 }
 
 func TestCallbackReportsTheProvidersRefusal(t *testing.T) {
-	done := make(chan loginResult, 1)
-	handler := callbackHandler(context.Background(), http.DefaultClient, "VERIFIER", "STATE", done)
+	flow := newLoginFlow(context.Background(), http.DefaultClient, "VERIFIER", "STATE")
+	handler := callbackHandler(flow)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
 		callbackPath+"?state=STATE&error=access_denied&error_description=missing_codex_entitlement", nil))
 
-	result := <-done
+	result := <-flow.done
 	if result.err == nil || !strings.Contains(result.err.Error(), "missing_codex_entitlement") {
 		t.Fatalf("err = %v, want the provider's reason", result.err)
+	}
+}
+
+func TestPastedCallbackRedeemsTheCode(t *testing.T) {
+	var sent url.Values
+	withTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		sent = r.PostForm
+		json.NewEncoder(w).Encode(tokenResponse{
+			IDToken:      jwtFor("acct-1"),
+			AccessToken:  "AT",
+			RefreshToken: "RT",
+		})
+	})
+
+	flow := newLoginFlow(context.Background(), http.DefaultClient, "VERIFIER", "STATE")
+	acceptPastedCallbacks(
+		strings.NewReader(redirectURI+"?code=PASTED&scope=openid+profile+email&state=STATE\n"),
+		io.Discard,
+		flow,
+	)
+
+	result := <-flow.done
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if result.account.id() != "acct-1" {
+		t.Fatalf("account = %s, want acct-1", result.account.id())
+	}
+	if sent.Get("code") != "PASTED" || sent.Get("code_verifier") != "VERIFIER" {
+		t.Fatalf("exchange sent %v", sent)
 	}
 }
 
