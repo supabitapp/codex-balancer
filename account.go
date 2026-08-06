@@ -26,7 +26,6 @@ type Account struct {
 	IDToken      string    `json:"id_token"`
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
-	AccountID    string    `json:"account_id,omitempty"`
 	LastRefresh  time.Time `json:"last_refresh"`
 
 	mu          sync.Mutex
@@ -104,13 +103,7 @@ func (a *Account) expires() time.Time {
 	return time.Unix(c.Exp, 0)
 }
 
-func (a *Account) id() string {
-	if a.AccountID != "" {
-		return a.AccountID
-	}
-	return a.claims().Auth.AccountID
-}
-
+func (a *Account) id() string    { return a.claims().Auth.AccountID }
 func (a *Account) email() string { return a.claims().Email }
 func (a *Account) plan() string  { return a.claims().Auth.Plan }
 
@@ -132,7 +125,7 @@ type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-type refreshResponse struct {
+type tokenResponse struct {
 	IDToken      string `json:"id_token"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -191,8 +184,8 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client) error {
 	return err
 }
 
-func exchangeRefreshToken(ctx context.Context, hc *http.Client, token string) (refreshResponse, bool, error) {
-	var out refreshResponse
+func exchangeRefreshToken(ctx context.Context, hc *http.Client, token string) (tokenResponse, bool, error) {
+	var out tokenResponse
 	body, err := json.Marshal(refreshRequest{
 		ClientID:     oauthClientID,
 		GrantType:    "refresh_token",

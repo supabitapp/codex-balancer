@@ -115,8 +115,8 @@ func TestRemoveByEmailDropsOnlyThatAccount(t *testing.T) {
 func TestAmbiguousEmailAsksForAnID(t *testing.T) {
 	pool := &Pool{path: t.TempDir() + "/accounts.json"}
 	pool.accounts = append(pool.accounts,
-		&Account{IDToken: jwtFor("acct-a"), AccountID: "workspace-one"},
-		&Account{IDToken: jwtFor("acct-a"), AccountID: "workspace-two"})
+		&Account{IDToken: jwtForEmail("acct-a@example.com", "workspace-one")},
+		&Account{IDToken: jwtForEmail("acct-a@example.com", "workspace-two")})
 
 	_, err := pool.resolve("acct-a@example.com")
 	if err == nil || !strings.Contains(err.Error(), "matches 2 accounts") {

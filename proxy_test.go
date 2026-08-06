@@ -15,9 +15,11 @@ import (
 	"time"
 )
 
-func jwtFor(id string) string {
+func jwtFor(id string) string { return jwtForEmail(id+"@example.com", id) }
+
+func jwtForEmail(email, id string) string {
 	payload, _ := json.Marshal(map[string]any{
-		"email": id + "@example.com",
+		"email": email,
 		"https://api.openai.com/auth": map[string]string{
 			"chatgpt_account_id": id,
 			"chatgpt_plan_type":  "pro",

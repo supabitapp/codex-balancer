@@ -2,12 +2,15 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"text/tabwriter"
 	"time"
@@ -16,7 +19,7 @@ import (
 const accountsHelp = `Manage the account pool.
 
 Usage:
-  codex-balancer accounts add [file...] Import Codex auth.json files (default ~/.codex/auth.json, "-" for stdin)
+  codex-balancer accounts add          Sign in to ChatGPT in a browser and pool the account
   codex-balancer accounts list         Show pooled accounts
   codex-balancer accounts rm <email>   Drop an account
 
@@ -50,7 +53,7 @@ func accountsCmd(args []string) error {
 
 	switch args[0] {
 	case "add":
-		return addAccounts(pool, fs.Args())
+		return addAccount(pool)
 	case "list":
 		return listAccounts(pool, *asJSON)
 	case "rm":
@@ -75,54 +78,13 @@ func accountsCmd(args []string) error {
 	return fmt.Errorf("unknown subcommand %q", args[0])
 }
 
-type codexAuthFile struct {
-	Tokens struct {
-		IDToken      string `json:"id_token"`
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		AccountID    string `json:"account_id"`
-	} `json:"tokens"`
-	LastRefresh time.Time `json:"last_refresh"`
-}
+func addAccount(pool *Pool) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
-func addAccounts(pool *Pool, sources []string) error {
-	if len(sources) == 0 {
-		sources = []string{filepath.Join(homeDir(), ".codex", "auth.json")}
-	}
-	for _, source := range sources {
-		if err := addAccount(pool, source); err != nil {
-			return fmt.Errorf("%s: %w", source, err)
-		}
-	}
-	return nil
-}
-
-func addAccount(pool *Pool, source string) error {
-	var data []byte
-	var err error
-	if source == "-" {
-		data, err = io.ReadAll(os.Stdin)
-	} else {
-		data, err = os.ReadFile(source)
-	}
+	account, err := login(ctx, http.DefaultClient)
 	if err != nil {
 		return err
-	}
-
-	var file codexAuthFile
-	if err := json.Unmarshal(data, &file); err != nil {
-		return err
-	}
-	if file.Tokens.RefreshToken == "" {
-		return errors.New("no ChatGPT refresh token; log in with ChatGPT first")
-	}
-
-	account := &Account{
-		IDToken:      file.Tokens.IDToken,
-		AccessToken:  file.Tokens.AccessToken,
-		RefreshToken: file.Tokens.RefreshToken,
-		AccountID:    file.Tokens.AccountID,
-		LastRefresh:  file.LastRefresh,
 	}
 	if err := pool.add(account); err != nil {
 		return err

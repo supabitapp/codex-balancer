@@ -31,7 +31,7 @@ func TestRefreshRotatesTheTokenPair(t *testing.T) {
 		if req.GrantType != "refresh_token" || req.ClientID != oauthClientID || req.RefreshToken != "RT-old" {
 			t.Errorf("unexpected refresh request %+v", req)
 		}
-		json.NewEncoder(w).Encode(refreshResponse{
+		json.NewEncoder(w).Encode(tokenResponse{
 			IDToken:      jwtFor("acct-1"),
 			AccessToken:  "AT-new",
 			RefreshToken: "RT-new",
@@ -58,7 +58,7 @@ func TestConcurrentRefreshExchangesOnce(t *testing.T) {
 	withTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		time.Sleep(50 * time.Millisecond)
-		json.NewEncoder(w).Encode(refreshResponse{AccessToken: "AT-new", RefreshToken: "RT-new"})
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "AT-new", RefreshToken: "RT-new"})
 	})
 
 	a := &Account{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"}
@@ -113,7 +113,7 @@ func TestTransientFailureKeepsTheAccount(t *testing.T) {
 
 func TestUnauthorizedTurnRefreshesThenRetriesSameAccount(t *testing.T) {
 	withTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(refreshResponse{AccessToken: "AT-new", RefreshToken: "RT-new"})
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "AT-new", RefreshToken: "RT-new"})
 	})
 
 	var seen []string

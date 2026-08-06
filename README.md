@@ -17,18 +17,18 @@ go install github.com/supabitapp/codex-balancer@latest
 
 ## Add accounts
 
-Log in to Codex on each account, then import the credentials it wrote:
-
 ```sh
-codex-balancer accounts add                        # reads ~/.codex/auth.json
-codex-balancer accounts add ~/.codex/accounts/*.auth.json
+codex-balancer accounts add     # opens a browser, sign in, repeat per account
 codex-balancer accounts list
 ```
 
-Accounts live in `~/.codex-balancer/accounts.json`, mode 0600. Importing copies
-the refresh token, and refresh tokens rotate on use, so once the balancer
-refreshes an account, pointing Codex back at it directly means logging in again.
-Treat the balancer as the owner of every account you give it.
+`add` runs the ChatGPT sign-in itself: it starts the OAuth flow, waits on
+`127.0.0.1:1455` for the redirect, and trades the code for tokens. Nothing reads
+or writes `~/.codex`, so the balancer and Codex hold separate sessions.
+
+Accounts live in `~/.codex-balancer/accounts.json`, mode 0600. Each sign-in
+mints a refresh token the balancer alone rotates, so copying that file to a
+second machine and using it there retires the first copy.
 
 ## Serve
 
