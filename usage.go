@@ -121,7 +121,7 @@ func (s *server) watchUsage(ctx context.Context, every time.Duration) {
 		return
 	}
 	poll := func() {
-		for _, account := range s.pool.accounts {
+		for _, account := range s.pool.all() {
 			if err := s.pollUsage(ctx, account); err != nil && ctx.Err() == nil {
 				s.log.Warn("usage poll failed", "account", account.id(), "error", err)
 				s.stats.note("usage poll failed", account.id(), err.Error())

@@ -28,15 +28,21 @@ func jwtForEmail(email, id string) string {
 	return "h." + base64.RawURLEncoding.EncodeToString(payload) + ".s"
 }
 
+func accountFor(id string) *Account {
+	return accountFromState(accountState{IDToken: jwtFor(id)})
+}
+
 func testServer(t *testing.T, upstream string, ids ...string) *server {
 	t.Helper()
 	pool := &Pool{path: filepath.Join(t.TempDir(), "accounts.json")}
 	for _, id := range ids {
-		pool.accounts = append(pool.accounts, &Account{
+		if err := pool.add(accountFromState(accountState{
 			IDToken:     jwtFor(id),
 			AccessToken: "token-" + id,
 			LastRefresh: time.Now(),
-		})
+		})); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return &server{
 		ctx:      t.Context(),
@@ -56,7 +62,7 @@ func sse(w http.ResponseWriter, id string) {
 }
 
 func TestClaimsDeriveAccountIdentity(t *testing.T) {
-	a := &Account{IDToken: jwtFor("acct-7")}
+	a := accountFor("acct-7")
 	if a.id() != "acct-7" {
 		t.Fatalf("ID() = %q, want acct-7", a.id())
 	}

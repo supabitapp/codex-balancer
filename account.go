@@ -22,13 +22,16 @@ const (
 
 var oauthEndpoint = "https://auth.openai.com/oauth/token"
 
-type Account struct {
+type accountState struct {
 	IDToken      string    `json:"id_token"`
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
 	Paused       bool      `json:"paused,omitempty"`
 	LastRefresh  time.Time `json:"last_refresh"`
+}
 
+type Account struct {
+	accountState
 	mu          sync.Mutex
 	inflight    chan struct{}
 	lastRefresh error
@@ -69,12 +72,45 @@ func (a *Account) bankedResets() (int64, bool) {
 	return *a.bankedResetCount, true
 }
 
-type persistedAccount Account
-
 func (a *Account) MarshalJSON() ([]byte, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return json.Marshal((*persistedAccount)(a))
+	return json.Marshal(a.accountState)
+}
+
+func (a *Account) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &a.accountState)
+}
+
+func (a *Account) persisted() accountState {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.accountState
+}
+
+func accountFromState(state accountState) *Account {
+	return &Account{accountState: state}
+}
+
+func (a *Account) applyPersisted(next accountState) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	before := a.accountState
+	if !next.LastRefresh.Before(a.LastRefresh) {
+		credentialsChanged := a.IDToken != next.IDToken ||
+			a.AccessToken != next.AccessToken ||
+			a.RefreshToken != next.RefreshToken
+		a.IDToken = next.IDToken
+		a.AccessToken = next.AccessToken
+		a.RefreshToken = next.RefreshToken
+		a.LastRefresh = next.LastRefresh
+		if credentialsChanged {
+			a.dead = ""
+			a.lastRefresh = nil
+		}
+	}
+	a.Paused = next.Paused
+	return a.accountState != before
 }
 
 type authClaims struct {
@@ -98,12 +134,20 @@ func jwtClaims(token string, into any) {
 }
 
 func (a *Account) claims() authClaims {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return claimsFromToken(a.IDToken)
+}
+
+func claimsFromToken(token string) authClaims {
 	var c authClaims
-	jwtClaims(a.IDToken, &c)
+	jwtClaims(token, &c)
 	return c
 }
 
 func (a *Account) expires() time.Time {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	var c struct {
 		Exp int64 `json:"exp"`
 	}
@@ -127,13 +171,6 @@ func (a *Account) available(now time.Time) bool {
 func (a *Account) paused() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.Paused
-}
-
-func (a *Account) togglePause() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.Paused = !a.Paused
 	return a.Paused
 }
 
@@ -176,7 +213,7 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client) error {
 		return a.lastRefresh
 	}
 	if a.dead != "" {
-		err := fmt.Errorf("account %s needs reauth: %s", a.id(), a.dead)
+		err := fmt.Errorf("account %s needs reauth: %s", claimsFromToken(a.IDToken).Auth.AccountID, a.dead)
 		a.mu.Unlock()
 		return err
 	}
@@ -188,20 +225,27 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client) error {
 	tokens, permanent, err := exchangeRefreshToken(ctx, hc, token)
 
 	a.mu.Lock()
+	superseded := a.RefreshToken != token
+	if superseded {
+		err = nil
+		permanent = false
+	}
 	a.inflight = nil
 	a.lastRefresh = err
-	switch {
-	case err != nil && permanent:
-		a.dead = err.Error()
-	case err == nil:
-		a.AccessToken = tokens.AccessToken
-		if tokens.RefreshToken != "" {
-			a.RefreshToken = tokens.RefreshToken
+	if !superseded {
+		switch {
+		case err != nil && permanent:
+			a.dead = err.Error()
+		case err == nil:
+			a.AccessToken = tokens.AccessToken
+			if tokens.RefreshToken != "" {
+				a.RefreshToken = tokens.RefreshToken
+			}
+			if tokens.IDToken != "" {
+				a.IDToken = tokens.IDToken
+			}
+			a.LastRefresh = time.Now()
 		}
-		if tokens.IDToken != "" {
-			a.IDToken = tokens.IDToken
-		}
-		a.LastRefresh = time.Now()
 	}
 	a.mu.Unlock()
 	close(done)

@@ -38,7 +38,7 @@ func TestRefreshRotatesTheTokenPair(t *testing.T) {
 		})
 	})
 
-	a := &Account{IDToken: jwtFor("acct-1"), AccessToken: "AT-old", RefreshToken: "RT-old"}
+	a := accountFromState(accountState{IDToken: jwtFor("acct-1"), AccessToken: "AT-old", RefreshToken: "RT-old"})
 	if err := a.refresh(context.Background(), http.DefaultClient); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestConcurrentRefreshExchangesOnce(t *testing.T) {
 		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "AT-new", RefreshToken: "RT-new"})
 	})
 
-	a := &Account{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"}
+	a := accountFromState(accountState{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"})
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
@@ -77,13 +77,49 @@ func TestConcurrentRefreshExchangesOnce(t *testing.T) {
 	}
 }
 
+func TestRefreshKeepsCredentialsReplacedWhileItWasRunning(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	withTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		json.NewEncoder(w).Encode(tokenResponse{AccessToken: "AT-rotated", RefreshToken: "RT-rotated"})
+	})
+
+	a := accountFromState(accountState{
+		IDToken:      jwtFor("acct-1"),
+		AccessToken:  "AT-old",
+		RefreshToken: "RT-old",
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- a.refresh(t.Context(), http.DefaultClient)
+	}()
+	<-started
+	a.applyPersisted(accountState{
+		IDToken:      jwtFor("acct-1"),
+		AccessToken:  "AT-replaced",
+		RefreshToken: "RT-replaced",
+		LastRefresh:  time.Now(),
+	})
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	state := a.persisted()
+	if state.AccessToken != "AT-replaced" || state.RefreshToken != "RT-replaced" {
+		t.Fatalf("credentials = %+v, want the replacement", state)
+	}
+}
+
 func TestPermanentFailureRetiresTheAccount(t *testing.T) {
 	withTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error":"invalid_grant","error_description":"token already used"}`))
 	})
 
-	a := &Account{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"}
+	a := accountFromState(accountState{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"})
 	err := a.refresh(context.Background(), http.DefaultClient)
 	if err == nil {
 		t.Fatal("expected an error")
@@ -102,7 +138,7 @@ func TestTransientFailureKeepsTheAccount(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway)
 	})
 
-	a := &Account{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"}
+	a := accountFromState(accountState{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"})
 	if err := a.refresh(context.Background(), http.DefaultClient); err == nil {
 		t.Fatal("expected an error")
 	}
@@ -147,7 +183,7 @@ func TestUnauthorizedTurnRefreshesThenRetriesSameAccount(t *testing.T) {
 func TestPoolRoundTripsThroughDisk(t *testing.T) {
 	path := t.TempDir() + "/accounts.json"
 	pool := &Pool{path: path}
-	if err := pool.add(&Account{IDToken: jwtFor("acct-1"), AccessToken: "AT", RefreshToken: "RT"}); err != nil {
+	if err := pool.add(accountFromState(accountState{IDToken: jwtFor("acct-1"), AccessToken: "AT", RefreshToken: "RT"})); err != nil {
 		t.Fatal(err)
 	}
 
@@ -170,7 +206,7 @@ func TestWaitersSeeTheLeadersRefreshFailure(t *testing.T) {
 		w.Write([]byte(`{"error":"refresh_token_invalidated"}`))
 	})
 
-	a := &Account{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"}
+	a := accountFromState(accountState{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"})
 	errs := make([]error, 4)
 	var wg sync.WaitGroup
 	for i := range errs {

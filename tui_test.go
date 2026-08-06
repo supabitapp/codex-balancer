@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -11,7 +12,7 @@ import (
 
 func TestDashboardSectionsHaveSpaceBetweenThem(t *testing.T) {
 	d := dashboard{
-		pool:   &Pool{accounts: []*Account{{IDToken: jwtFor("acct-a")}}},
+		pool:   &Pool{accounts: []*Account{accountFor("acct-a")}},
 		stats:  newStats(),
 		width:  120,
 		height: 40,
@@ -50,7 +51,7 @@ func TestDashboardSectionsHaveSpaceBetweenThem(t *testing.T) {
 func TestDashboardResizeKeepsSelectedAccountAndSectionsVisible(t *testing.T) {
 	accounts := make([]*Account, 10)
 	for i := range accounts {
-		accounts[i] = &Account{IDToken: jwtFor(fmt.Sprintf("acct-%02d", i))}
+		accounts[i] = accountFor(fmt.Sprintf("acct-%02d", i))
 	}
 	d := dashboard{
 		pool:   &Pool{accounts: accounts},
@@ -85,8 +86,22 @@ func TestDashboardResizeKeepsSelectedAccountAndSectionsVisible(t *testing.T) {
 	assertDashboardFits(t, rendered, d.width, d.height)
 }
 
+func TestDashboardMovesTheCursorAfterAnAccountIsRemoved(t *testing.T) {
+	pool := &Pool{accounts: []*Account{accountFor("acct-a"), accountFor("acct-b")}}
+	d := dashboard{
+		pool:   pool,
+		stats:  newStats(),
+		cursor: 1,
+	}
+	pool.reconcile([]*Account{accountFor("acct-a")})
+	model, _ := d.Update(tickMsg(time.Now()))
+	if cursor := model.(dashboard).cursor; cursor != 0 {
+		t.Fatalf("cursor = %d, want 0", cursor)
+	}
+}
+
 func TestDashboardShowsWebSocketTraffic(t *testing.T) {
-	account := &Account{IDToken: jwtFor("acct-a")}
+	account := accountFor("acct-a")
 	stats := newStats()
 	stats.websocketOpened("acct-a")
 	stats.routed("thread-1", "acct-a", serviceTierFast, transportWebSocket)

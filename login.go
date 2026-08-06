@@ -97,12 +97,12 @@ func redeem(ctx context.Context, hc *http.Client, query url.Values, verifier str
 	if err != nil {
 		return nil, err
 	}
-	return &Account{
+	return accountFromState(accountState{
 		IDToken:      tokens.IDToken,
 		AccessToken:  tokens.AccessToken,
 		RefreshToken: tokens.RefreshToken,
 		LastRefresh:  time.Now(),
-	}, nil
+	}), nil
 }
 
 func exchangeCode(ctx context.Context, hc *http.Client, code, verifier string) (tokenResponse, error) {

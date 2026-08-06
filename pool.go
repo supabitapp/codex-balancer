@@ -2,16 +2,14 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,71 +19,36 @@ const (
 )
 
 type Pool struct {
-	path     string
-	accounts []*Account
+	path      string
+	storageMu sync.Mutex
+	mu        sync.RWMutex
+	accounts  []*Account
 }
 
-func loadPool(path string) (*Pool, error) {
-	p := &Pool{path: path}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return p, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(data, &p.accounts); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	return p, nil
-}
-
-func (p *Pool) save() error {
-	if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(p.accounts, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(p.path), ".accounts-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), p.path)
-}
-
-func (p *Pool) indexOf(id string) int {
-	return slices.IndexFunc(p.accounts, func(a *Account) bool { return a.id() == id })
+func indexOf(accounts []*Account, id string) int {
+	return slices.IndexFunc(accounts, func(a *Account) bool { return a.id() == id })
 }
 
 func (p *Pool) find(id string) *Account {
-	if i := p.indexOf(id); i >= 0 {
-		return p.accounts[i]
+	accounts := p.all()
+	if i := indexOf(accounts, id); i >= 0 {
+		return accounts[i]
 	}
 	return nil
 }
 
 func (p *Pool) add(a *Account) error {
-	if a.id() == "" {
+	id := a.id()
+	if id == "" {
 		return errors.New("credentials carry no chatgpt_account_id")
 	}
-	if i := p.indexOf(a.id()); i >= 0 {
-		p.accounts[i] = a
-	} else {
-		p.accounts = append(p.accounts, a)
-	}
-	return p.save()
+	return p.mutate(func(accounts []*Account) ([]*Account, error) {
+		if i := indexOf(accounts, id); i >= 0 {
+			accounts[i] = a
+			return accounts, nil
+		}
+		return append(accounts, a), nil
+	})
 }
 
 func (p *Pool) resolve(query string) (*Account, error) {
@@ -93,7 +56,7 @@ func (p *Pool) resolve(query string) (*Account, error) {
 		return a, nil
 	}
 	var matched []*Account
-	for _, a := range p.accounts {
+	for _, a := range p.all() {
 		if strings.EqualFold(a.email(), query) {
 			matched = append(matched, a)
 		}
@@ -109,25 +72,66 @@ func (p *Pool) resolve(query string) (*Account, error) {
 }
 
 func (p *Pool) remove(a *Account) error {
-	i := p.indexOf(a.id())
-	if i < 0 {
-		return fmt.Errorf("no account %q", a.id())
-	}
-	p.accounts = slices.Delete(p.accounts, i, i+1)
-	return p.save()
+	id := a.id()
+	return p.mutate(func(accounts []*Account) ([]*Account, error) {
+		i := indexOf(accounts, id)
+		if i < 0 {
+			return nil, fmt.Errorf("no account %q", id)
+		}
+		return slices.Delete(accounts, i, i+1), nil
+	})
+}
+
+func (p *Pool) togglePause(a *Account) (bool, error) {
+	id := a.id()
+	paused := false
+	err := p.mutate(func(accounts []*Account) ([]*Account, error) {
+		i := indexOf(accounts, id)
+		if i < 0 {
+			return nil, fmt.Errorf("no account %q", id)
+		}
+		state := accounts[i].persisted()
+		state.Paused = !state.Paused
+		paused = state.Paused
+		accounts[i] = accountFromState(state)
+		return accounts, nil
+	})
+	return paused, err
+}
+
+func (p *Pool) persistTokens(a *Account) error {
+	state := a.persisted()
+	id := claimsFromToken(state.IDToken).Auth.AccountID
+	return p.mutate(func(accounts []*Account) ([]*Account, error) {
+		i := indexOf(accounts, id)
+		if i < 0 {
+			return nil, fmt.Errorf("no account %q", id)
+		}
+		current := accounts[i].persisted()
+		if current.LastRefresh.After(state.LastRefresh) {
+			return accounts, nil
+		}
+		current.IDToken = state.IDToken
+		current.AccessToken = state.AccessToken
+		current.RefreshToken = state.RefreshToken
+		current.LastRefresh = state.LastRefresh
+		accounts[i] = accountFromState(current)
+		return accounts, nil
+	})
 }
 
 func (p *Pool) pick(pinned string, skip map[string]bool) *Account {
+	accounts := p.all()
 	if pinned != "" {
-		if a := p.find(pinned); a != nil && !skip[pinned] && !a.paused() {
-			return a
+		if i := indexOf(accounts, pinned); i >= 0 && !skip[pinned] && !accounts[i].paused() {
+			return accounts[i]
 		}
 		return nil
 	}
 
 	now := time.Now()
 	var best *Account
-	for _, a := range p.accounts {
+	for _, a := range accounts {
 		if skip[a.id()] || !a.available(now) {
 			continue
 		}
@@ -154,11 +158,23 @@ func (a *Account) load() (pressure float64, lastUsed time.Time) {
 }
 
 func (p *Pool) sorted() []*Account {
-	out := slices.Clone(p.accounts)
+	out := p.all()
 	slices.SortFunc(out, func(x, y *Account) int {
 		return cmp.Or(cmp.Compare(x.email(), y.email()), cmp.Compare(x.id(), y.id()))
 	})
 	return out
+}
+
+func (p *Pool) all() []*Account {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return slices.Clone(p.accounts)
+}
+
+func (p *Pool) count() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.accounts)
 }
 
 func readWindow(h http.Header, prefix string) window {

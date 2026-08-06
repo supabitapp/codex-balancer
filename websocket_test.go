@@ -115,7 +115,9 @@ func TestResponsesWebSocketRelaysTracksAndHonorsPause(t *testing.T) {
 		t.Fatalf("sticky account = %q, want acct-a", got)
 	}
 
-	s.pool.find("acct-a").togglePause()
+	if _, err := s.pool.togglePause(s.pool.find("acct-a")); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel = context.WithTimeout(t.Context(), 2*time.Second)
 	if err := client.Write(ctx, websocket.MessageText, []byte(`{"type":"response.create","input":[]}`)); err != nil {
 		cancel()

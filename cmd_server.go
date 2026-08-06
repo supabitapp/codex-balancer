@@ -63,7 +63,7 @@ func serverCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(pool.accounts) == 0 {
+	if pool.count() == 0 {
 		return fmt.Errorf("no accounts in %s; add one with: codex-balancer accounts add", *path)
 	}
 
@@ -81,6 +81,15 @@ func serverCmd(args []string) error {
 		key:      *key,
 		client:   newProxyClient(),
 		log:      log,
+	}
+	if err := pool.watch(ctx, func(change poolChange) {
+		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)
+		stats.note("accounts updated", "", fmt.Sprintf("%d added, %d removed, %d updated", change.added, change.removed, change.updated))
+	}, func(err error) {
+		log.Warn("account watch failed", "error", err)
+		stats.note("account watch failed", "", err.Error())
+	}); err != nil {
+		return fmt.Errorf("watch accounts: %w", err)
 	}
 
 	httpServer := &http.Server{
@@ -123,7 +132,7 @@ func serverCmd(args []string) error {
 		return <-serving
 	}
 
-	log.Info("listening", "addr", listener.Addr().String(), "accounts", len(pool.accounts), "upstream", *upstream)
+	log.Info("listening", "addr", listener.Addr().String(), "accounts", pool.count(), "upstream", *upstream)
 	return <-serving
 }
 

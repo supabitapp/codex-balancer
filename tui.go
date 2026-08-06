@@ -66,11 +66,12 @@ func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			d.cursor = max(d.cursor-1, 0)
 		case "down", "j":
-			d.cursor = min(d.cursor+1, max(len(d.pool.accounts)-1, 0))
+			d.cursor = min(d.cursor+1, max(d.pool.count()-1, 0))
 		case "space", "enter":
 			d.toggle()
 		}
 	case tickMsg:
+		d.cursor = min(d.cursor, max(d.pool.count()-1, 0))
 		d.snap = d.stats.snapshot()
 		return d, tea.Tick(frame, func(t time.Time) tea.Msg { return tickMsg(t) })
 	}
@@ -83,14 +84,16 @@ func (d dashboard) toggle() {
 		return
 	}
 	account := accounts[d.cursor]
+	paused, err := d.pool.togglePause(account)
+	if err != nil {
+		d.stats.note("save failed", account.id(), err.Error())
+		return
+	}
 	kind := "resumed"
-	if account.togglePause() {
+	if paused {
 		kind = "paused"
 	}
 	d.stats.note(kind, account.id(), "")
-	if err := d.pool.save(); err != nil {
-		d.stats.note("save failed", account.id(), err.Error())
-	}
 }
 
 func (d dashboard) View() tea.View {
@@ -102,7 +105,7 @@ func (d dashboard) View() tea.View {
 
 func (d dashboard) title() string {
 	total := 0
-	for _, account := range d.pool.accounts {
+	for _, account := range d.pool.all() {
 		if account.paused() {
 			continue
 		}
@@ -126,7 +129,7 @@ func (d dashboard) render() string {
 	head := d.header()
 	totals := d.totals(d.width)
 	bodyHeight := d.height - lipgloss.Height(head) - lipgloss.Height(totals) - 4
-	accountLimit := len(d.pool.accounts)
+	accountLimit := d.pool.count()
 	accounts := d.accounts(accountLimit)
 	detailHeight := bodyHeight - lipgloss.Height(accounts)
 	if detailHeight < 6 && accountLimit > 1 {
@@ -156,7 +159,7 @@ func (d dashboard) render() string {
 func (d dashboard) header() string {
 	live, cooling, dead, held := 0, 0, 0, 0
 	now := time.Now()
-	for _, a := range d.pool.accounts {
+	for _, a := range d.pool.all() {
 		switch _, _, cooldown, reauth := a.health(); {
 		case a.paused():
 			held++
@@ -457,7 +460,7 @@ func (d dashboard) totals(width int) string {
 		},
 		{
 			stat("threads", fmt.Sprintf("%d", len(s.Threads))),
-			stat("accounts", fmt.Sprintf("%d", len(d.pool.accounts))),
+			stat("accounts", fmt.Sprintf("%d", d.pool.count())),
 			stat("failovers", fmt.Sprintf("%d", s.Failures)),
 			stat("rate limits", fmt.Sprintf("%d", s.Limited)),
 		},
@@ -487,7 +490,7 @@ func stat(name, value string) string {
 
 func (d dashboard) shortNames() map[string]string {
 	out := map[string]string{}
-	for _, a := range d.pool.accounts {
+	for _, a := range d.pool.all() {
 		name, _, _ := strings.Cut(label(a), "@")
 		out[a.id()] = name
 	}

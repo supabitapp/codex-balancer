@@ -21,7 +21,7 @@ func TestWindowsReadBothRateLimitHeaders(t *testing.T) {
 	h.Set("x-codex-primary-reset-at", strconv.FormatInt(reset, 10))
 	h.Set("x-codex-secondary-primary-used-percent", "91")
 
-	a := &Account{IDToken: jwtFor("acct-a")}
+	a := accountFor("acct-a")
 	a.observe(h)
 
 	primary, secondary, _, _ := a.health()
@@ -78,7 +78,7 @@ func TestRelayForwardsBytesUntouched(t *testing.T) {
 func TestAccountsResolveByEmailOrID(t *testing.T) {
 	pool := &Pool{path: t.TempDir() + "/accounts.json"}
 	for _, id := range []string{"acct-a", "acct-b"} {
-		pool.accounts = append(pool.accounts, &Account{IDToken: jwtFor(id)})
+		pool.accounts = append(pool.accounts, accountFor(id))
 	}
 
 	for _, query := range []string{"acct-a@example.com", "ACCT-A@EXAMPLE.COM", "acct-a"} {
@@ -99,7 +99,9 @@ func TestAccountsResolveByEmailOrID(t *testing.T) {
 func TestRemoveByEmailDropsOnlyThatAccount(t *testing.T) {
 	pool := &Pool{path: t.TempDir() + "/accounts.json"}
 	for _, id := range []string{"acct-a", "acct-b"} {
-		pool.accounts = append(pool.accounts, &Account{IDToken: jwtFor(id)})
+		if err := pool.add(accountFor(id)); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	account, err := pool.resolve("acct-a@example.com")
@@ -117,8 +119,8 @@ func TestRemoveByEmailDropsOnlyThatAccount(t *testing.T) {
 func TestAmbiguousEmailAsksForAnID(t *testing.T) {
 	pool := &Pool{path: t.TempDir() + "/accounts.json"}
 	pool.accounts = append(pool.accounts,
-		&Account{IDToken: jwtForEmail("acct-a@example.com", "workspace-one")},
-		&Account{IDToken: jwtForEmail("acct-a@example.com", "workspace-two")})
+		accountFromState(accountState{IDToken: jwtForEmail("acct-a@example.com", "workspace-one")}),
+		accountFromState(accountState{IDToken: jwtForEmail("acct-a@example.com", "workspace-two")}))
 
 	_, err := pool.resolve("acct-a@example.com")
 	if err == nil || !strings.Contains(err.Error(), "matches 2 accounts") {
@@ -141,7 +143,7 @@ func TestCooldownWaitsForTheExhaustedWindow(t *testing.T) {
 	h.Set("x-codex-secondary-primary-window-minutes", "10080")
 	h.Set("x-codex-secondary-primary-reset-at", strconv.FormatInt(weekly.Unix(), 10))
 
-	a := &Account{IDToken: jwtFor("acct-a")}
+	a := accountFor("acct-a")
 	a.rateLimited(h, 0)
 
 	_, _, cooldown, _ := a.health()
@@ -217,7 +219,7 @@ func TestNextResetPicksTheSoonestFutureWindow(t *testing.T) {
 }
 
 func TestDashboardShowsBankedResetsAndNextReset(t *testing.T) {
-	account := &Account{IDToken: jwtFor("acct-a")}
+	account := accountFor("acct-a")
 	banked := int64(3)
 	account.adopt(
 		window{usedPercent: 25, minutes: 300, resetsAt: time.Now().Add(90 * time.Minute), seenAt: time.Now()},

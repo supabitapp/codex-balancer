@@ -31,6 +31,9 @@ Accounts live in `~/.codex-balancer/accounts.json`, mode 0600. Each sign-in
 mints a refresh token the balancer alone rotates, so copying that file to a
 second machine and using it there retires the first copy.
 
+The running server watches this file. Accounts added, replaced, paused, or
+removed by another command reach routing and the dashboard without a restart.
+
 ## Serve
 
 ```sh

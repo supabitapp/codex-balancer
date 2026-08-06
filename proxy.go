@@ -176,7 +176,7 @@ func (s *server) refreshed(account *Account, id string) bool {
 		s.log.Warn("refresh failed", "account", id, "error", err)
 		return false
 	}
-	if err := s.pool.save(); err != nil {
+	if err := s.pool.persistTokens(account); err != nil {
 		s.log.Warn("could not persist refreshed tokens", "account", id, "error", err)
 	}
 	return true

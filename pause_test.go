@@ -38,7 +38,9 @@ func TestPausedAccountTakesNoNewThreads(t *testing.T) {
 	upstream := servedBy(t, &served)
 
 	s := testServer(t, upstream.URL, "acct-a", "acct-b")
-	s.pool.find("acct-a").togglePause()
+	if _, err := s.pool.togglePause(s.pool.find("acct-a")); err != nil {
+		t.Fatal(err)
+	}
 
 	for i := range 3 {
 		if rec := turn(s, fmt.Sprintf("thread-%d", i)); rec.Code != http.StatusOK {
@@ -60,7 +62,9 @@ func TestPausingStopsTheThreadsAlreadyPinnedToIt(t *testing.T) {
 	if rec := turn(s, "thread-1"); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	s.pool.find(served[0]).togglePause()
+	if _, err := s.pool.togglePause(s.pool.find(served[0])); err != nil {
+		t.Fatal(err)
+	}
 
 	if rec := turn(s, "thread-1"); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; a pause must hold even for pinned threads", rec.Code)
@@ -73,12 +77,13 @@ func TestPausingStopsTheThreadsAlreadyPinnedToIt(t *testing.T) {
 func TestPauseSurvivesAReload(t *testing.T) {
 	path := t.TempDir() + "/accounts.json"
 	pool := &Pool{path: path}
-	if err := pool.add(&Account{IDToken: jwtFor("acct-1"), RefreshToken: "RT"}); err != nil {
+	if err := pool.add(accountFromState(accountState{IDToken: jwtFor("acct-1"), RefreshToken: "RT"})); err != nil {
 		t.Fatal(err)
 	}
-	pool.accounts[0].togglePause()
-	if err := pool.save(); err != nil {
+	if paused, err := pool.togglePause(pool.find("acct-1")); err != nil {
 		t.Fatal(err)
+	} else if !paused {
+		t.Fatal("account was resumed instead of paused")
 	}
 
 	reloaded, err := loadPool(path)
@@ -95,7 +100,11 @@ func TestPauseSurvivesAReload(t *testing.T) {
 
 func TestDashboardTogglesTheSelectedAccount(t *testing.T) {
 	pool := &Pool{path: t.TempDir() + "/accounts.json"}
-	pool.accounts = []*Account{{IDToken: jwtFor("acct-a")}, {IDToken: jwtFor("acct-b")}}
+	for _, id := range []string{"acct-a", "acct-b"} {
+		if err := pool.add(accountFor(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	var board tea.Model = dashboard{pool: pool, stats: newStats()}
 	board, _ = board.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
