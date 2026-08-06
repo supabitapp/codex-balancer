@@ -228,7 +228,7 @@ func TestDashboardShowsBankedResetsAndNextReset(t *testing.T) {
 	account.cooldown = time.Now().Add(83 * time.Hour)
 	d := dashboard{pool: &Pool{accounts: []*Account{account}}, stats: newStats(), width: 80}
 
-	rendered := d.accounts()
+	rendered := d.accounts(len(d.pool.accounts))
 	for _, want := range []string{"cooling", "Weekly", "36%", "Banked", "Reset in", "3", "1h29m"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("dashboard does not contain %q:\n%s", want, rendered)

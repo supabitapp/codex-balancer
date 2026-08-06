@@ -124,9 +124,16 @@ func (d dashboard) render() string {
 		return sDim.Render("terminal too small")
 	}
 	head := d.header()
-	accounts := d.accounts()
 	totals := d.totals(d.width)
-	detailHeight := d.height - lipgloss.Height(head) - lipgloss.Height(accounts) - lipgloss.Height(totals) - 1
+	bodyHeight := d.height - lipgloss.Height(head) - lipgloss.Height(totals) - 1
+	accountLimit := len(d.pool.accounts)
+	accounts := d.accounts(accountLimit)
+	detailHeight := bodyHeight - lipgloss.Height(accounts)
+	if detailHeight < 6 && accountLimit > 1 {
+		accountLimit = max(accountLimit-(6-detailHeight), 1)
+		accounts = d.accounts(accountLimit)
+		detailHeight = bodyHeight - lipgloss.Height(accounts)
+	}
 	if detailHeight < 6 {
 		return sDim.Render("terminal too small")
 	}
@@ -187,11 +194,15 @@ func rate(s Snapshot) string {
 	return fmt.Sprintf("%.1f turns/min", float64(recent)/span)
 }
 
-func (d dashboard) accounts() string {
+func (d dashboard) accounts(limit int) string {
 	accounts := d.pool.sorted()
 	if len(accounts) == 0 {
 		return sSection.Render("ACCOUNTS") + "\n" + sDim.Render("  (none)")
 	}
+	limit = min(max(limit, 1), len(accounts))
+	cursor := min(max(d.cursor, 0), len(accounts)-1)
+	start := min(max(cursor-limit+1, 0), len(accounts)-limit)
+	end := start + limit
 
 	nameW := 9
 	for _, a := range accounts {
@@ -229,9 +240,13 @@ func (d dashboard) accounts() string {
 
 	sep := sDim.Render(strings.Repeat("─", d.width-2))
 
-	rows := []string{sSection.Render("ACCOUNTS") + sDim.Render("   ↑↓ pick · space pauses"), "", hdr, sep}
+	title := "ACCOUNTS"
+	if limit < len(accounts) {
+		title = fmt.Sprintf("ACCOUNTS  %d-%d/%d", start+1, end, len(accounts))
+	}
+	rows := []string{sSection.Render(title) + sDim.Render("   ↑↓ pick · space pauses"), "", hdr, sep}
 
-	for i, a := range accounts {
+	for i, a := range accounts[start:end] {
 		primary, secondary, cooldown, reauth := a.health()
 		weekly := longestWindow(primary, secondary)
 		stat := d.snap.Accounts[a.id()]
@@ -288,7 +303,7 @@ func (d dashboard) accounts() string {
 		}
 
 		marker, name := "  ", sText.Render(fit(label(a), nameW))
-		if i == d.cursor {
+		if start+i == cursor {
 			marker, name = sTitle.Render("▸ "), sTitle.Render(fit(label(a), nameW))
 		}
 
