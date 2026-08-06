@@ -96,8 +96,27 @@ func (d dashboard) toggle() {
 func (d dashboard) View() tea.View {
 	v := tea.NewView(d.render())
 	v.AltScreen = true
-	v.WindowTitle = "codex-balancer"
+	v.WindowTitle = d.title()
 	return v
+}
+
+func (d dashboard) title() string {
+	total := 0
+	for _, account := range d.pool.accounts {
+		if account.paused() {
+			continue
+		}
+		primary, secondary, _, reauth := account.health()
+		if reauth != "" {
+			continue
+		}
+		left, known := remainingPercent(longestWindow(primary, secondary))
+		if !known {
+			return "week --"
+		}
+		total += left
+	}
+	return fmt.Sprintf("week %d%%", total)
 }
 
 func (d dashboard) render() string {
@@ -244,10 +263,10 @@ func (d dashboard) accounts() string {
 		}
 
 		var weeklyCell string
-		if !weekly.known() {
+		left, known := remainingPercent(weekly)
+		if !known {
 			weeklyCell = sDim.Render(fit("--", weeklyW))
 		} else {
-			left := int(min(max(100-weekly.usedPercent, 0), 100))
 			style := sGood
 			switch {
 			case left <= 10:
@@ -307,6 +326,13 @@ func longestWindow(windows ...window) window {
 		}
 	}
 	return longest
+}
+
+func remainingPercent(w window) (int, bool) {
+	if !w.known() {
+		return 0, false
+	}
+	return int(min(max(100-w.usedPercent, 0), 100)), true
 }
 
 func plural(n int64, noun string) string {
