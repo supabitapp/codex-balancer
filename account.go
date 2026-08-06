@@ -40,6 +40,7 @@ type Account struct {
 	dead             string
 	primary          window
 	secondary        window
+	spent            bool
 	bankedResetCount *int64
 	lastUsed         time.Time
 }
@@ -55,6 +56,7 @@ type accountStatus string
 
 const (
 	accountLive        accountStatus = "live"
+	accountChecking    accountStatus = "checking"
 	accountCooling     accountStatus = "cooling"
 	accountPaused      accountStatus = "paused"
 	accountNeedsReauth accountStatus = "needs_reauth"
@@ -75,17 +77,19 @@ func (a *Account) health() (primary, secondary window, cooldown time.Time, reaut
 func (a *Account) status(now time.Time) accountStatus {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return accountStatusAt(a.Paused, a.dead, a.cooldown, now)
+	return accountStatusAt(a.Paused, a.dead, a.cooldown, a.spent, a.quotaKnown(), now)
 }
 
-func accountStatusAt(paused bool, reauth string, cooldown, now time.Time) accountStatus {
+func accountStatusAt(paused bool, reauth string, cooldown time.Time, spent, known bool, now time.Time) accountStatus {
 	switch {
 	case paused:
 		return accountPaused
 	case reauth != "":
 		return accountNeedsReauth
-	case now.Before(cooldown):
+	case spent || now.Before(cooldown):
 		return accountCooling
+	case !known:
+		return accountChecking
 	default:
 		return accountLive
 	}
@@ -193,11 +197,15 @@ func (a *Account) plan() string  { return a.claims().Auth.Plan }
 func (a *Account) available(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return accountAvailableAt(a.Paused, a.dead, a.cooldown, now)
+	return accountAvailableAt(a.Paused, a.dead, a.cooldown, a.spent, a.quotaKnown(), now)
 }
 
-func accountAvailableAt(paused bool, reauth string, cooldown, now time.Time) bool {
-	return !paused && reauth == "" && now.After(cooldown)
+func (a *Account) quotaKnown() bool {
+	return a.primary.known() || a.secondary.known()
+}
+
+func accountAvailableAt(paused bool, reauth string, cooldown time.Time, spent, known bool, now time.Time) bool {
+	return !paused && reauth == "" && !spent && known && now.After(cooldown)
 }
 
 func (a *Account) paused() bool {

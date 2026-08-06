@@ -33,6 +33,7 @@ type routingCandidate struct {
 	cooldown  time.Time
 	primary   window
 	secondary window
+	spent     bool
 	pressure  float64
 	lastUsed  time.Time
 }
@@ -150,7 +151,7 @@ func (p *Pool) route(pinned string, skip map[string]bool) routingDecision {
 	}
 	if pinned != "" {
 		for _, candidate := range decision.candidates {
-			if candidate.id == pinned && !skip[pinned] && !candidate.paused {
+			if candidate.id == pinned && !skip[pinned] && !candidate.paused && candidate.quotaKnown() {
 				decision.account = candidate.account
 				break
 			}
@@ -185,17 +186,22 @@ func (a *Account) routingCandidate() routingCandidate {
 		cooldown:  a.cooldown,
 		primary:   a.primary,
 		secondary: a.secondary,
+		spent:     a.spent,
 		pressure:  a.pressure(),
 		lastUsed:  a.lastUsed,
 	}
 }
 
 func (c routingCandidate) available(now time.Time) bool {
-	return accountAvailableAt(c.paused, c.reauth, c.cooldown, now)
+	return accountAvailableAt(c.paused, c.reauth, c.cooldown, c.spent, c.quotaKnown(), now)
 }
 
 func (c routingCandidate) status(now time.Time) accountStatus {
-	return accountStatusAt(c.paused, c.reauth, c.cooldown, now)
+	return accountStatusAt(c.paused, c.reauth, c.cooldown, c.spent, c.quotaKnown(), now)
+}
+
+func (c routingCandidate) quotaKnown() bool {
+	return c.primary.known() || c.secondary.known()
 }
 
 func (c routingCandidate) roomierThan(other routingCandidate) bool {

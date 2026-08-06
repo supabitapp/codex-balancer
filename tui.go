@@ -157,7 +157,7 @@ func (d dashboard) render() string {
 }
 
 func (d dashboard) header() string {
-	live, cooling, dead, held := 0, 0, 0, 0
+	live, checking, cooling, dead, held := 0, 0, 0, 0, 0
 	now := time.Now()
 	for _, a := range d.pool.all() {
 		switch a.status(now) {
@@ -167,12 +167,17 @@ func (d dashboard) header() string {
 			dead++
 		case accountCooling:
 			cooling++
+		case accountChecking:
+			checking++
 		case accountLive:
 			live++
 		}
 	}
 
 	parts := []string{sGood.Render(fmt.Sprintf("%d live", live))}
+	if checking > 0 {
+		parts = append(parts, sDim.Render(fmt.Sprintf("%d checking", checking)))
+	}
 	if cooling > 0 {
 		parts = append(parts, sHot.Render(fmt.Sprintf("%d cooling", cooling)))
 	}
@@ -268,6 +273,8 @@ func (d dashboard) accounts(limit int) string {
 			status = sBad.Render(fit("✕ "+reauth, statusW))
 		case accountCooling:
 			status = sHot.Render(fit("◐ cooling", statusW))
+		case accountChecking:
+			status = sDim.Render(fit("◌ checking", statusW))
 		case accountLive:
 			status = sGood.Render(fit("● live", statusW))
 		}

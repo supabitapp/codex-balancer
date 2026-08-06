@@ -41,6 +41,7 @@ func routingLogAttrs(candidate routingCandidate, now time.Time) []any {
 	return []any{
 		"account", candidate.id,
 		"status", candidate.status(now),
+		"reported_limit_reached", candidate.spent,
 		"cooldown_until", candidate.cooldown,
 		"last_used_at", candidate.lastUsed,
 		"reauth", candidate.reauth,

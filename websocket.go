@@ -63,7 +63,9 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer downstream.CloseNow()
 
 	id := dial.account.id()
-	s.sticky.bind(key, id)
+	if err := s.sticky.bind(key, id); err != nil {
+		s.log.Warn("thread binding save failed", "thread", key, "account", id, "error", err)
+	}
 	s.stats.websocketOpened(id)
 	s.log.Debug("websocket opened", "thread", key, "account", id)
 	defer func() {

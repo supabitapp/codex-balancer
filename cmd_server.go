@@ -75,7 +75,10 @@ func serverCmd(args []string) error {
 	if logFile != nil {
 		defer logFile.Close()
 	}
-	sticky := newSticky()
+	sticky, err := newSticky(defaultStickyPath())
+	if err != nil {
+		return fmt.Errorf("load thread bindings: %w", err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	srv := &server{
@@ -104,7 +107,12 @@ func serverCmd(args []string) error {
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 
-	go sweepSticky(ctx, sticky)
+	srv.pollAllUsage(ctx)
+	if ctx.Err() != nil {
+		return nil
+	}
+
+	go sweepSticky(ctx, sticky, log)
 	go srv.watchUsage(ctx, *poll)
 
 	go func() {
@@ -142,7 +150,7 @@ func serverCmd(args []string) error {
 	return <-serving
 }
 
-func sweepSticky(ctx context.Context, s *Sticky) {
+func sweepSticky(ctx context.Context, s *Sticky, log *slog.Logger) {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -150,7 +158,9 @@ func sweepSticky(ctx context.Context, s *Sticky) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.sweep()
+			if err := s.sweep(); err != nil {
+				log.Warn("thread binding sweep failed", "error", err)
+			}
 		}
 	}
 }

@@ -73,6 +73,20 @@ func TestPoolPicksTheAccountWithMoreRoomInItsTighterWindow(t *testing.T) {
 	}
 }
 
+func TestPoolDoesNotPickAnAccountUntilItsUsageIsKnown(t *testing.T) {
+	unknown := accountFor("acct-unknown")
+	known := accountFor("acct-known")
+	known.adopt(window{usedPercent: 6, seenAt: time.Now()}, window{}, nil, false)
+	pool := &Pool{accounts: []*Account{unknown, known}}
+
+	if got := pool.pick("", nil); got != known {
+		t.Fatalf("picked %v, want the account with known usage", got)
+	}
+	if got := pool.pick("acct-unknown", nil); got != nil {
+		t.Fatalf("picked pinned account %s before its usage was known", got.id())
+	}
+}
+
 func TestPoolWatchesNewAccountsWithoutLosingRuntimeState(t *testing.T) {
 	path := t.TempDir() + "/accounts.json"
 	seed := &Pool{path: path}

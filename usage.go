@@ -58,6 +58,10 @@ func (u usageWindow) window() window {
 }
 
 func (s *server) pollUsage(ctx context.Context, account *Account) error {
+	return s.pollUsageWithReauth(ctx, account, true)
+}
+
+func (s *server) pollUsageWithReauth(ctx context.Context, account *Account, canReauth bool) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, usageEndpoint, nil)
 	if err != nil {
 		return err
@@ -74,8 +78,11 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		return s.reauthorize(account)
+	if resp.StatusCode == http.StatusUnauthorized && canReauth {
+		if err := s.reauthorize(account); err != nil {
+			return err
+		}
+		return s.pollUsageWithReauth(ctx, account, false)
 	}
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("usage returned %s", resp.Status)
@@ -118,8 +125,18 @@ func (a *Account) adopt(primary, secondary window, banked *int64, spent bool) {
 		a.secondary = secondary
 	}
 	a.bankedResetCount = banked
+	a.spent = spent
 	if a.dead == "" && !spent {
 		a.cooldown = time.Time{}
+	}
+}
+
+func (s *server) pollAllUsage(ctx context.Context) {
+	for _, account := range s.pool.all() {
+		if err := s.pollUsage(ctx, account); err != nil && ctx.Err() == nil {
+			s.log.Warn("usage poll failed", "account", account.id(), "error", err)
+			s.stats.note("usage poll failed", account.id(), err.Error())
+		}
 	}
 }
 
@@ -127,15 +144,6 @@ func (s *server) watchUsage(ctx context.Context, every time.Duration) {
 	if every <= 0 {
 		return
 	}
-	poll := func() {
-		for _, account := range s.pool.all() {
-			if err := s.pollUsage(ctx, account); err != nil && ctx.Err() == nil {
-				s.log.Warn("usage poll failed", "account", account.id(), "error", err)
-				s.stats.note("usage poll failed", account.id(), err.Error())
-			}
-		}
-	}
-	poll()
 
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
@@ -144,7 +152,7 @@ func (s *server) watchUsage(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			poll()
+			s.pollAllUsage(ctx)
 		}
 	}
 }

@@ -229,6 +229,7 @@ func TestCooldownWaitsForTheExhaustedWindow(t *testing.T) {
 	h.Set("x-codex-secondary-primary-reset-at", strconv.FormatInt(weekly.Unix(), 10))
 
 	a := accountFor("acct-a")
+	a.observe(h)
 	a.rateLimited(h, 0)
 
 	_, _, cooldown, _ := a.health()
@@ -286,6 +287,36 @@ func TestUsagePollFillsBothWindowsAndBankedResets(t *testing.T) {
 	}
 	if banked, known := s.pool.accounts[0].bankedResets(); !known || banked != 3 {
 		t.Fatalf("banked resets = %d, %t, want 3, true", banked, known)
+	}
+}
+
+func TestUsagePollRetriesAfterRefreshingTheAccount(t *testing.T) {
+	withTokenEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(tokenResponse{
+			IDToken:      jwtFor("acct-a"),
+			AccessToken:  "AT-new",
+			RefreshToken: "RT-new",
+		})
+	})
+	var calls int
+	withUsageEndpoint(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get("Authorization") == "Bearer AT-old" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		fmt.Fprintf(w, usageBody, time.Now().Add(3*time.Hour).Unix(), time.Now().Add(96*time.Hour).Unix())
+	})
+
+	s := testServer(t, "http://unused", "acct-a")
+	a := s.pool.accounts[0]
+	a.AccessToken = "AT-old"
+	a.RefreshToken = "RT-old"
+	if err := s.pollUsage(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || a.AccessToken != "AT-new" {
+		t.Fatalf("usage calls = %d, token = %q; want a refresh and one retry", calls, a.AccessToken)
 	}
 }
 
@@ -364,11 +395,6 @@ func TestUsagePollLeavesAnExhaustedAccountParked(t *testing.T) {
 	s := testServer(t, "http://unused", "acct-a")
 	a := s.pool.accounts[0]
 
-	limited := http.Header{}
-	limited.Set("x-codex-secondary-primary-used-percent", "100")
-	limited.Set("x-codex-secondary-primary-reset-at", strconv.FormatInt(time.Now().Add(96*time.Hour).Unix(), 10))
-	a.rateLimited(limited, 0)
-
 	if err := s.pollUsage(t.Context(), a); err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +412,6 @@ func TestUsagePollTrustsTheLimitReachedFlag(t *testing.T) {
 
 	s := testServer(t, "http://unused", "acct-a")
 	a := s.pool.accounts[0]
-	a.rateLimited(http.Header{}, 0)
 
 	if err := s.pollUsage(t.Context(), a); err != nil {
 		t.Fatal(err)

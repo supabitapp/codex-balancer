@@ -56,14 +56,21 @@ func readAccounts(path string) ([]*Account, error) {
 }
 
 func writeAccounts(path string, accounts []*Account) error {
+	return writeJSONFile(path, accounts)
+}
+
+func writeJSONFile(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(accounts, "", "  ")
+	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".accounts-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".codex-balancer-*")
 	if err != nil {
 		return err
 	}

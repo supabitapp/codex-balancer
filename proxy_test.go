@@ -36,18 +36,24 @@ func testServer(t *testing.T, upstream string, ids ...string) *server {
 	t.Helper()
 	pool := &Pool{path: filepath.Join(t.TempDir(), "accounts.json")}
 	for _, id := range ids {
-		if err := pool.add(accountFromState(accountState{
+		account := accountFromState(accountState{
 			IDToken:     jwtFor(id),
 			AccessToken: "token-" + id,
 			LastRefresh: time.Now(),
-		})); err != nil {
+		})
+		account.adopt(window{usedPercent: 0, seenAt: time.Now()}, window{}, nil, false)
+		if err := pool.add(account); err != nil {
 			t.Fatal(err)
 		}
+	}
+	sticky, err := newSticky(filepath.Join(t.TempDir(), "sticky.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
 	return &server{
 		ctx:      t.Context(),
 		pool:     pool,
-		sticky:   newSticky(),
+		sticky:   sticky,
 		stats:    newStats(),
 		upstream: upstream,
 		client:   &http.Client{},

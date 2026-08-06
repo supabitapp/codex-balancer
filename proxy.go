@@ -168,7 +168,9 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 
 		account.observe(resp.Header)
-		s.sticky.bind(key, id)
+		if err := s.sticky.bind(key, id); err != nil {
+			s.log.Warn("thread binding save failed", "thread", key, "account", id, "error", err)
+		}
 		s.stats.routed(key, id, serviceTier, transportHTTP)
 		attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
 		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)

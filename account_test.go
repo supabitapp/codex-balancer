@@ -139,6 +139,7 @@ func TestTransientFailureKeepsTheAccount(t *testing.T) {
 	})
 
 	a := accountFromState(accountState{IDToken: jwtFor("acct-1"), RefreshToken: "RT-old"})
+	a.adopt(window{usedPercent: 0, seenAt: time.Now()}, window{}, nil, false)
 	if err := a.refresh(context.Background(), http.DefaultClient); err == nil {
 		t.Fatal("expected an error")
 	}
