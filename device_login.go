@@ -49,16 +49,19 @@ type deviceTokenResponse struct {
 }
 
 func loginWithDeviceCode(ctx context.Context, hc *http.Client, out io.Writer, issuer string) (*Account, error) {
-	issuer = strings.TrimRight(issuer, "/")
-	deviceAuthEndpoint := issuer + "/api/accounts/deviceauth"
-	device, err := requestDeviceAuthorization(ctx, hc, deviceAuthEndpoint+"/usercode")
+	issuer = deviceAuthIssuer(issuer)
+	device, err := requestDeviceAuthorization(ctx, hc, issuer+"/api/accounts/deviceauth/usercode")
 	if err != nil {
 		return nil, err
 	}
 
 	fmt.Fprintf(out, deviceAuthPrompt, issuer, deviceAuthTimeout/time.Minute, device.userCode)
+	return completeDeviceAuthorization(ctx, hc, issuer, device)
+}
 
-	code, err := pollDeviceAuthorization(ctx, hc, deviceAuthEndpoint+"/token", device)
+func completeDeviceAuthorization(ctx context.Context, hc *http.Client, issuer string, device deviceAuthorization) (*Account, error) {
+	issuer = deviceAuthIssuer(issuer)
+	code, err := pollDeviceAuthorization(ctx, hc, issuer+"/api/accounts/deviceauth/token", device)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +77,14 @@ func loginWithDeviceCode(ctx context.Context, hc *http.Client, out io.Writer, is
 		return nil, fmt.Errorf("device code exchange failed: %w", err)
 	}
 	return accountFromTokens(tokens), nil
+}
+
+func deviceAuthIssuer(issuer string) string {
+	return strings.TrimRight(issuer, "/")
+}
+
+func deviceVerificationURL(issuer string) string {
+	return deviceAuthIssuer(issuer) + "/codex/device"
 }
 
 func requestDeviceAuthorization(ctx context.Context, hc *http.Client, endpoint string) (deviceAuthorization, error) {

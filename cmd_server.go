@@ -63,9 +63,6 @@ func serverCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if pool.count() == 0 {
-		return fmt.Errorf("no accounts in %s; add one with: codex-balancer accounts add", *path)
-	}
 
 	stats := newStats()
 	log := newLogger(*jsonLogs, !*plain)

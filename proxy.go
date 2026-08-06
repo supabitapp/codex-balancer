@@ -26,14 +26,16 @@ func newProxyClient() *http.Client {
 }
 
 type server struct {
-	ctx      context.Context
-	pool     *Pool
-	sticky   *Sticky
-	stats    *Stats
-	upstream string
-	key      string
-	client   *http.Client
-	log      *slog.Logger
+	ctx        context.Context
+	pool       *Pool
+	sticky     *Sticky
+	stats      *Stats
+	logins     accountLoginStore
+	upstream   string
+	authIssuer string
+	key        string
+	client     *http.Client
+	log        *slog.Logger
 }
 
 var hopByHop = map[string]bool{
@@ -63,6 +65,8 @@ var websocketHopByHop = map[string]bool{
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /accounts", s.startAccountLogin)
+	mux.HandleFunc("GET /accounts/{id}", s.accountLogin)
 	mux.HandleFunc("GET /stats", s.statsJSON)
 	mux.HandleFunc("POST /v1/responses", s.responses)
 	mux.HandleFunc("GET /v1/responses", s.responsesWebSocket)
@@ -259,9 +263,13 @@ func (s *server) authorized(r *http.Request) bool {
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, status, map[string]any{
 		"error": map[string]string{"message": message, "type": "balancer_error"},
 	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(value)
 }

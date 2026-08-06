@@ -36,6 +36,21 @@ second machine and using it there retires the first copy.
 
 The running server watches this file. Accounts added, replaced, paused, or
 removed by another command reach routing and the dashboard without a restart.
+The server can start with an empty pool, so it can add its first account over
+HTTP.
+
+`POST /accounts` starts a device-code sign-in and returns `202 Accepted` with a
+verification URL, one-time code, expiry, and a status URL in the `Location`
+header. Open the URL, enter the code, then read the status URL until it returns
+`"status":"complete"`. Only one sign-in can run at a time. Both endpoints use
+the server's bearer key.
+
+```sh
+curl -i -X POST -H "Authorization: Bearer $CODEX_BALANCER_KEY" \
+  http://127.0.0.1:8317/accounts
+curl -H "Authorization: Bearer $CODEX_BALANCER_KEY" \
+  http://127.0.0.1:8317/accounts/LOGIN_ID
+```
 
 ## Serve
 

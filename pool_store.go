@@ -145,6 +145,9 @@ func (p *Pool) reconcile(accounts []*Account) poolChange {
 }
 
 func (p *Pool) watch(ctx context.Context, changed func(poolChange), failed func(error)) error {
+	if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
+		return err
+	}
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err

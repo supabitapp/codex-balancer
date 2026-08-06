@@ -3,10 +3,30 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestPoolWatchCreatesTheAccountDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "accounts.json")
+	pool, err := loadPool(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.watch(t.Context(), func(poolChange) {}, func(error) {}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("account directory mode = %o, want 700", info.Mode().Perm())
+	}
+}
 
 func TestConcurrentPoolMutationsKeepEveryAccount(t *testing.T) {
 	path := t.TempDir() + "/accounts.json"

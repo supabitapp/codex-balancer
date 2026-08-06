@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
@@ -271,8 +270,7 @@ func (s *server) statsJSON(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "missing or invalid bearer key")
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.currentStats(time.Now()))
+	writeJSON(w, http.StatusOK, s.currentStats(time.Now()))
 }
 
 func (s *server) currentStats(now time.Time) statsResponse {
