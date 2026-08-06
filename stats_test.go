@@ -23,7 +23,7 @@ func TestStatsEndpointPubliclyReturnsDashboardAccountState(t *testing.T) {
 	primaryReset := now.Add(2 * time.Hour).Truncate(time.Second)
 	account.adopt(
 		window{usedPercent: 25, minutes: 300, resetsAt: primaryReset, seenAt: now},
-		window{usedPercent: 64, minutes: 10080, resetsAt: now.Add(4 * 24 * time.Hour), seenAt: now},
+		window{usedPercent: 64.125, minutes: 10080, resetsAt: now.Add(4 * 24 * time.Hour), seenAt: now},
 		&banked,
 		false,
 	)
@@ -73,8 +73,8 @@ func TestStatsEndpointPubliclyReturnsDashboardAccountState(t *testing.T) {
 	if gotAccount.Status != accountCooling || gotAccount.Turns != 1 || gotAccount.OpenWebSockets != 1 || gotAccount.RateLimits != 1 {
 		t.Fatalf("account status = %+v", gotAccount)
 	}
-	if gotAccount.WeeklyRemainingPercent == nil || *gotAccount.WeeklyRemainingPercent != 36 {
-		t.Fatalf("weekly remaining = %v, want 36", gotAccount.WeeklyRemainingPercent)
+	if gotAccount.WeeklyRemainingPercent == nil || *gotAccount.WeeklyRemainingPercent != 35.875 {
+		t.Fatalf("weekly remaining = %v, want 35.875", gotAccount.WeeklyRemainingPercent)
 	}
 	if gotAccount.BankedResets == nil || *gotAccount.BankedResets != 3 {
 		t.Fatalf("banked resets = %v, want 3", gotAccount.BankedResets)

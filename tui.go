@@ -104,7 +104,7 @@ func (d dashboard) View() tea.View {
 }
 
 func (d dashboard) title() string {
-	total := 0
+	total := 0.0
 	for _, account := range d.pool.all() {
 		if account.paused() {
 			continue
@@ -119,7 +119,7 @@ func (d dashboard) title() string {
 		}
 		total += left
 	}
-	return fmt.Sprintf("week %d%%", total)
+	return "week " + formatPercent(total)
 }
 
 func (d dashboard) render() string {
@@ -301,7 +301,7 @@ func (d dashboard) accounts(limit int) string {
 			case left <= 30:
 				style = sWarn
 			}
-			weeklyCell = style.Render(fit(fmt.Sprintf("%d%%", left), weeklyW))
+			weeklyCell = style.Render(fit(formatPercent(left), weeklyW))
 		}
 
 		banked := sDim.Render(fit("--", bankedW))
@@ -356,11 +356,16 @@ func longestWindow(windows ...window) window {
 	return longest
 }
 
-func remainingPercent(w window) (int, bool) {
+func remainingPercent(w window) (float64, bool) {
 	if !w.known() {
 		return 0, false
 	}
-	return int(min(max(100-w.usedPercent, 0), 100)), true
+	return min(max(100-w.usedPercent, 0), 100), true
+}
+
+func formatPercent(value float64) string {
+	formatted := strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", value), "0"), ".")
+	return formatted + "%"
 }
 
 func plural(n int64, noun string) string {

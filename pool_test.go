@@ -58,6 +58,21 @@ func TestConcurrentPoolMutationsKeepEveryAccount(t *testing.T) {
 	}
 }
 
+func TestPoolPicksTheAccountWithMoreRoomInItsTighterWindow(t *testing.T) {
+	now := time.Now()
+	tight := accountFor("acct-tight")
+	tight.primary = window{usedPercent: 90, seenAt: now}
+	tight.secondary = window{usedPercent: 10, seenAt: now}
+	roomy := accountFor("acct-roomy")
+	roomy.primary = window{usedPercent: 50, seenAt: now}
+	roomy.secondary = window{usedPercent: 50, seenAt: now}
+	pool := &Pool{accounts: []*Account{tight, roomy}}
+
+	if got := pool.pick("", nil); got != roomy {
+		t.Fatalf("picked %s, want acct-roomy", got.id())
+	}
+}
+
 func TestPoolWatchesNewAccountsWithoutLosingRuntimeState(t *testing.T) {
 	path := t.TempDir() + "/accounts.json"
 	seed := &Pool{path: path}

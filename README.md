@@ -3,11 +3,12 @@
 Spread Codex turns across several ChatGPT accounts. One proxy endpoint, no
 database.
 
-New conversations go to the account with the most quota left, and then they stay
-there. Conversation history carries reasoning only the account that wrote it can
-read, and WebSocket follow-ups can refer to responses owned by that account, so
-moving one mid-way would break it. When a pinned account runs out, its
-conversations wait for the window to reset; start a new conversation to use
+New conversations go to the account with the most room in its tighter quota
+window. Within one percentage point, the least recently used account wins. They
+then stay there. Conversation history carries reasoning only the account that
+wrote it can read, and WebSocket follow-ups can refer to responses owned by that
+account, so moving one mid-way would break it. When a pinned account runs out,
+its conversations wait for the window to reset; start a new conversation to use
 another account.
 
 ## Install

@@ -257,7 +257,7 @@ type accountStatsResponse struct {
 	Email                  string        `json:"email,omitempty"`
 	Plan                   string        `json:"plan"`
 	Status                 accountStatus `json:"status"`
-	WeeklyRemainingPercent *int          `json:"weekly_remaining_percent"`
+	WeeklyRemainingPercent *float64      `json:"weekly_remaining_percent"`
 	BankedResets           *int64        `json:"banked_resets"`
 	ResetAt                *time.Time    `json:"reset_at"`
 	Turns                  int64         `json:"turns"`
@@ -287,7 +287,7 @@ func (s *server) currentStats(now time.Time) statsResponse {
 		primary, secondary, _, _ := account.health()
 		traffic := snapshot.Accounts[claims.Auth.AccountID]
 		weekly := longestWindow(primary, secondary)
-		var weeklyRemaining *int
+		var weeklyRemaining *float64
 		if remaining, known := remainingPercent(weekly); known {
 			weeklyRemaining = &remaining
 		}
