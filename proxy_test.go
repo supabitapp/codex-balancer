@@ -140,6 +140,42 @@ func TestStickySurvivesCompaction(t *testing.T) {
 	}
 }
 
+func TestHTTPThreadTracksServiceTier(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sse(w, r.Header.Get("chatgpt-account-id"))
+	}))
+	defer upstream.Close()
+
+	s := testServer(t, upstream.URL, "acct-a")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/responses",
+		strings.NewReader(`{"input":[],"service_tier":"priority"}`),
+	)
+	req.Header.Set("session-id", "thread-fast")
+	s.responses(rec, req)
+
+	threads := s.stats.snapshot().Threads
+	if len(threads) != 1 || threads[0].ServiceTier != serviceTierFast {
+		t.Fatalf("thread stats = %+v", threads)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/responses",
+		strings.NewReader(`{"input":[],"service_tier":"default"}`),
+	)
+	req.Header.Set("session-id", "thread-fast")
+	s.responses(rec, req)
+
+	threads = s.stats.snapshot().Threads
+	if len(threads) != 1 || threads[0].ServiceTier != "default" {
+		t.Fatalf("updated thread stats = %+v", threads)
+	}
+}
+
 func TestDifferentThreadsSpreadAcrossAccounts(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sse(w, r.Header.Get("chatgpt-account-id"))

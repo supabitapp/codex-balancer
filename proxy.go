@@ -84,6 +84,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
+	serviceTier := requestServiceTier(body)
 
 	key := stickyKey(r.Header)
 	pinned := s.sticky.get(key)
@@ -153,11 +154,19 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 
 		account.observe(resp.Header)
 		s.sticky.bind(key, id)
-		s.stats.routed(key, id, transportHTTP)
+		s.stats.routed(key, id, serviceTier, transportHTTP)
 		s.relay(w, resp, sent)
 		return
 	}
 	writeError(w, http.StatusServiceUnavailable, "every account failed this turn")
+}
+
+func requestServiceTier(body []byte) string {
+	var request struct {
+		ServiceTier string `json:"service_tier"`
+	}
+	json.Unmarshal(body, &request)
+	return request.ServiceTier
 }
 
 func (s *server) refreshed(account *Account, id string) bool {

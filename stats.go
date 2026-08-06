@@ -17,6 +17,7 @@ type transport string
 const (
 	transportHTTP      transport = "http"
 	transportWebSocket transport = "ws"
+	serviceTierFast              = "priority"
 )
 
 type Stats struct {
@@ -43,11 +44,12 @@ type accountStats struct {
 }
 
 type threadStats struct {
-	key     string
-	account string
-	turns   int64
-	last    time.Time
-	via     transport
+	key         string
+	account     string
+	serviceTier string
+	turns       int64
+	last        time.Time
+	via         transport
 }
 
 type Event struct {
@@ -98,7 +100,7 @@ func (s *Stats) failedOver(account, reason string) {
 	s.note("failover", account, reason)
 }
 
-func (s *Stats) routed(thread, account string, via transport) {
+func (s *Stats) routed(thread, account, serviceTier string, via transport) {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,6 +129,7 @@ func (s *Stats) routed(thread, account string, via transport) {
 		s.threads[thread] = t
 	}
 	t.account = account
+	t.serviceTier = serviceTier
 	t.turns++
 	t.last = now
 	t.via = via
@@ -188,11 +191,12 @@ type AccountSnapshot struct {
 }
 
 type ThreadSnapshot struct {
-	Key     string
-	Account string
-	Turns   int64
-	Last    time.Time
-	Via     transport
+	Key         string
+	Account     string
+	ServiceTier string
+	Turns       int64
+	Last        time.Time
+	Via         transport
 }
 
 func (s *Stats) snapshot() Snapshot {
@@ -223,11 +227,12 @@ func (s *Stats) snapshot() Snapshot {
 	}
 	for _, t := range s.threads {
 		out.Threads = append(out.Threads, ThreadSnapshot{
-			Key:     t.key,
-			Account: t.account,
-			Turns:   t.turns,
-			Last:    t.last,
-			Via:     t.via,
+			Key:         t.key,
+			Account:     t.account,
+			ServiceTier: t.serviceTier,
+			Turns:       t.turns,
+			Last:        t.last,
+			Via:         t.via,
 		})
 	}
 	return out

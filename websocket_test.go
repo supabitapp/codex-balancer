@@ -96,7 +96,7 @@ func TestResponsesWebSocketRelaysTracksAndHonorsPause(t *testing.T) {
 
 	waitFor(t, func() bool { return s.stats.snapshot().WSOpen == 1 })
 	websocketExchange(t, client, `{"type":"response.create","generate":false}`)
-	websocketExchange(t, client, `{"type":"response.create","input":[]}`)
+	websocketExchange(t, client, `{"type":"response.create","input":[],"service_tier":"priority"}`)
 
 	snap := s.stats.snapshot()
 	if snap.Turns != 1 || snap.WSTurns != 1 || snap.WSOpen != 1 {
@@ -105,7 +105,7 @@ func TestResponsesWebSocketRelaysTracksAndHonorsPause(t *testing.T) {
 	if snap.Accounts["acct-a"].WSOpen != 1 {
 		t.Fatalf("account websocket count = %d", snap.Accounts["acct-a"].WSOpen)
 	}
-	if len(snap.Threads) != 1 || snap.Threads[0].Via != transportWebSocket {
+	if len(snap.Threads) != 1 || snap.Threads[0].Via != transportWebSocket || snap.Threads[0].ServiceTier != serviceTierFast {
 		t.Fatalf("thread stats = %+v", snap.Threads)
 	}
 	if snap.TTFB <= 0 {

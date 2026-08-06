@@ -41,7 +41,8 @@ codex-balancer server -no-tui   # log to stderr instead
 
 The dashboard lists every account with its status, weekly quota, banked usage
 resets, next quota reset, turns served, open WebSockets, and recent activity,
-next to each conversation's account and transport and a rolling event feed.
+plus a rolling event feed. Each conversation row shows its account, transport,
+and Fast mode.
 
 Move the cursor with ↑↓ or j/k and press space to pause the account under it. A
 paused account takes no turns at all, including from threads already pinned to

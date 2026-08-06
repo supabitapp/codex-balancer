@@ -89,7 +89,7 @@ func TestDashboardShowsWebSocketTraffic(t *testing.T) {
 	account := &Account{IDToken: jwtFor("acct-a")}
 	stats := newStats()
 	stats.websocketOpened("acct-a")
-	stats.routed("thread-1", "acct-a", transportWebSocket)
+	stats.routed("thread-1", "acct-a", serviceTierFast, transportWebSocket)
 	d := dashboard{
 		pool:   &Pool{accounts: []*Account{account}},
 		stats:  stats,
@@ -99,7 +99,7 @@ func TestDashboardShowsWebSocketTraffic(t *testing.T) {
 	}
 
 	rendered := d.render()
-	for _, want := range []string{"WS", "ws turns", "ws open", "thread-1", "acct-a", "1 turn"} {
+	for _, want := range []string{"WS", "ws turns", "ws open", "thread-1", "acct-a", "FAST", "1 turn"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("dashboard does not contain %q:\n%s", want, rendered)
 		}

@@ -281,9 +281,10 @@ func relayWebSocketMessages(
 }
 
 type websocketTurn struct {
-	sent    time.Time
-	counted bool
-	created bool
+	sent        time.Time
+	serviceTier string
+	counted     bool
+	created     bool
 }
 
 type websocketTracker struct {
@@ -295,12 +296,13 @@ type websocketTracker struct {
 }
 
 type websocketEnvelope struct {
-	Type       string                     `json:"type"`
-	Generate   *bool                      `json:"generate"`
-	Status     int                        `json:"status"`
-	StatusCode int                        `json:"status_code"`
-	Headers    map[string]json.RawMessage `json:"headers"`
-	Error      struct {
+	Type        string                     `json:"type"`
+	Generate    *bool                      `json:"generate"`
+	Status      int                        `json:"status"`
+	StatusCode  int                        `json:"status_code"`
+	ServiceTier string                     `json:"service_tier"`
+	Headers     map[string]json.RawMessage `json:"headers"`
+	Error       struct {
 		Code string `json:"code"`
 	} `json:"error"`
 	Response struct {
@@ -323,7 +325,11 @@ func (t *websocketTracker) sent(kind websocket.MessageType, data []byte) error {
 	}
 	counted := event.Generate == nil || *event.Generate
 	t.mu.Lock()
-	t.turns = append(t.turns, websocketTurn{sent: time.Now(), counted: counted})
+	t.turns = append(t.turns, websocketTurn{
+		sent:        time.Now(),
+		serviceTier: event.ServiceTier,
+		counted:     counted,
+	})
 	t.mu.Unlock()
 	return nil
 }
@@ -363,7 +369,12 @@ func (t *websocketTracker) received(kind websocket.MessageType, data []byte) err
 			}
 			t.turns[i].created = true
 			if t.turns[i].counted {
-				t.stats.routed(t.thread, t.account.id(), transportWebSocket)
+				t.stats.routed(
+					t.thread,
+					t.account.id(),
+					t.turns[i].serviceTier,
+					transportWebSocket,
+				)
 				t.stats.answered(time.Since(t.turns[i].sent))
 			}
 			break

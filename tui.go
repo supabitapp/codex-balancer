@@ -403,11 +403,16 @@ func (d dashboard) threads(width, height int) string {
 	names := d.shortNames()
 	rows := []string{}
 	for _, t := range threads {
-		rows = append(rows, fmt.Sprintf("%s %s %s %s %s %s",
+		tier := strings.Repeat(" ", 5)
+		if t.ServiceTier == serviceTierFast {
+			tier = sHot.Render("FAST ")
+		}
+		rows = append(rows, fmt.Sprintf("%s %s %s %s %s %s %s",
 			sText.Render(pad(shortKey(t.Key), 9)),
 			sDim.Render("→"),
 			sSpark.Render(pad(names[t.Account], 14)),
 			sGood.Render(pad(strings.ToUpper(string(t.Via)), 4)),
+			tier,
 			sDim.Render(pad(plural(t.Turns, "turn"), 9)),
 			sDim.Render(ago(t.Last))))
 	}
