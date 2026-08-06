@@ -3,33 +3,46 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"html/template"
 	"net/http"
 	"sync"
+	"time"
 )
 
-var errAccountLoginPending = errors.New("an account login is already pending")
+type accountLogin struct {
+	device    deviceAuthorization
+	expiresAt time.Time
+}
 
 type accountLoginStore struct {
-	mu      sync.Mutex
-	pending bool
+	mu     sync.Mutex
+	active *accountLogin
 }
 
-func (s *accountLoginStore) reserve() error {
+func (s *accountLoginStore) getOrCreate(create func() (deviceAuthorization, error)) (accountLogin, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.pending {
-		return errAccountLoginPending
+	if s.active != nil {
+		return *s.active, false, nil
 	}
-	s.pending = true
-	return nil
+	device, err := create()
+	if err != nil {
+		return accountLogin{}, false, err
+	}
+	login := accountLogin{
+		device:    device,
+		expiresAt: time.Now().Add(deviceAuthTimeout),
+	}
+	s.active = &login
+	return login, true, nil
 }
 
-func (s *accountLoginStore) release() {
+func (s *accountLoginStore) release(authID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pending = false
+	if s.active != nil && s.active.device.authID == authID {
+		s.active = nil
+	}
 }
 
 type accountLoginPageData struct {
@@ -67,36 +80,37 @@ a { color: #89b4fa }
 </html>`))
 
 func (s *server) accountsPage(w http.ResponseWriter, r *http.Request) {
-	if err := s.logins.reserve(); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
 	issuer := s.accountAuthIssuer()
-	device, err := requestDeviceAuthorization(
-		r.Context(),
-		s.client,
-		deviceAuthIssuer(issuer)+"/api/accounts/deviceauth/usercode",
-	)
+	login, created, err := s.logins.getOrCreate(func() (deviceAuthorization, error) {
+		return requestDeviceAuthorization(
+			r.Context(),
+			s.client,
+			deviceAuthIssuer(issuer)+"/api/accounts/deviceauth/usercode",
+		)
+	})
 	if err != nil {
-		s.logins.release()
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	var page bytes.Buffer
 	if err := accountLoginPage.Execute(&page, accountLoginPageData{
 		VerificationURL: deviceVerificationURL(issuer),
-		UserCode:        device.userCode,
-		ExpiresIn:       int(deviceAuthTimeout.Minutes()),
+		UserCode:        login.device.userCode,
+		ExpiresIn:       minutesUntil(time.Now(), login.expiresAt),
 	}); err != nil {
-		s.logins.release()
+		if created {
+			s.logins.release(login.device.authID)
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	ctx := s.ctx
-	if ctx == nil {
-		ctx = context.Background()
+	if created {
+		ctx := s.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		go s.completeAccountLogin(ctx, issuer, login.device)
 	}
-	go s.completeAccountLogin(ctx, issuer, device)
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
@@ -106,8 +120,16 @@ func (s *server) accountsPage(w http.ResponseWriter, r *http.Request) {
 	w.Write(page.Bytes())
 }
 
+func minutesUntil(now, deadline time.Time) int {
+	remaining := deadline.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return int((remaining + time.Minute - 1) / time.Minute)
+}
+
 func (s *server) completeAccountLogin(ctx context.Context, issuer string, device deviceAuthorization) {
-	defer s.logins.release()
+	defer s.logins.release(device.authID)
 	account, err := completeDeviceAuthorization(ctx, s.client, issuer, device)
 	if err == nil {
 		err = s.pool.add(account)

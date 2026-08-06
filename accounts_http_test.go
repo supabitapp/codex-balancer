@@ -82,8 +82,11 @@ func TestAccountEndpointCompletesDeviceLogin(t *testing.T) {
 
 	duplicate := httptest.NewRecorder()
 	handler.ServeHTTP(duplicate, httptest.NewRequest(http.MethodGet, "/accounts", nil))
-	if duplicate.Code != http.StatusConflict || starts.Load() != 1 {
+	if duplicate.Code != http.StatusOK || starts.Load() != 1 {
 		t.Fatalf("duplicate request returned %d after %d provider calls", duplicate.Code, starts.Load())
+	}
+	if duplicate.Body.String() != started.Body.String() {
+		t.Fatal("duplicate request did not reuse the active login")
 	}
 	post := httptest.NewRecorder()
 	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/accounts", nil))
