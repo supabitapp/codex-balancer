@@ -25,6 +25,24 @@ type Pool struct {
 	accounts  []*Account
 }
 
+type routingCandidate struct {
+	account   *Account
+	id        string
+	paused    bool
+	reauth    string
+	cooldown  time.Time
+	primary   window
+	secondary window
+	pressure  float64
+	lastUsed  time.Time
+}
+
+type routingDecision struct {
+	account    *Account
+	candidates []routingCandidate
+	now        time.Time
+}
+
 func indexOf(accounts []*Account, id string) int {
 	return slices.IndexFunc(accounts, func(a *Account) bool { return a.id() == id })
 }
@@ -121,40 +139,70 @@ func (p *Pool) persistTokens(a *Account) error {
 }
 
 func (p *Pool) pick(pinned string, skip map[string]bool) *Account {
-	accounts := p.all()
+	return p.route(pinned, skip).account
+}
+
+func (p *Pool) route(pinned string, skip map[string]bool) routingDecision {
+	now := time.Now()
+	decision := routingDecision{now: now}
+	for _, account := range p.all() {
+		decision.candidates = append(decision.candidates, account.routingCandidate())
+	}
 	if pinned != "" {
-		if i := indexOf(accounts, pinned); i >= 0 && !skip[pinned] && !accounts[i].paused() {
-			return accounts[i]
+		for _, candidate := range decision.candidates {
+			if candidate.id == pinned && !skip[pinned] && !candidate.paused {
+				decision.account = candidate.account
+				break
+			}
 		}
-		return nil
+		return decision
 	}
 
-	now := time.Now()
-	var best *Account
-	for _, a := range accounts {
-		if skip[a.id()] || !a.available(now) {
+	var best *routingCandidate
+	for i := range decision.candidates {
+		candidate := &decision.candidates[i]
+		if skip[candidate.id] || !candidate.available(now) {
 			continue
 		}
-		if best == nil || a.roomierThan(best) {
-			best = a
+		if best == nil || candidate.roomierThan(*best) {
+			best = candidate
 		}
 	}
-	return best
-}
-
-func (a *Account) roomierThan(b *Account) bool {
-	ap, at := a.load()
-	bp, bt := b.load()
-	if math.Abs(ap-bp) > 1 {
-		return ap < bp
+	if best != nil {
+		decision.account = best.account
 	}
-	return at.Before(bt)
+	return decision
 }
 
-func (a *Account) load() (pressure float64, lastUsed time.Time) {
+func (a *Account) routingCandidate() routingCandidate {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.pressure(), a.lastUsed
+	return routingCandidate{
+		account:   a,
+		id:        claimsFromToken(a.IDToken).Auth.AccountID,
+		paused:    a.Paused,
+		reauth:    a.dead,
+		cooldown:  a.cooldown,
+		primary:   a.primary,
+		secondary: a.secondary,
+		pressure:  a.pressure(),
+		lastUsed:  a.lastUsed,
+	}
+}
+
+func (c routingCandidate) available(now time.Time) bool {
+	return accountAvailableAt(c.paused, c.reauth, c.cooldown, now)
+}
+
+func (c routingCandidate) status(now time.Time) accountStatus {
+	return accountStatusAt(c.paused, c.reauth, c.cooldown, now)
+}
+
+func (c routingCandidate) roomierThan(other routingCandidate) bool {
+	if math.Abs(c.pressure-other.pressure) > 1 {
+		return c.pressure < other.pressure
+	}
+	return c.lastUsed.Before(other.lastUsed)
 }
 
 func (p *Pool) sorted() []*Account {

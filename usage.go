@@ -91,6 +91,13 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 		payload.bankedResets(),
 		payload.spent(),
 	)
+	var limitReached any
+	if payload.RateLimit.LimitReached != nil {
+		limitReached = *payload.RateLimit.LimitReached
+	}
+	attrs := []any{"reported_limit_reached", limitReached}
+	attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
+	s.log.Debug("usage polled", attrs...)
 	return nil
 }
 

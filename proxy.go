@@ -94,9 +94,10 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	pinned := s.sticky.get(key)
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
+	s.log.Debug("http turn received", "thread", key, "pinned_account", pinned, "service_tier", serviceTier)
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		account := s.pool.pick(pinned, skip)
+		account := s.pickAccount(key, pinned, skip, attempt, transportHTTP)
 		if account == nil {
 			writeError(w, http.StatusServiceUnavailable, "no account available")
 			return
@@ -114,12 +115,20 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		sent := time.Now()
 		resp, err := s.forward(r, body, account)
 		if err != nil {
-			s.log.Warn("upstream unreachable", "account", id, "error", err)
+			s.log.Warn("upstream unreachable", "transport", transportHTTP, "thread", key, "account", id, "attempt", attempt+1, "error", err)
 			s.stats.failedOver(id, "unreachable")
 			account.failed(attempt)
 			skip[id] = true
 			continue
 		}
+		s.log.Debug("upstream responded",
+			"transport", transportHTTP,
+			"thread", key,
+			"account", id,
+			"attempt", attempt+1,
+			"status", resp.StatusCode,
+			"header_latency", time.Since(sent),
+		)
 
 		if resp.StatusCode == http.StatusUnauthorized && !reauthed[id] {
 			resp.Body.Close()
@@ -134,16 +143,18 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		if status := resp.StatusCode; status == http.StatusTooManyRequests ||
 			status == http.StatusUnauthorized || status >= 500 {
 			if status == http.StatusTooManyRequests {
-				s.log.Info("rate limited", "account", id)
 				account.observe(resp.Header)
 				account.rateLimited(resp.Header, attempt)
 				s.stats.rateLimited(id)
+				attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1}
+				attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
+				s.log.Info("account rate limited", attrs...)
 			} else {
-				s.log.Warn("upstream refused the turn", "account", id, "status", status)
+				s.log.Warn("upstream refused the turn", "transport", transportHTTP, "thread", key, "account", id, "attempt", attempt+1, "status", status)
 				account.failed(attempt)
 			}
 			if pinned != "" {
-				s.log.Info("thread stays on its account", "account", id, "status", status)
+				s.log.Info("thread stays on its account", "transport", transportHTTP, "thread", key, "account", id, "status", status)
 				copyHeaders(w.Header(), resp.Header)
 				w.WriteHeader(status)
 				io.Copy(w, resp.Body)
@@ -159,9 +170,13 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		account.observe(resp.Header)
 		s.sticky.bind(key, id)
 		s.stats.routed(key, id, serviceTier, transportHTTP)
+		attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
+		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
+		s.log.Debug("http turn routed", attrs...)
 		s.relay(w, resp, sent)
 		return
 	}
+	s.log.Warn("every account failed", "transport", transportHTTP, "thread", key, "attempts", maxAttempts)
 	writeError(w, http.StatusServiceUnavailable, "every account failed this turn")
 }
 
@@ -174,6 +189,7 @@ func requestServiceTier(body []byte) string {
 }
 
 func (s *server) refreshed(account *Account, id string) bool {
+	s.log.Debug("refreshing account", "account", id)
 	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
 	defer cancel()
 	if err := account.refresh(ctx, s.client); err != nil {
@@ -183,6 +199,7 @@ func (s *server) refreshed(account *Account, id string) bool {
 	if err := s.pool.persistTokens(account); err != nil {
 		s.log.Warn("could not persist refreshed tokens", "account", id, "error", err)
 	}
+	s.log.Debug("account refreshed", "account", id)
 	return true
 }
 

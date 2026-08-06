@@ -50,8 +50,14 @@ link and one-time code. The server adds the account in the background, and
 ```sh
 export CODEX_BALANCER_KEY=$(openssl rand -hex 16)
 codex-balancer server           # live dashboard
-codex-balancer server -no-tui   # log to stderr instead
+codex-balancer server -no-tui   # show the same logs on stderr
 ```
+
+The server appends verbose logs to `~/.codex-balancer/server.log`, mode 0600,
+with or without the dashboard. Each route records its thread pin, attempt, chosen
+account, every account's status and quota windows, upstream result, usage polls,
+and WebSocket turns. Tokens and request bodies stay out of the log. `-log-file`
+changes the path; an empty path disables the file.
 
 The dashboard lists every account with its status, weekly quota, banked usage
 resets, next quota reset, turns served, open WebSockets, and recent activity,

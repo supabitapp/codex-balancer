@@ -75,12 +75,16 @@ func (a *Account) health() (primary, secondary window, cooldown time.Time, reaut
 func (a *Account) status(now time.Time) accountStatus {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return accountStatusAt(a.Paused, a.dead, a.cooldown, now)
+}
+
+func accountStatusAt(paused bool, reauth string, cooldown, now time.Time) accountStatus {
 	switch {
-	case a.Paused:
+	case paused:
 		return accountPaused
-	case a.dead != "":
+	case reauth != "":
 		return accountNeedsReauth
-	case now.Before(a.cooldown):
+	case now.Before(cooldown):
 		return accountCooling
 	default:
 		return accountLive
@@ -189,7 +193,11 @@ func (a *Account) plan() string  { return a.claims().Auth.Plan }
 func (a *Account) available(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return !a.Paused && a.dead == "" && now.After(a.cooldown)
+	return accountAvailableAt(a.Paused, a.dead, a.cooldown, now)
+}
+
+func accountAvailableAt(paused bool, reauth string, cooldown, now time.Time) bool {
+	return !paused && reauth == "" && now.After(cooldown)
 }
 
 func (a *Account) paused() bool {

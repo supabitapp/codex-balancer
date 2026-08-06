@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,6 +37,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := stickyKey(r.Header)
+	s.log.Debug("websocket requested", "thread", key)
 	dial, failed, err := s.dialResponsesWebSocket(r, key)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -63,7 +65,11 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	id := dial.account.id()
 	s.sticky.bind(key, id)
 	s.stats.websocketOpened(id)
-	defer s.stats.websocketClosed(id)
+	s.log.Debug("websocket opened", "thread", key, "account", id)
+	defer func() {
+		s.stats.websocketClosed(id)
+		s.log.Debug("websocket closed", "thread", key, "account", id)
+	}()
 
 	downstream.SetReadLimit(maxRequestBody)
 	dial.conn.SetReadLimit(maxRequestBody)
@@ -109,7 +115,7 @@ func (s *server) dialResponsesWebSocket(r *http.Request, key string) (*websocket
 	reauthed := map[string]bool{}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		account := s.pool.pick(pinned, skip)
+		account := s.pickAccount(key, pinned, skip, attempt, transportWebSocket)
 		if account == nil {
 			return nil, nil, errors.New("no account available")
 		}
@@ -131,6 +137,9 @@ func (s *server) dialResponsesWebSocket(r *http.Request, key string) (*websocket
 		cancel()
 		if err == nil {
 			account.observe(resp.Header)
+			attrs := []any{"transport", transportWebSocket, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
+			attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
+			s.log.Debug("websocket routed", attrs...)
 			return &websocketDial{conn: conn, resp: resp, account: account}, nil, nil
 		}
 
@@ -144,7 +153,7 @@ func (s *server) dialResponsesWebSocket(r *http.Request, key string) (*websocket
 		}
 
 		if resp == nil {
-			s.log.Warn("upstream websocket unreachable", "account", id, "error", err)
+			s.log.Warn("upstream websocket unreachable", "thread", key, "account", id, "attempt", attempt+1, "error", err)
 			s.stats.failedOver(id, "unreachable")
 			account.failed(attempt)
 			skip[id] = true
@@ -153,7 +162,7 @@ func (s *server) dialResponsesWebSocket(r *http.Request, key string) (*websocket
 
 		status := resp.StatusCode
 		if status == http.StatusSwitchingProtocols {
-			s.log.Warn("upstream websocket handshake invalid", "account", id, "error", err)
+			s.log.Warn("upstream websocket handshake invalid", "thread", key, "account", id, "attempt", attempt+1, "error", err)
 			s.stats.failedOver(id, "invalid handshake")
 			account.failed(attempt)
 			skip[id] = true
@@ -164,7 +173,11 @@ func (s *server) dialResponsesWebSocket(r *http.Request, key string) (*websocket
 				account.observe(resp.Header)
 				account.rateLimited(resp.Header, attempt)
 				s.stats.rateLimited(id)
+				attrs := []any{"transport", transportWebSocket, "thread", key, "attempt", attempt + 1}
+				attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
+				s.log.Info("account rate limited", attrs...)
 			} else {
+				s.log.Warn("upstream websocket refused the connection", "thread", key, "account", id, "attempt", attempt+1, "status", status)
 				account.failed(attempt)
 			}
 			if pinned == "" {
@@ -236,7 +249,7 @@ func (s *server) relayResponsesWebSocket(downstream, upstream *websocket.Conn, a
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	tracker := websocketTracker{stats: s.stats, account: account, thread: thread}
+	tracker := websocketTracker{stats: s.stats, account: account, thread: thread, log: s.log}
 	errs := make(chan error, 2)
 	go func() {
 		errs <- relayWebSocketMessages(ctx, upstream, downstream, tracker.sent)
@@ -293,6 +306,7 @@ type websocketTracker struct {
 	account *Account
 	thread  string
 	turns   []websocketTurn
+	log     *slog.Logger
 }
 
 type websocketEnvelope struct {
@@ -320,6 +334,9 @@ func (t *websocketTracker) sent(kind websocket.MessageType, data []byte) error {
 	if json.Unmarshal(data, &event) != nil || event.Type != "response.create" {
 		return nil
 	}
+	attrs := []any{"transport", transportWebSocket, "thread", t.thread, "service_tier", event.ServiceTier}
+	attrs = append(attrs, routingLogAttrs(t.account.routingCandidate(), time.Now())...)
+	t.log.Debug("websocket turn received", attrs...)
 	if t.account.paused() {
 		return errWebSocketAccountPaused
 	}
@@ -357,6 +374,9 @@ func (t *websocketTracker) received(kind websocket.MessageType, data []byte) err
 	if status == http.StatusTooManyRequests || code == "rate_limit_exceeded" {
 		t.account.rateLimited(headers, 0)
 		t.stats.rateLimited(t.account.id())
+		attrs := []any{"transport", transportWebSocket, "thread", t.thread, "status", status, "code", code}
+		attrs = append(attrs, routingLogAttrs(t.account.routingCandidate(), time.Now())...)
+		t.log.Info("account rate limited", attrs...)
 	}
 
 	t.mu.Lock()
