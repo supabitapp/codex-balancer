@@ -24,10 +24,10 @@ import (
 )
 
 const (
-	authorizeEndpoint = "https://auth.openai.com/oauth/authorize"
-	callbackPort      = 1455
-	callbackPath      = "/auth/callback"
-	loginScope        = "openid profile email offline_access api.connectors.read api.connectors.invoke"
+	authBaseURL  = "https://auth.openai.com"
+	callbackPort = 1455
+	callbackPath = "/auth/callback"
+	loginScope   = "openid profile email offline_access api.connectors.read api.connectors.invoke"
 )
 
 var (
@@ -166,24 +166,32 @@ func redeem(ctx context.Context, hc *http.Client, query url.Values, verifier str
 	if err != nil {
 		return nil, err
 	}
+	return accountFromTokens(tokens), nil
+}
+
+func accountFromTokens(tokens tokenResponse) *Account {
 	return accountFromState(accountState{
 		IDToken:      tokens.IDToken,
 		AccessToken:  tokens.AccessToken,
 		RefreshToken: tokens.RefreshToken,
 		LastRefresh:  time.Now(),
-	}), nil
+	})
 }
 
 func exchangeCode(ctx context.Context, hc *http.Client, code, verifier string) (tokenResponse, error) {
+	return exchangeCodeAt(ctx, hc, oauthEndpoint, code, redirectURI, verifier)
+}
+
+func exchangeCodeAt(ctx context.Context, hc *http.Client, endpoint, code, redirect, verifier string) (tokenResponse, error) {
 	var out tokenResponse
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
-		"redirect_uri":  {redirectURI},
+		"redirect_uri":  {redirect},
 		"client_id":     {oauthClientID},
 		"code_verifier": {verifier},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, oauthEndpoint, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return out, err
 	}
@@ -215,7 +223,7 @@ func authorizeURL(challenge, state string) string {
 		"state":                      {state},
 		"originator":                 {"codex_cli_rs"},
 	}
-	return authorizeEndpoint + "?" + query.Encode()
+	return authBaseURL + "/oauth/authorize?" + query.Encode()
 }
 
 func randomToken(n int) string {

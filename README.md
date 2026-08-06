@@ -19,14 +19,16 @@ go install github.com/supabitapp/codex-balancer@latest
 ## Add accounts
 
 ```sh
-codex-balancer accounts add     # opens a browser, sign in, repeat per account
+codex-balancer accounts add                 # sign in through a local browser
+codex-balancer accounts add --device-auth   # sign in with a code on another device
 codex-balancer accounts list
 ```
 
 `add` runs the ChatGPT sign-in itself: it starts the OAuth flow, accepts the
 redirect on `127.0.0.1:1455` or as a pasted callback URL, and trades the code for
-tokens. Nothing reads or writes `~/.codex`, so the balancer and Codex hold
-separate sessions.
+tokens. `--device-auth` instead prints a link and one-time code, so the command
+also works on a remote machine with no browser. Nothing reads or writes
+`~/.codex`, so the balancer and Codex hold separate sessions.
 
 Accounts live in `~/.codex-balancer/accounts.json`, mode 0600. Each sign-in
 mints a refresh token the balancer alone rotates, so copying that file to a

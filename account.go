@@ -20,7 +20,7 @@ const (
 	refreshAfter  = 8 * 24 * time.Hour
 )
 
-var oauthEndpoint = "https://auth.openai.com/oauth/token"
+var oauthEndpoint = authBaseURL + "/oauth/token"
 
 type accountState struct {
 	IDToken      string    `json:"id_token"`

@@ -18,12 +18,14 @@ import (
 const accountsHelp = `Manage the account pool.
 
 Usage:
-  codex-balancer accounts add          Sign in to ChatGPT in a browser and pool the account
-  codex-balancer accounts list         Show pooled accounts
-  codex-balancer accounts rm <email>   Drop an account
+  codex-balancer accounts add                 Sign in to ChatGPT and pool the account
+  codex-balancer accounts add --device-auth   Sign in with a code on another device
+  codex-balancer accounts list                Show pooled accounts
+  codex-balancer accounts rm <email>          Drop an account
 
 Flags:
   -accounts string   account pool file (default %s)
+  -device-auth       sign in with a one-time code, add only
   -json              machine-readable output, list only
 `
 
@@ -40,6 +42,7 @@ func accountsCmd(args []string) error {
 	fs := flag.NewFlagSet("accounts", flag.ContinueOnError)
 	fs.Usage = func() { printAccountsHelp(os.Stderr) }
 	path := fs.String("accounts", defaultAccountsPath(), "account pool file")
+	deviceAuth := fs.Bool("device-auth", false, "sign in with a one-time code")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -52,7 +55,7 @@ func accountsCmd(args []string) error {
 
 	switch args[0] {
 	case "add":
-		return addAccount(pool)
+		return addAccount(pool, *deviceAuth)
 	case "list":
 		return listAccounts(pool, *asJSON)
 	case "rm":
@@ -77,11 +80,17 @@ func accountsCmd(args []string) error {
 	return fmt.Errorf("unknown subcommand %q", args[0])
 }
 
-func addAccount(pool *Pool) error {
+func addAccount(pool *Pool, deviceAuth bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	account, err := login(ctx, http.DefaultClient)
+	var account *Account
+	var err error
+	if deviceAuth {
+		account, err = loginWithDeviceCode(ctx, http.DefaultClient, os.Stderr, authBaseURL)
+	} else {
+		account, err = login(ctx, http.DefaultClient)
+	}
 	if err != nil {
 		return err
 	}
