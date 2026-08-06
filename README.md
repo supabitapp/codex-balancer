@@ -38,9 +38,14 @@ codex-balancer server           # live dashboard
 codex-balancer server -no-tui   # log to stderr instead
 ```
 
-The dashboard shows each account's two rate limit windows as gauges with their
-reset countdowns, a sparkline of the last twelve minutes, which conversation is
-pinned where, and a rolling event feed.
+The dashboard lists every account with its status, how much of the weekly window
+is left, the turns it served, and a sparkline of the last twelve minutes,
+next to which conversation is pinned where and a rolling event feed.
+
+Move the cursor with ↑↓ or j/k and press space to pause the account under it. A
+paused account takes no turns at all, including from threads already pinned to
+it, so those threads stop until you press space again. The pause is written to
+the pool file, so it outlives a restart, and `accounts list` shows it.
 
 Limits come from two places. Every upstream reply carries them, and every couple
 of minutes the balancer reads `backend-api/wham/usage` for each account, which

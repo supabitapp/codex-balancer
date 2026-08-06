@@ -26,6 +26,7 @@ type Account struct {
 	IDToken      string    `json:"id_token"`
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
+	Paused       bool      `json:"paused,omitempty"`
 	LastRefresh  time.Time `json:"last_refresh"`
 
 	mu          sync.Mutex
@@ -110,7 +111,20 @@ func (a *Account) plan() string  { return a.claims().Auth.Plan }
 func (a *Account) available(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.dead == "" && now.After(a.cooldown)
+	return !a.Paused && a.dead == "" && now.After(a.cooldown)
+}
+
+func (a *Account) paused() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.Paused
+}
+
+func (a *Account) togglePause() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.Paused = !a.Paused
+	return a.Paused
 }
 
 func (a *Account) stale(now time.Time) bool {

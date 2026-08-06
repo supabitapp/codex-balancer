@@ -46,6 +46,7 @@ type dashboard struct {
 	addr   string
 	width  int
 	height int
+	cursor int
 	snap   Snapshot
 }
 
@@ -60,14 +61,37 @@ func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		d.width, d.height = msg.Width, msg.Height
 	case tea.KeyPressMsg:
-		if k := msg.String(); k == "q" || k == "ctrl+c" || k == "esc" {
+		switch msg.String() {
+		case "q", "ctrl+c", "esc":
 			return d, tea.Quit
+		case "up", "k":
+			d.cursor = max(d.cursor-1, 0)
+		case "down", "j":
+			d.cursor = min(d.cursor+1, max(len(d.pool.accounts)-1, 0))
+		case "space", "enter":
+			d.toggle()
 		}
 	case tickMsg:
 		d.snap = d.stats.snapshot()
 		return d, tea.Tick(frame, func(t time.Time) tea.Msg { return tickMsg(t) })
 	}
 	return d, nil
+}
+
+func (d dashboard) toggle() {
+	accounts := d.pool.sorted()
+	if d.cursor >= len(accounts) {
+		return
+	}
+	account := accounts[d.cursor]
+	kind := "resumed"
+	if account.togglePause() {
+		kind = "paused"
+	}
+	d.stats.note(kind, account.id(), "")
+	if err := d.pool.save(); err != nil {
+		d.stats.note("save failed", account.id(), err.Error())
+	}
 }
 
 func (d dashboard) View() tea.View {
@@ -99,10 +123,12 @@ func (d dashboard) render() string {
 }
 
 func (d dashboard) header() string {
-	live, cooling, dead := 0, 0, 0
+	live, cooling, dead, held := 0, 0, 0, 0
 	now := time.Now()
 	for _, a := range d.pool.accounts {
 		switch _, _, cooldown, reauth := a.health(); {
+		case a.paused():
+			held++
 		case reauth != "":
 			dead++
 		case now.Before(cooldown):
@@ -115,6 +141,9 @@ func (d dashboard) header() string {
 	parts := []string{sGood.Render(fmt.Sprintf("%d live", live))}
 	if cooling > 0 {
 		parts = append(parts, sHot.Render(fmt.Sprintf("%d cooling", cooling)))
+	}
+	if held > 0 {
+		parts = append(parts, sDim.Render(fmt.Sprintf("%d paused", held)))
 	}
 	if dead > 0 {
 		parts = append(parts, sBad.Render(fmt.Sprintf("%d need reauth", dead)))
@@ -173,14 +202,16 @@ func (d dashboard) accounts() string {
 
 	sep := sDim.Render(strings.Repeat("─", d.width-2))
 
-	rows := []string{sSection.Render("ACCOUNTS"), "", hdr, sep}
+	rows := []string{sSection.Render("ACCOUNTS") + sDim.Render("   ↑↓ pick · space pauses"), "", hdr, sep}
 
-	for _, a := range accounts {
+	for i, a := range accounts {
 		w, _, cooldown, reauth := a.health()
 		stat := d.snap.Accounts[a.id()]
 
 		var status string
 		switch {
+		case a.paused():
+			status = sDim.Render(pad("⏸ paused", statusW))
 		case reauth != "":
 			status = sBad.Render(pad("✕ "+reauth, statusW))
 		case time.Now().Before(cooldown):
@@ -217,8 +248,14 @@ func (d dashboard) accounts() string {
 			weekly = style.Render(pad(fmt.Sprintf("%d%%", left), weeklyW))
 		}
 
-		rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s  %s  %s  %s  %s",
-			sText.Render(pad(label(a), nameW)),
+		marker, name := "  ", sText.Render(pad(label(a), nameW))
+		if i == d.cursor {
+			marker, name = sTitle.Render("▸ "), sTitle.Render(pad(label(a), nameW))
+		}
+
+		rows = append(rows, fmt.Sprintf("%s%s  %s  %s  %s  %s  %s  %s  %s",
+			marker,
+			name,
 			sDim.Render(pad(a.plan(), planW)),
 			status,
 			weekly,

@@ -119,7 +119,7 @@ func (p *Pool) remove(a *Account) error {
 
 func (p *Pool) pick(pinned string, skip map[string]bool) *Account {
 	if pinned != "" {
-		if a := p.find(pinned); a != nil && !skip[pinned] {
+		if a := p.find(pinned); a != nil && !skip[pinned] && !a.paused() {
 			return a
 		}
 		return nil

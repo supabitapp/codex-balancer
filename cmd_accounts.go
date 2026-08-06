@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -109,6 +108,7 @@ func listAccounts(pool *Pool, asJSON bool) error {
 				"id":     a.id(),
 				"email":  a.email(),
 				"plan":   a.plan(),
+				"paused": a.paused(),
 				"token":  tokenStatus(a),
 				"expiry": a.expires(),
 			})
@@ -123,11 +123,18 @@ func listAccounts(pool *Pool, asJSON bool) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "EMAIL\tPLAN\tTOKEN")
+	fmt.Fprintln(w, "EMAIL\tPLAN\tROUTING\tTOKEN")
 	for _, a := range accounts {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", cmp.Or(a.email(), a.id()), a.plan(), tokenStatus(a))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", label(a), a.plan(), routing(a), tokenStatus(a))
 	}
 	return w.Flush()
+}
+
+func routing(a *Account) string {
+	if a.paused() {
+		return "paused"
+	}
+	return "live"
 }
 
 func tokenStatus(a *Account) string {
