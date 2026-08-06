@@ -1,13 +1,14 @@
 # codex-balancer
 
 Spread Codex turns across several ChatGPT accounts. One proxy endpoint, no
-dashboard, no database.
+database.
 
 New conversations go to the account with the most quota left, and then they stay
-there. A conversation replays its whole history every turn, and that history
-carries reasoning only the account that wrote it can read, so moving one mid-way
-would break it. When a pinned account runs out, its conversations wait for the
-window to reset; start a new conversation to use another account.
+there. Conversation history carries reasoning only the account that wrote it can
+read, and WebSocket follow-ups can refer to responses owned by that account, so
+moving one mid-way would break it. When a pinned account runs out, its
+conversations wait for the window to reset; start a new conversation to use
+another account.
 
 ## Install
 
@@ -39,8 +40,8 @@ codex-balancer server -no-tui   # log to stderr instead
 ```
 
 The dashboard lists every account with its status, weekly quota, banked usage
-resets, next quota reset, turns served, and recent activity, next to which
-conversation is pinned where and a rolling event feed.
+resets, next quota reset, turns served, open WebSockets, and recent activity,
+next to each conversation's account and transport and a rolling event feed.
 
 Move the cursor with ↑↓ or j/k and press space to pause the account under it. A
 paused account takes no turns at all, including from threads already pinned to
@@ -65,6 +66,7 @@ name = "OpenAI"
 base_url = "http://127.0.0.1:8317/v1"
 requires_openai_auth = true
 env_key = "CODEX_BALANCER_KEY"
+supports_websockets = true
 ```
 
 `name` must be exactly `OpenAI`: Codex compares it verbatim to decide whether a
@@ -80,3 +82,8 @@ printenv CODEX_BALANCER_KEY | codex login --with-api-key
 ```
 
 That replaces whatever ChatGPT session the file held.
+
+Codex opens `GET /v1/responses` as a WebSocket and keeps each connection on one
+account. The balancer can fail over while opening the upstream connection, but
+never replays a `response.create` frame after upstream may have received it.
+Pausing an account stops the next WebSocket turn before it reaches upstream.

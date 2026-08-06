@@ -2,6 +2,8 @@ module github.com/supabitapp/codex-balancer
 
 go 1.26
 
+require github.com/coder/websocket v1.8.15
+
 require (
 	charm.land/bubbletea/v2 v2.0.8 // indirect
 	charm.land/lipgloss/v2 v2.0.5 // indirect

@@ -216,10 +216,11 @@ func (d dashboard) accounts(limit int) string {
 	bankedW := 6
 	resetW := 8
 	turnsW := 5
+	wsW := 2
 	trafficW := 7
 	limitsW := 6
 
-	fixedCols := planW + statusW + weeklyW + bankedW + resetW + turnsW + trafficW + limitsW + 9*gap + 2
+	fixedCols := planW + statusW + weeklyW + bankedW + resetW + turnsW + wsW + trafficW + limitsW + 10*gap + 2
 	nameW = min(nameW, max(9, d.width-fixedCols-8))
 	activityW := d.width - fixedCols - nameW
 
@@ -233,6 +234,7 @@ func (d dashboard) accounts(limit int) string {
 		sSection.Render(fit("Banked", bankedW)),
 		sSection.Render(fit("Reset in", resetW)),
 		sSection.Render(fit("Turns", turnsW)),
+		sSection.Render(fit("WS", wsW)),
 		sSection.Render(fit("Traffic", trafficW)),
 		sSection.Render(fit("Limits", limitsW)),
 		sSection.Render(fit("Activity", activityW)),
@@ -267,6 +269,10 @@ func (d dashboard) accounts(limit int) string {
 		turns := ""
 		if stat.Turns > 0 {
 			turns = fmt.Sprintf("%d", stat.Turns)
+		}
+		websockets := ""
+		if stat.WSOpen > 0 {
+			websockets = fmt.Sprintf("%d", stat.WSOpen)
 		}
 		traffic := ""
 		if d.snap.Turns > 0 {
@@ -315,6 +321,7 @@ func (d dashboard) accounts(limit int) string {
 			banked,
 			reset,
 			sNum.Render(fit(turns, turnsW)),
+			sGood.Render(fit(websockets, wsW)),
 			sDim.Render(fit(traffic, trafficW)),
 			sBad.Render(fit(limits, limitsW)),
 			fit(spark(stat.Activity), activityW),
@@ -393,10 +400,11 @@ func (d dashboard) threads(width, height int) string {
 	names := d.shortNames()
 	rows := []string{}
 	for _, t := range threads {
-		rows = append(rows, fmt.Sprintf("%s %s %s %s %s",
+		rows = append(rows, fmt.Sprintf("%s %s %s %s %s %s",
 			sText.Render(pad(shortKey(t.Key), 9)),
 			sDim.Render("→"),
 			sSpark.Render(pad(names[t.Account], 14)),
+			sGood.Render(pad(strings.ToUpper(string(t.Via)), 4)),
 			sDim.Render(pad(plural(t.Turns, "turn"), 9)),
 			sDim.Render(ago(t.Last))))
 	}
@@ -435,12 +443,17 @@ func (d dashboard) totals(width int) string {
 	stats := [][]string{
 		{
 			stat("turns", fmt.Sprintf("%d", s.Turns)),
+			stat("http", fmt.Sprintf("%d", s.Turns-s.WSTurns)),
+			stat("ws turns", fmt.Sprintf("%d", s.WSTurns)),
+			stat("ws open", fmt.Sprintf("%d", s.WSOpen)),
+		},
+		{
 			stat("threads", fmt.Sprintf("%d", len(s.Threads))),
 			stat("accounts", fmt.Sprintf("%d", len(d.pool.accounts))),
 			stat("failovers", fmt.Sprintf("%d", s.Failures)),
+			stat("rate limits", fmt.Sprintf("%d", s.Limited)),
 		},
 		{
-			stat("rate limits", fmt.Sprintf("%d", s.Limited)),
 			stat("ttfb", short(s.TTFB)),
 			stat("uptime", short(s.Uptime)),
 		},

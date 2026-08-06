@@ -39,6 +39,7 @@ func testServer(t *testing.T, upstream string, ids ...string) *server {
 		})
 	}
 	return &server{
+		ctx:      t.Context(),
 		pool:     pool,
 		sticky:   newSticky(),
 		stats:    newStats(),
@@ -223,17 +224,13 @@ func TestModelsStubKeepsBundledCatalog(t *testing.T) {
 	}
 }
 
-func TestWebsocketHandshakeGets426(t *testing.T) {
+func TestNonWebsocketResponsesGetIsRejected(t *testing.T) {
 	s := testServer(t, "http://unused", "acct-a")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
-	req.Header.Set("Upgrade", "websocket")
 	s.routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUpgradeRequired {
-		t.Fatalf("status = %d, want 426; only 426 makes Codex fall back to HTTP", rec.Code)
-	}
-	if rec.Body.Len() != 0 {
-		t.Fatalf("426 must carry no body, got %q", rec.Body)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
 	}
 }

@@ -28,6 +28,7 @@ Point Codex at it by adding to ~/.codex/config.toml:
   name = "OpenAI"
   base_url = "http://127.0.0.1:8317/v1"
   requires_openai_auth = true
+  supports_websockets = true
 
 then authenticate once with: codex login --with-api-key
 
@@ -69,7 +70,10 @@ func serverCmd(args []string) error {
 	stats := newStats()
 	log := newLogger(*jsonLogs, !*plain)
 	sticky := newSticky()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	srv := &server{
+		ctx:      ctx,
 		pool:     pool,
 		sticky:   sticky,
 		stats:    stats,
@@ -84,9 +88,6 @@ func serverCmd(args []string) error {
 		Handler:           srv.routes(),
 		ReadHeaderTimeout: 30 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	go sweepSticky(ctx, sticky)
 	go srv.watchUsage(ctx, *poll)

@@ -26,6 +26,7 @@ func newProxyClient() *http.Client {
 }
 
 type server struct {
+	ctx      context.Context
 	pool     *Pool
 	sticky   *Sticky
 	stats    *Stats
@@ -50,20 +51,22 @@ var hopByHop = map[string]bool{
 	"chatgpt-account-id":  true,
 }
 
+var websocketHopByHop = map[string]bool{
+	"accept-encoding":          true,
+	"cookie":                   true,
+	"sec-websocket-accept":     true,
+	"sec-websocket-extensions": true,
+	"sec-websocket-key":        true,
+	"sec-websocket-protocol":   true,
+	"sec-websocket-version":    true,
+}
+
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/responses", s.responses)
-	mux.HandleFunc("GET /v1/responses", s.refuseUpgrade)
+	mux.HandleFunc("GET /v1/responses", s.responsesWebSocket)
 	mux.HandleFunc("GET /v1/models", s.models)
 	return mux
-}
-
-func (s *server) refuseUpgrade(w http.ResponseWriter, r *http.Request) {
-	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.WriteHeader(http.StatusUpgradeRequired)
 }
 
 func (s *server) models(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +153,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 
 		account.observe(resp.Header)
 		s.sticky.bind(key, id)
-		s.stats.routed(key, id)
+		s.stats.routed(key, id, transportHTTP)
 		s.relay(w, resp, sent)
 		return
 	}
@@ -171,8 +174,23 @@ func (s *server) refreshed(account *Account, id string) bool {
 }
 
 func copyHeaders(dst, src http.Header) {
+	copyHeadersExcept(dst, src, nil)
+}
+
+func copyWebSocketHeaders(dst, src http.Header) {
+	copyHeadersExcept(dst, src, websocketHopByHop)
+}
+
+func copyHeadersExcept(dst, src http.Header, extra map[string]bool) {
+	connection := map[string]bool{}
+	for _, value := range src.Values("Connection") {
+		for token := range strings.SplitSeq(value, ",") {
+			connection[strings.ToLower(strings.TrimSpace(token))] = true
+		}
+	}
 	for name, values := range src {
-		if hopByHop[strings.ToLower(name)] {
+		lower := strings.ToLower(name)
+		if hopByHop[lower] || extra[lower] || connection[lower] {
 			continue
 		}
 		dst[name] = values

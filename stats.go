@@ -12,6 +12,13 @@ const (
 	activitySpan = 30 * time.Second
 )
 
+type transport string
+
+const (
+	transportHTTP      transport = "http"
+	transportWebSocket transport = "ws"
+)
+
 type Stats struct {
 	mu       sync.Mutex
 	started  time.Time
@@ -20,6 +27,8 @@ type Stats struct {
 	limited  int64
 	ttfbSum  time.Duration
 	ttfbN    int64
+	wsTurns  int64
+	wsOpen   int64
 	accounts map[string]*accountStats
 	threads  map[string]*threadStats
 	events   []Event
@@ -28,6 +37,7 @@ type Stats struct {
 type accountStats struct {
 	turns    int64
 	limited  int64
+	wsOpen   int64
 	activity [activityLen]int64
 	bucket   int64
 }
@@ -37,6 +47,7 @@ type threadStats struct {
 	account string
 	turns   int64
 	last    time.Time
+	via     transport
 }
 
 type Event struct {
@@ -87,12 +98,15 @@ func (s *Stats) failedOver(account, reason string) {
 	s.note("failover", account, reason)
 }
 
-func (s *Stats) routed(thread, account string) {
+func (s *Stats) routed(thread, account string, via transport) {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.turns++
+	if via == transportWebSocket {
+		s.wsTurns++
+	}
 	a := s.account(account)
 	a.turns++
 	slot := now.UnixNano() / int64(activitySpan)
@@ -115,7 +129,22 @@ func (s *Stats) routed(thread, account string) {
 	t.account = account
 	t.turns++
 	t.last = now
+	t.via = via
 	s.trimThreads()
+}
+
+func (s *Stats) websocketOpened(account string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.wsOpen++
+	s.account(account).wsOpen++
+}
+
+func (s *Stats) websocketClosed(account string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.wsOpen--
+	s.account(account).wsOpen--
 }
 
 func (s *Stats) trimThreads() {
@@ -144,6 +173,8 @@ type Snapshot struct {
 	Failures int64
 	Limited  int64
 	TTFB     time.Duration
+	WSTurns  int64
+	WSOpen   int64
 	Accounts map[string]AccountSnapshot
 	Threads  []ThreadSnapshot
 	Events   []Event
@@ -152,6 +183,7 @@ type Snapshot struct {
 type AccountSnapshot struct {
 	Turns    int64
 	Limited  int64
+	WSOpen   int64
 	Activity []int64
 }
 
@@ -160,6 +192,7 @@ type ThreadSnapshot struct {
 	Account string
 	Turns   int64
 	Last    time.Time
+	Via     transport
 }
 
 func (s *Stats) snapshot() Snapshot {
@@ -171,6 +204,8 @@ func (s *Stats) snapshot() Snapshot {
 		Turns:    s.turns,
 		Failures: s.failures,
 		Limited:  s.limited,
+		WSTurns:  s.wsTurns,
+		WSOpen:   s.wsOpen,
 		Accounts: make(map[string]AccountSnapshot, len(s.accounts)),
 		Threads:  make([]ThreadSnapshot, 0, len(s.threads)),
 		Events:   append([]Event(nil), s.events...),
@@ -182,6 +217,7 @@ func (s *Stats) snapshot() Snapshot {
 		out.Accounts[id] = AccountSnapshot{
 			Turns:    a.turns,
 			Limited:  a.limited,
+			WSOpen:   a.wsOpen,
 			Activity: append([]int64(nil), a.activity[:]...),
 		}
 	}
@@ -191,6 +227,7 @@ func (s *Stats) snapshot() Snapshot {
 			Account: t.account,
 			Turns:   t.turns,
 			Last:    t.last,
+			Via:     t.via,
 		})
 	}
 	return out

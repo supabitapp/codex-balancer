@@ -38,13 +38,13 @@ func TestWindowsReadBothRateLimitHeaders(t *testing.T) {
 
 func TestActivityRingShiftsWithTime(t *testing.T) {
 	s := newStats()
-	s.routed("thread", "acct-a")
-	s.routed("thread", "acct-a")
+	s.routed("thread", "acct-a", transportHTTP)
+	s.routed("thread", "acct-a", transportHTTP)
 
 	s.mu.Lock()
 	s.accounts["acct-a"].bucket -= 3
 	s.mu.Unlock()
-	s.routed("thread", "acct-a")
+	s.routed("thread", "acct-a", transportHTTP)
 
 	got := s.snapshot().Accounts["acct-a"].Activity
 	if got[0] != 1 {

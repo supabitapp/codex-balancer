@@ -59,10 +59,10 @@ func TestDashboardResizeKeepsSelectedAccountAndSectionsVisible(t *testing.T) {
 	d = model.(dashboard)
 	rendered := d.render()
 
-	if !strings.Contains(rendered, "ACCOUNTS  5-10/10") {
+	if !strings.Contains(rendered, "ACCOUNTS  6-10/10") {
 		t.Fatalf("dashboard does not show the visible account range:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "acct-09@example.com") {
+	if !strings.Contains(rendered, "acct-09@") {
 		t.Fatalf("dashboard does not show the selected account:\n%s", rendered)
 	}
 	for _, title := range []string{"TOTALS", "THREADS", "EVENTS"} {
@@ -77,6 +77,28 @@ func TestDashboardResizeKeepsSelectedAccountAndSectionsVisible(t *testing.T) {
 	rendered = d.render()
 	if !strings.Contains(rendered, "acct-00@example.com") {
 		t.Fatalf("dashboard does not restore account rows after growing:\n%s", rendered)
+	}
+	assertDashboardFits(t, rendered, d.width, d.height)
+}
+
+func TestDashboardShowsWebSocketTraffic(t *testing.T) {
+	account := &Account{IDToken: jwtFor("acct-a")}
+	stats := newStats()
+	stats.websocketOpened("acct-a")
+	stats.routed("thread-1", "acct-a", transportWebSocket)
+	d := dashboard{
+		pool:   &Pool{accounts: []*Account{account}},
+		stats:  stats,
+		width:  120,
+		height: 30,
+		snap:   stats.snapshot(),
+	}
+
+	rendered := d.render()
+	for _, want := range []string{"WS", "ws turns", "ws open", "thread-1", "acct-a", "1 turn"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("dashboard does not contain %q:\n%s", want, rendered)
+		}
 	}
 	assertDashboardFits(t, rendered, d.width, d.height)
 }
