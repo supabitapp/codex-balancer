@@ -125,7 +125,7 @@ func (d dashboard) render() string {
 	}
 	head := d.header()
 	totals := d.totals(d.width)
-	bodyHeight := d.height - lipgloss.Height(head) - lipgloss.Height(totals) - 1
+	bodyHeight := d.height - lipgloss.Height(head) - lipgloss.Height(totals) - 4
 	accountLimit := len(d.pool.accounts)
 	accounts := d.accounts(accountLimit)
 	detailHeight := bodyHeight - lipgloss.Height(accounts)
@@ -144,8 +144,11 @@ func (d dashboard) render() string {
 		head,
 		"",
 		accounts,
+		"",
 		totals,
+		"",
 		d.threads(d.width, threadsHeight),
+		"",
 		d.events(d.width, eventsHeight),
 	)
 }

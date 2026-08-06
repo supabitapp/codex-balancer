@@ -9,7 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-func TestDashboardSectionsDoNotShareRows(t *testing.T) {
+func TestDashboardSectionsHaveSpaceBetweenThem(t *testing.T) {
 	d := dashboard{
 		pool:   &Pool{accounts: []*Account{{IDToken: jwtFor("acct-a")}}},
 		stats:  newStats(),
@@ -20,7 +20,8 @@ func TestDashboardSectionsDoNotShareRows(t *testing.T) {
 
 	titles := []string{"ACCOUNTS", "TOTALS", "THREADS", "EVENTS"}
 	positions := map[string]int{}
-	for i, line := range strings.Split(d.render(), "\n") {
+	lines := strings.Split(d.render(), "\n")
+	for i, line := range lines {
 		sections := 0
 		for _, title := range titles {
 			if strings.Contains(line, title) {
@@ -39,6 +40,9 @@ func TestDashboardSectionsDoNotShareRows(t *testing.T) {
 		}
 		if i > 0 && position <= positions[titles[i-1]] {
 			t.Fatalf("%s is out of order", title)
+		}
+		if position == 0 || strings.TrimSpace(lines[position-1]) != "" {
+			t.Fatalf("%s does not have a blank row before it", title)
 		}
 	}
 }
@@ -59,7 +63,7 @@ func TestDashboardResizeKeepsSelectedAccountAndSectionsVisible(t *testing.T) {
 	d = model.(dashboard)
 	rendered := d.render()
 
-	if !strings.Contains(rendered, "ACCOUNTS  6-10/10") {
+	if !strings.Contains(rendered, "ACCOUNTS  9-10/10") {
 		t.Fatalf("dashboard does not show the visible account range:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "acct-09@") {
