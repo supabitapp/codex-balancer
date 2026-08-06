@@ -265,11 +265,7 @@ type accountStatsResponse struct {
 	RateLimits             int64         `json:"rate_limits"`
 }
 
-func (s *server) statsJSON(w http.ResponseWriter, r *http.Request) {
-	if !s.authorized(r) {
-		writeError(w, http.StatusUnauthorized, "missing or invalid bearer key")
-		return
-	}
+func (s *server) statsJSON(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.currentStats(time.Now()))
 }
 

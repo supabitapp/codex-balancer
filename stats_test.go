@@ -14,7 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-func TestStatsEndpointReturnsDashboardAccountState(t *testing.T) {
+func TestStatsEndpointPubliclyReturnsDashboardAccountState(t *testing.T) {
 	now := time.Now()
 	account := accountFromState(accountState{
 		IDToken: jwtForEmail("khoi.nguyen@example.com", "acct-a"),
@@ -39,15 +39,8 @@ func TestStatsEndpointReturnsDashboardAccountState(t *testing.T) {
 		key:   "secret",
 	}
 
-	unauthorized := httptest.NewRecorder()
-	s.routes().ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/stats", nil))
-	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthorized status = %d, want 401", unauthorized.Code)
-	}
-
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
-	req.Header.Set("Authorization", "Bearer secret")
 	s.routes().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {

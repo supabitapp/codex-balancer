@@ -40,16 +40,13 @@ The server can start with an empty pool, so it can add its first account over
 HTTP.
 
 `POST /accounts` starts a device-code sign-in and returns `202 Accepted` with a
-verification URL, one-time code, expiry, and a status URL in the `Location`
-header. Open the URL, enter the code, then read the status URL until it returns
-`"status":"complete"`. Only one sign-in can run at a time. Both endpoints use
-the server's bearer key.
+verification URL, one-time code, and expiry. Open the URL and enter the code.
+The server adds the account in the background, and `/stats` shows it when done.
+Only one sign-in can run at a time. The endpoint uses the server's bearer key.
 
 ```sh
 curl -i -X POST -H "Authorization: Bearer $CODEX_BALANCER_KEY" \
   http://127.0.0.1:8317/accounts
-curl -H "Authorization: Bearer $CODEX_BALANCER_KEY" \
-  http://127.0.0.1:8317/accounts/LOGIN_ID
 ```
 
 ## Serve
@@ -76,12 +73,12 @@ costs no quota. So the gauges keep moving while you are idle, and an account
 parked by a 429 comes back the moment upstream says its window has room rather
 than when the reset header guessed. `-poll 0` turns the reads off.
 
-`GET /stats` returns the same live account status as JSON. It uses the server's
-bearer key unless `-no-auth` is set. Account emails keep their first and last
-local-part characters and domain, such as `k***i@example.com`.
+`GET /stats` returns the same live account status as public JSON. Account emails
+keep their first and last local-part characters and domain, such as
+`k***i@example.com`.
 
 ```sh
-curl -H "Authorization: Bearer $CODEX_BALANCER_KEY" http://127.0.0.1:8317/stats
+curl http://127.0.0.1:8317/stats
 ```
 
 ## Point Codex at it

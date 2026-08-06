@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -80,14 +79,14 @@ func TestAccountEndpointCompletesDeviceLogin(t *testing.T) {
 	if err := json.Unmarshal(started.Body.Bytes(), &pending); err != nil {
 		t.Fatal(err)
 	}
-	if pending.ID == "" || pending.Status != accountLoginPending || pending.UserCode != "CODE-123" {
+	if pending.Status != "pending" || pending.UserCode != "CODE-123" {
 		t.Fatalf("pending login = %+v", pending)
 	}
-	if pending.VerificationURL != issuer+"/codex/device" || pending.ExpiresAt == nil {
+	if pending.VerificationURL != issuer+"/codex/device" || pending.ExpiresAt.IsZero() {
 		t.Fatalf("pending login = %+v", pending)
 	}
-	if started.Header().Get("Location") != "/accounts/"+pending.ID {
-		t.Fatalf("location = %q", started.Header().Get("Location"))
+	if started.Header().Get("Location") != "" {
+		t.Fatalf("removed status endpoint returned location %q", started.Header().Get("Location"))
 	}
 
 	duplicate := httptest.NewRecorder()
@@ -98,40 +97,17 @@ func TestAccountEndpointCompletesDeviceLogin(t *testing.T) {
 		t.Fatalf("duplicate request returned %d after %d provider calls", duplicate.Code, starts.Load())
 	}
 
-	statusPath := "/accounts/" + pending.ID
-	unauthorizedStatus := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorizedStatus, httptest.NewRequest(http.MethodGet, statusPath, nil))
-	if unauthorizedStatus.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthorized status request = %d, want 401", unauthorizedStatus.Code)
+	removed := httptest.NewRecorder()
+	handler.ServeHTTP(removed, httptest.NewRequest(http.MethodGet, "/accounts/login-id", nil))
+	if removed.Code != http.StatusNotFound {
+		t.Fatalf("removed status endpoint = %d, want 404", removed.Code)
 	}
 
 	release()
-	var completed accountLoginResponse
-	var completedBody string
 	waitFor(t, func() bool {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, statusPath, nil)
-		req.Header.Set("Authorization", "Bearer secret")
-		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			return false
-		}
-		completedBody = rec.Body.String()
-		if json.Unmarshal(rec.Body.Bytes(), &completed) != nil {
-			return false
-		}
-		return completed.Status == accountLoginComplete
+		return s.pool.find("acct-new") != nil
 	})
 
-	if completed.Account == nil || completed.Account.ID != "acct-new" ||
-		completed.Account.Email != "k***n@example.com" || completed.Account.Plan != "pro" {
-		t.Fatalf("completed login = %+v", completed)
-	}
-	for _, secret := range []string{"khoi.nguyen@example.com", "AT-private", "RT-private"} {
-		if strings.Contains(completedBody, secret) {
-			t.Fatalf("completed response leaked %q: %s", secret, completedBody)
-		}
-	}
 	if s.pool.count() != 1 || s.pool.find("acct-new") == nil {
 		t.Fatalf("pool accounts = %v", s.pool.all())
 	}
