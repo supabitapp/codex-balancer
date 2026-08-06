@@ -38,9 +38,9 @@ codex-balancer server           # live dashboard
 codex-balancer server -no-tui   # log to stderr instead
 ```
 
-The dashboard lists every account with its status, how much of the weekly window
-is left, the turns it served, and a sparkline of the last twelve minutes,
-next to which conversation is pinned where and a rolling event feed.
+The dashboard lists every account with its status, weekly quota, banked usage
+resets, next quota reset, turns served, and recent activity, next to which
+conversation is pinned where and a rolling event feed.
 
 Move the cursor with ↑↓ or j/k and press space to pause the account under it. A
 paused account takes no turns at all, including from threads already pinned to

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"charm.land/lipgloss/v2"
 )
 
 func TestWindowsReadBothRateLimitHeaders(t *testing.T) {
@@ -168,9 +170,10 @@ func withUsageEndpoint(t *testing.T, h http.HandlerFunc) {
 
 const usageBody = `{"plan_type":"pro","rate_limit":{
   "primary_window":{"used_percent":12.5,"reset_at":%d,"limit_window_seconds":18000},
-  "secondary_window":{"used_percent":64,"reset_at":%d,"limit_window_seconds":604800}}}`
+  "secondary_window":{"used_percent":64,"reset_at":%d,"limit_window_seconds":604800}},
+  "rate_limit_reset_credits":{"available_count":3}}`
 
-func TestUsagePollFillsBothWindows(t *testing.T) {
+func TestUsagePollFillsBothWindowsAndBankedResets(t *testing.T) {
 	fiveHours := time.Now().Add(3 * time.Hour).Unix()
 	weekly := time.Now().Add(96 * time.Hour).Unix()
 	var auth, account string
@@ -193,6 +196,47 @@ func TestUsagePollFillsBothWindows(t *testing.T) {
 	}
 	if secondary.usedPercent != 64 || secondary.minutes != 10080 {
 		t.Fatalf("secondary = %+v, want 64%% over a weekly window", secondary)
+	}
+	if banked, known := s.pool.accounts[0].bankedResets(); !known || banked != 3 {
+		t.Fatalf("banked resets = %d, %t, want 3, true", banked, known)
+	}
+}
+
+func TestNextResetPicksTheSoonestFutureWindow(t *testing.T) {
+	now := time.Now()
+	soon := now.Add(3 * time.Hour)
+	later := now.Add(4 * 24 * time.Hour)
+	past := now.Add(-time.Minute)
+
+	if got := nextReset(now, window{resetsAt: later}, window{resetsAt: soon}); !got.Equal(soon) {
+		t.Fatalf("next reset = %s, want %s", got, soon)
+	}
+	if got := nextReset(now, window{resetsAt: past}); !got.IsZero() {
+		t.Fatalf("past reset returned as next: %s", got)
+	}
+}
+
+func TestDashboardShowsBankedResetsAndNextReset(t *testing.T) {
+	account := &Account{IDToken: jwtFor("acct-a")}
+	banked := int64(3)
+	account.adopt(
+		window{usedPercent: 25, minutes: 300, resetsAt: time.Now().Add(90 * time.Minute), seenAt: time.Now()},
+		window{usedPercent: 64, minutes: 10080, resetsAt: time.Now().Add(4 * 24 * time.Hour), seenAt: time.Now()},
+		&banked,
+		false,
+	)
+	d := dashboard{pool: &Pool{accounts: []*Account{account}}, stats: newStats(), width: 80}
+
+	rendered := d.accounts()
+	for _, want := range []string{"Weekly", "36%", "Banked", "Reset in", "3", "1h29m"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("dashboard does not contain %q:\n%s", want, rendered)
+		}
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if width := lipgloss.Width(line); width > d.width {
+			t.Fatalf("dashboard row is %d columns wide, want at most %d:\n%s", width, d.width, line)
+		}
 	}
 }
 

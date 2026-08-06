@@ -177,47 +177,55 @@ func (d dashboard) accounts() string {
 		nameW = max(nameW, lipgloss.Width(label(a)))
 	}
 
-	gap := 2
-	planW := 6
-	statusW := 16
-	weeklyW := 8
-	turnsW := 7
-	trafficW := 8
+	gap := 1
+	planW := 4
+	statusW := 9
+	weeklyW := 6
+	bankedW := 6
+	resetW := 8
+	turnsW := 5
+	trafficW := 7
 	limitsW := 6
 
-	fixedCols := planW + statusW + weeklyW + turnsW + trafficW + limitsW + 6*gap + 2
-	activityW := max(8, d.width-fixedCols-nameW)
+	fixedCols := planW + statusW + weeklyW + bankedW + resetW + turnsW + trafficW + limitsW + 9*gap + 2
+	nameW = min(nameW, max(9, d.width-fixedCols-8))
+	activityW := d.width - fixedCols - nameW
 
 	pad2 := strings.Repeat(" ", gap)
 
-	hdr := fmt.Sprintf("  %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
-		sSection.Render(pad("Account", nameW)), pad2,
-		sSection.Render(pad("Plan", planW)), pad2,
-		sSection.Render(pad("Status", statusW)), pad2,
-		sSection.Render(pad("Weekly", weeklyW)), pad2,
-		sSection.Render(pad("Turns", turnsW)), pad2,
-		sSection.Render(pad("Traffic", trafficW)), pad2,
-		sSection.Render(pad("Limits", limitsW)), pad2,
-		sSection.Render(pad("Activity", activityW)))
+	hdr := "  " + strings.Join([]string{
+		sSection.Render(fit("Account", nameW)),
+		sSection.Render(fit("Plan", planW)),
+		sSection.Render(fit("Status", statusW)),
+		sSection.Render(fit("Weekly", weeklyW)),
+		sSection.Render(fit("Banked", bankedW)),
+		sSection.Render(fit("Reset in", resetW)),
+		sSection.Render(fit("Turns", turnsW)),
+		sSection.Render(fit("Traffic", trafficW)),
+		sSection.Render(fit("Limits", limitsW)),
+		sSection.Render(fit("Activity", activityW)),
+	}, pad2)
 
 	sep := sDim.Render(strings.Repeat("─", d.width-2))
 
 	rows := []string{sSection.Render("ACCOUNTS") + sDim.Render("   ↑↓ pick · space pauses"), "", hdr, sep}
 
 	for i, a := range accounts {
-		w, _, cooldown, reauth := a.health()
+		primary, secondary, cooldown, reauth := a.health()
+		weekly := longestWindow(primary, secondary)
 		stat := d.snap.Accounts[a.id()]
+		now := time.Now()
 
 		var status string
 		switch {
 		case a.paused():
-			status = sDim.Render(pad("⏸ paused", statusW))
+			status = sDim.Render(fit("⏸ paused", statusW))
 		case reauth != "":
-			status = sBad.Render(pad("✕ "+reauth, statusW))
-		case time.Now().Before(cooldown):
-			status = sHot.Render(pad("◐ "+short(time.Until(cooldown)), statusW))
+			status = sBad.Render(fit("✕ "+reauth, statusW))
+		case now.Before(cooldown):
+			status = sHot.Render(fit("◐ "+short(cooldown.Sub(now)), statusW))
 		default:
-			status = sGood.Render(pad("● live", statusW))
+			status = sGood.Render(fit("● live", statusW))
 		}
 
 		turns := ""
@@ -233,11 +241,11 @@ func (d dashboard) accounts() string {
 			limits = fmt.Sprintf("%d", stat.Limited)
 		}
 
-		var weekly string
-		if !w.known() {
-			weekly = sDim.Render(pad("--", weeklyW))
+		var weeklyCell string
+		if !weekly.known() {
+			weeklyCell = sDim.Render(fit("--", weeklyW))
 		} else {
-			left := int(min(max(100-w.usedPercent, 0), 100))
+			left := int(min(max(100-weekly.usedPercent, 0), 100))
 			style := sGood
 			switch {
 			case left <= 10:
@@ -245,26 +253,58 @@ func (d dashboard) accounts() string {
 			case left <= 30:
 				style = sWarn
 			}
-			weekly = style.Render(pad(fmt.Sprintf("%d%%", left), weeklyW))
+			weeklyCell = style.Render(fit(fmt.Sprintf("%d%%", left), weeklyW))
 		}
 
-		marker, name := "  ", sText.Render(pad(label(a), nameW))
+		banked := sDim.Render(fit("--", bankedW))
+		if count, known := a.bankedResets(); known {
+			banked = sNum.Render(fit(fmt.Sprintf("%d", count), bankedW))
+		}
+
+		reset := sDim.Render(fit("--", resetW))
+		if next := nextReset(now, primary, secondary); !next.IsZero() {
+			reset = sDim.Render(fit(short(next.Sub(now)), resetW))
+		}
+
+		marker, name := "  ", sText.Render(fit(label(a), nameW))
 		if i == d.cursor {
-			marker, name = sTitle.Render("▸ "), sTitle.Render(pad(label(a), nameW))
+			marker, name = sTitle.Render("▸ "), sTitle.Render(fit(label(a), nameW))
 		}
 
-		rows = append(rows, fmt.Sprintf("%s%s  %s  %s  %s  %s  %s  %s  %s",
-			marker,
+		rows = append(rows, marker+strings.Join([]string{
 			name,
-			sDim.Render(pad(a.plan(), planW)),
+			sDim.Render(fit(a.plan(), planW)),
 			status,
-			weekly,
-			sNum.Render(pad(turns, turnsW)),
-			sDim.Render(pad(traffic, trafficW)),
-			sBad.Render(pad(limits, limitsW)),
-			spark(stat.Activity)))
+			weeklyCell,
+			banked,
+			reset,
+			sNum.Render(fit(turns, turnsW)),
+			sDim.Render(fit(traffic, trafficW)),
+			sBad.Render(fit(limits, limitsW)),
+			fit(spark(stat.Activity), activityW),
+		}, pad2))
 	}
 	return strings.Join(rows, "\n")
+}
+
+func nextReset(now time.Time, windows ...window) time.Time {
+	var next time.Time
+	for _, w := range windows {
+		if w.resetsAt.After(now) && (next.IsZero() || w.resetsAt.Before(next)) {
+			next = w.resetsAt
+		}
+	}
+	return next
+}
+
+func longestWindow(windows ...window) window {
+	var longest window
+	for _, w := range windows {
+		if w.known() && (!longest.known() || w.minutes > longest.minutes) {
+			longest = w
+		}
+	}
+	return longest
 }
 
 func plural(n int64, noun string) string {
@@ -384,6 +424,10 @@ func pad(s string, n int) string {
 		return s + strings.Repeat(" ", n-w)
 	}
 	return s
+}
+
+func fit(s string, n int) string {
+	return pad(truncate(s, n), n)
 }
 
 func truncate(s string, n int) string {

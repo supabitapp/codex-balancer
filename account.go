@@ -33,11 +33,12 @@ type Account struct {
 	inflight    chan struct{}
 	lastRefresh error
 
-	cooldown  time.Time
-	dead      string
-	primary   window
-	secondary window
-	lastUsed  time.Time
+	cooldown         time.Time
+	dead             string
+	primary          window
+	secondary        window
+	bankedResetCount *int64
+	lastUsed         time.Time
 }
 
 type window struct {
@@ -57,6 +58,15 @@ func (a *Account) health() (primary, secondary window, cooldown time.Time, reaut
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.primary, a.secondary, a.cooldown, a.dead
+}
+
+func (a *Account) bankedResets() (int64, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.bankedResetCount == nil {
+		return 0, false
+	}
+	return *a.bankedResetCount, true
 }
 
 type persistedAccount Account

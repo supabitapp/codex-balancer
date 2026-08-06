@@ -16,6 +16,9 @@ type usagePayload struct {
 		PrimaryWindow   usageWindow `json:"primary_window"`
 		SecondaryWindow usageWindow `json:"secondary_window"`
 	} `json:"rate_limit"`
+	RateLimitResetCredits *struct {
+		AvailableCount int64 `json:"available_count"`
+	} `json:"rate_limit_reset_credits"`
 }
 
 func (p usagePayload) spent() bool {
@@ -24,6 +27,13 @@ func (p usagePayload) spent() bool {
 	}
 	return p.RateLimit.PrimaryWindow.window().usedPercent >= 100 ||
 		p.RateLimit.SecondaryWindow.window().usedPercent >= 100
+}
+
+func (p usagePayload) bankedResets() *int64 {
+	if p.RateLimitResetCredits == nil {
+		return nil
+	}
+	return &p.RateLimitResetCredits.AvailableCount
 }
 
 type usageWindow struct {
@@ -75,7 +85,12 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return err
 	}
-	account.adopt(payload.RateLimit.PrimaryWindow.window(), payload.RateLimit.SecondaryWindow.window(), payload.spent())
+	account.adopt(
+		payload.RateLimit.PrimaryWindow.window(),
+		payload.RateLimit.SecondaryWindow.window(),
+		payload.bankedResets(),
+		payload.spent(),
+	)
 	return nil
 }
 
@@ -86,7 +101,7 @@ func (s *server) reauthorize(account *Account) error {
 	return nil
 }
 
-func (a *Account) adopt(primary, secondary window, spent bool) {
+func (a *Account) adopt(primary, secondary window, banked *int64, spent bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if primary.known() {
@@ -95,6 +110,7 @@ func (a *Account) adopt(primary, secondary window, spent bool) {
 	if secondary.known() {
 		a.secondary = secondary
 	}
+	a.bankedResetCount = banked
 	if a.dead == "" && !spent {
 		a.cooldown = time.Time{}
 	}
