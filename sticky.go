@@ -14,6 +14,7 @@ const stickyTTL = 12 * time.Hour
 
 var stickyHeaders = []string{
 	"session-id",
+	"session_id",
 	"thread-id",
 }
 
