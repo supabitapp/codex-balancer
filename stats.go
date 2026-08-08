@@ -323,13 +323,19 @@ func maskEmail(email string) string {
 		}
 		return "***"
 	}
-	local, domain := []rune(email[:at]), email[at:]
+	local := []rune(email[:at])
+	domain := email[at+1:]
+	suffix := ""
+	if dot := strings.LastIndexByte(domain, '.'); dot > 0 && dot < len(domain)-1 {
+		suffix = domain[dot:]
+	}
+	maskedDomain := "@***" + suffix
 	switch len(local) {
 	case 1:
-		return "***" + domain
+		return "***" + maskedDomain
 	case 2:
-		return string(local[0]) + "***" + domain
+		return string(local[0]) + "***" + maskedDomain
 	default:
-		return string(local[0]) + "***" + string(local[len(local)-1]) + domain
+		return string(local[0]) + "***" + string(local[len(local)-1]) + maskedDomain
 	}
 }

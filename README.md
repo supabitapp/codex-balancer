@@ -32,8 +32,8 @@ codex-balancer server           # serve the proxy
 ```
 
 `GET /stats` returns the same live account status as public JSON. Account emails
-keep their first and last local-part characters and domain, such as
-`k***i@example.com`.
+hide their domain and all but the first and last local-part characters, such as
+`k***i@***.com`.
 
 ```sh
 curl http://127.0.0.1:8317/stats
