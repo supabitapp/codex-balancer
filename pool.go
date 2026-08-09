@@ -142,11 +142,11 @@ func (p *Pool) persistTokens(state accountState) (accountState, error) {
 	return persisted, err
 }
 
-func (p *Pool) pick(required, preferred string, skip map[string]bool) *Account {
-	return p.route(required, preferred, skip).account
+func (p *Pool) pick(required, preferred string, skip, allowed map[string]bool) *Account {
+	return p.route(required, preferred, skip, allowed).account
 }
 
-func (p *Pool) route(required, preferred string, skip map[string]bool) routingDecision {
+func (p *Pool) route(required, preferred string, skip, allowed map[string]bool) routingDecision {
 	now := time.Now()
 	decision := routingDecision{now: now}
 	for _, account := range p.all() {
@@ -154,14 +154,14 @@ func (p *Pool) route(required, preferred string, skip map[string]bool) routingDe
 	}
 	if required != "" {
 		for _, candidate := range decision.candidates {
-			if candidate.id == required && !skip[required] && candidate.available(now) {
+			if candidate.id == required && !skip[required] && accountAllowed(allowed, required) && candidate.available(now) {
 				decision.account = candidate.account
 				break
 			}
 		}
 		return decision
 	}
-	if preferred != "" && !skip[preferred] {
+	if preferred != "" && !skip[preferred] && accountAllowed(allowed, preferred) {
 		for _, candidate := range decision.candidates {
 			if candidate.id == preferred && candidate.available(now) {
 				decision.account = candidate.account
@@ -173,7 +173,7 @@ func (p *Pool) route(required, preferred string, skip map[string]bool) routingDe
 	var best *routingCandidate
 	for i := range decision.candidates {
 		candidate := &decision.candidates[i]
-		if skip[candidate.id] || !candidate.available(now) {
+		if skip[candidate.id] || !accountAllowed(allowed, candidate.id) || !candidate.available(now) {
 			continue
 		}
 		if best == nil || candidate.roomierThan(*best) {
@@ -184,6 +184,10 @@ func (p *Pool) route(required, preferred string, skip map[string]bool) routingDe
 		decision.account = best.account
 	}
 	return decision
+}
+
+func accountAllowed(allowed map[string]bool, id string) bool {
+	return allowed == nil || allowed[id]
 }
 
 func (a *Account) routingCandidate() routingCandidate {

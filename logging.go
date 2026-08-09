@@ -5,14 +5,17 @@ import (
 	"time"
 )
 
-func (s *server) pickAccount(thread, required, preferred string, skip map[string]bool, attempt int, via transport) *Account {
-	decision := s.pool.route(required, preferred, skip)
+func (s *server) pickAccount(thread, required, preferred, model, serviceTier string, skip map[string]bool, attempt int, via transport) *Account {
+	allowed := s.allowedAccounts(model, serviceTier)
+	decision := s.pool.route(required, preferred, skip, allowed)
 	s.log.Debug("routing attempt",
 		"transport", via,
 		"thread", thread,
 		"attempt", attempt+1,
 		"required_account", required,
 		"preferred_account", preferred,
+		"model", model,
+		"service_tier", serviceTier,
 		"accounts", len(decision.candidates),
 	)
 	for _, candidate := range decision.candidates {
@@ -24,6 +27,7 @@ func (s *server) pickAccount(thread, required, preferred string, skip map[string
 			"required", candidate.id == required,
 			"preferred", candidate.id == preferred,
 			"skipped", skip[candidate.id],
+			"model_eligible", accountAllowed(allowed, candidate.id),
 		}
 		attrs = append(attrs, routingLogAttrs(candidate, decision.now)...)
 		s.log.Debug("routing candidate", attrs...)
@@ -35,9 +39,18 @@ func (s *server) pickAccount(thread, required, preferred string, skip map[string
 			"attempt", attempt+1,
 			"required_account", required,
 			"preferred_account", preferred,
+			"model", model,
+			"service_tier", serviceTier,
 		)
 	}
 	return decision.account
+}
+
+func (s *server) allowedAccounts(model, serviceTier string) map[string]bool {
+	if s.catalog == nil {
+		return nil
+	}
+	return s.catalog.allowedAccounts(s.pool.all(), model, serviceTier)
 }
 
 func routingLogAttrs(candidate routingCandidate, now time.Time) []any {

@@ -319,6 +319,82 @@ func TestWebSocketUnsupportedModelReplaysOnAnotherAccount(t *testing.T) {
 	}
 }
 
+func TestWebSocketModelCatalogRoutesBeforeSendingTurn(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_b"},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	server.upstream = upstream.URL
+	server.catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-5.6-terra")},
+			b.id(): {testModelEntry("gpt-5.6-sol")},
+		},
+		"0.1.0",
+	)
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, a.id()); err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-5.6-sol", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_b" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-b]" {
+		t.Fatalf("request accounts = %v, want account-b", upstream.RequestAccounts())
+	}
+}
+
+func TestWebSocketUnsupportedModelRetriesOnlyOnce(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, _ websocketEnvelope) {
+		if account == "account-c" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":     "response.created",
+				"response": map[string]any{"id": "unexpected"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":   "error",
+			"status": http.StatusBadRequest,
+			"error": map[string]any{
+				"code":    "invalid_request_error",
+				"message": "The 'gpt-route' model is not supported when using Codex with a ChatGPT account.",
+			},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	c := testAccount("account-c", 40)
+	proxy, _, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b, c})
+	defer closeProxy()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-route", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "error" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-b]" {
+		t.Fatalf("request accounts = %v, want one replacement", upstream.RequestAccounts())
+	}
+}
+
 func TestWebSocketSoftDisconnectReplaysOnAnotherAccount(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		if account == "account-a" {

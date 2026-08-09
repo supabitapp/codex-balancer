@@ -32,18 +32,19 @@ type websocketMessage struct {
 }
 
 type websocketTurn struct {
-	kind        websocket.MessageType
-	data        []byte
-	sent        time.Time
-	model       string
-	serviceTier string
-	counted     bool
-	created     bool
-	visible     bool
-	resolution  affinityResolution
-	thread      string
-	excluded    map[string]bool
-	reauthed    map[string]bool
+	kind         websocket.MessageType
+	data         []byte
+	sent         time.Time
+	model        string
+	serviceTier  string
+	counted      bool
+	created      bool
+	visible      bool
+	modelRetried bool
+	resolution   affinityResolution
+	thread       string
+	excluded     map[string]bool
+	reauthed     map[string]bool
 }
 
 type websocketEnvelope struct {
@@ -92,7 +93,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	thread := affinity.statsKey(r.Header)
 	s.log.Debug("websocket requested", "thread", thread, "required_account", resolution.required, "preferred_account", resolution.preferred)
-	dial, failed, err := s.dialResponsesWebSocket(r, thread, resolution, nil)
+	dial, failed, err := s.dialResponsesWebSocket(r, thread, resolution, nil, "", "")
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -156,6 +157,8 @@ func (s *server) dialResponsesWebSocket(
 	thread string,
 	resolution affinityResolution,
 	skip map[string]bool,
+	model string,
+	serviceTier string,
 ) (*websocketDial, *http.Response, error) {
 	upstream, err := responsesWebSocketURL(s.upstream)
 	if err != nil {
@@ -167,7 +170,7 @@ func (s *server) dialResponsesWebSocket(
 	reauthed := map[string]bool{}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		account := s.pickAccount(thread, resolution.required, resolution.preferred, skip, attempt, transportWebSocket)
+		account := s.pickAccount(thread, resolution.required, resolution.preferred, model, serviceTier, skip, attempt, transportWebSocket)
 		if account == nil {
 			return nil, nil, errors.New("no account available")
 		}
@@ -336,7 +339,7 @@ func (s *server) relayResponsesWebSocket(
 		s.websocketOpened(thread, current.account)
 	}
 	redialTurn := func(turn *websocketTurn, resolution affinityResolution, skip map[string]bool, reason string) bool {
-		next, failed, err := s.dialResponsesWebSocket(r, turn.thread, resolution, skip)
+		next, failed, err := s.dialResponsesWebSocket(r, turn.thread, resolution, skip, turn.model, turn.serviceTier)
 		if err != nil || failed != nil {
 			if failed != nil && failed.Body != nil {
 				failed.Body.Close()
@@ -393,7 +396,8 @@ func (s *server) relayResponsesWebSocket(
 				writeWebSocketAffinityError(ctx, downstream, err)
 				continue
 			}
-			target := s.pool.pick(resolution.required, resolution.preferred, nil)
+			allowed := s.allowedAccounts(event.Model, event.ServiceTier)
+			target := s.pool.pick(resolution.required, resolution.preferred, nil, allowed)
 			if target == nil {
 				writeWebSocketAffinityError(ctx, downstream, errAffinityOwnerUnavailable)
 				continue
@@ -407,7 +411,7 @@ func (s *server) relayResponsesWebSocket(
 					writeWebSocketAffinityError(ctx, downstream, errAffinityOwnerUnavailable)
 					continue
 				}
-				next, failed, err := s.dialResponsesWebSocket(r, turnThread, resolution, nil)
+				next, failed, err := s.dialResponsesWebSocket(r, turnThread, resolution, nil, event.Model, event.ServiceTier)
 				if err != nil || failed != nil {
 					if failed != nil && failed.Body != nil {
 						failed.Body.Close()
@@ -509,11 +513,14 @@ func (s *server) relayResponsesWebSocket(
 				current.account.failed(0)
 				retryable = true
 				retryReason = "server failure"
-			} else if len(turns) == 1 && websocketAccountModelUnsupported(event, turns[0].model) {
+			} else if len(turns) == 1 && !turns[0].modelRetried && websocketAccountModelUnsupported(event, turns[0].model) {
 				retryable = true
 				retryReason = "model unsupported"
 			}
 			if retryable && previsible && !turns[0].resolution.hard && (identitySafe || rateLimited) {
+				if retryReason == "model unsupported" {
+					turns[0].modelRetried = true
+				}
 				if replayTurn(&turns[0], retryReason) {
 					continue
 				}
@@ -639,7 +646,7 @@ func websocketErrorMessage(event websocketEnvelope) string {
 }
 
 func websocketAccountModelUnsupported(event websocketEnvelope, model string) bool {
-	return accountModelUnsupported(websocketErrorMessage(event), model)
+	return accountModelUnsupported(websocketErrorCode(event), websocketErrorMessage(event), model)
 }
 
 func websocketRateLimited(event websocketEnvelope) bool {
