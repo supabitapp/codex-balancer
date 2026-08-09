@@ -62,24 +62,33 @@ func TestRequestIPFallsBackToRemoteAddress(t *testing.T) {
 func TestRequestClientIDHidesIP(t *testing.T) {
 	request := httptest.NewRequest("POST", "/v1/responses", nil)
 	request.Header.Set("X-Forwarded-For", "203.0.113.42")
-	if got := requestClientID(request, "secret"); got != "52f3c1d8" {
+	if got := requestClientID(request, []byte("secret")); got != "52f3c1d8" {
 		t.Fatalf("requestClientID() = %q, want 52f3c1d8", got)
 	}
-	if got := requestClientID(request, ""); got != "" {
+	if got := requestClientID(request, nil); got != "" {
 		t.Fatalf("requestClientID() without key = %q", got)
 	}
 }
 
-func TestAPIEstimateResetsAtMonthBoundary(t *testing.T) {
+func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	stats := newStats()
 	previousMonth := time.Date(2026, time.July, 31, 23, 59, 0, 0, time.UTC)
 	currentMonth := previousMonth.Add(time.Minute)
-	stats.apiMonth = calendarMonth(previousMonth)
-	usage := responseUsage{InputTokens: 1_000}
-	stats.applyUsageAt(previousMonth, "unknown", "default", usage)
+	stats.usageMonth = calendarMonth(previousMonth)
+	stats.applyUsageAt(previousMonth, "unknown", "default", responseUsage{InputTokens: 1_000})
+	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
+	usage.InputDetails.CachedTokens = 1_500
 	stats.applyUsageAt(currentMonth, "gpt-5.6-sol", "default", usage)
+	unpricedUsage := responseUsage{InputTokens: 400, OutputTokens: 50}
+	stats.applyUsageAt(currentMonth, "unknown", "default", unpricedUsage)
+	wantUsage := usage
+	wantUsage.InputTokens += unpricedUsage.InputTokens
+	wantUsage.OutputTokens += unpricedUsage.OutputTokens
 	want, _ := estimateAPIPrice("gpt-5.6-sol", "default", usage)
-	if stats.apiCostNanoDollars != want || stats.unpricedResponses != 0 {
-		t.Fatalf("API estimate = %d with %d unpriced, want %d with none", stats.apiCostNanoDollars, stats.unpricedResponses, want)
+	if stats.monthlyUsage != wantUsage {
+		t.Fatalf("monthly usage = %+v, want %+v", stats.monthlyUsage, wantUsage)
+	}
+	if stats.apiCostNanoDollars != want || stats.unpricedResponses != 1 {
+		t.Fatalf("API estimate = %d with %d unpriced, want %d with one", stats.apiCostNanoDollars, stats.unpricedResponses, want)
 	}
 }

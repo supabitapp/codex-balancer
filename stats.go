@@ -44,7 +44,8 @@ type Stats struct {
 	ttfbN              int64
 	wsTurns            int64
 	wsOpen             int64
-	apiMonth           int
+	usageMonth         int
+	monthlyUsage       responseUsage
 	apiCostNanoDollars int64
 	unpricedResponses  int64
 	accounts           map[string]*accountStats
@@ -80,10 +81,10 @@ type Event struct {
 func newStats() *Stats {
 	now := time.Now()
 	return &Stats{
-		started:  now,
-		apiMonth: calendarMonth(now),
-		accounts: map[string]*accountStats{},
-		threads:  map[string]*threadStats{},
+		started:    now,
+		usageMonth: calendarMonth(now),
+		accounts:   map[string]*accountStats{},
+		threads:    map[string]*threadStats{},
 	}
 }
 
@@ -212,10 +213,14 @@ func (s *Stats) applyUsageAt(at time.Time, model, serviceTier string, usage resp
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	month := calendarMonth(at)
-	if month < s.apiMonth {
+	if month < s.usageMonth {
 		return
 	}
-	s.syncAPIMonth(month)
+	s.syncUsageMonth(month)
+	s.monthlyUsage.InputTokens += usage.InputTokens
+	s.monthlyUsage.InputDetails.CachedTokens += usage.InputDetails.CachedTokens
+	s.monthlyUsage.InputDetails.CacheWriteTokens += usage.InputDetails.CacheWriteTokens
+	s.monthlyUsage.OutputTokens += usage.OutputTokens
 	cost, known := estimateAPIPrice(model, serviceTier, usage)
 	if !known {
 		s.unpricedResponses++
@@ -257,6 +262,7 @@ type Snapshot struct {
 	TTFB               time.Duration
 	WSTurns            int64
 	WSOpen             int64
+	MonthlyUsage       responseUsage
 	APICostNanoDollars int64
 	UnpricedResponses  int64
 	Accounts           map[string]AccountSnapshot
@@ -285,7 +291,7 @@ func (s *Stats) snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
-	s.syncAPIMonth(calendarMonth(now))
+	s.syncUsageMonth(calendarMonth(now))
 	s.pruneInactiveThreads(now)
 	for _, account := range s.accounts {
 		advanceActivity(account, now)
@@ -298,6 +304,7 @@ func (s *Stats) snapshot() Snapshot {
 		Limited:            s.limited,
 		WSTurns:            s.wsTurns,
 		WSOpen:             s.wsOpen,
+		MonthlyUsage:       s.monthlyUsage,
 		APICostNanoDollars: s.apiCostNanoDollars,
 		UnpricedResponses:  s.unpricedResponses,
 		Accounts:           make(map[string]AccountSnapshot, len(s.accounts)),
@@ -339,11 +346,12 @@ func calendarMonthStart(value time.Time) time.Time {
 	return time.Date(year, month, 1, 0, 0, 0, 0, value.Location())
 }
 
-func (s *Stats) syncAPIMonth(month int) {
-	if month == s.apiMonth {
+func (s *Stats) syncUsageMonth(month int) {
+	if month == s.usageMonth {
 		return
 	}
-	s.apiMonth = month
+	s.usageMonth = month
+	s.monthlyUsage = responseUsage{}
 	s.apiCostNanoDollars = 0
 	s.unpricedResponses = 0
 }
@@ -504,12 +512,12 @@ func requestIP(r *http.Request) string {
 	return parsed.Unmap().String()
 }
 
-func requestClientID(r *http.Request, key string) string {
+func requestClientID(r *http.Request, key []byte) string {
 	ip := requestIP(r)
-	if ip == "" || key == "" {
+	if ip == "" || len(key) == 0 {
 		return ""
 	}
-	mac := hmac.New(sha256.New, []byte(key))
+	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("codex-balancer-client\x00"))
 	mac.Write([]byte(ip))
 	return hex.EncodeToString(mac.Sum(nil)[:4])

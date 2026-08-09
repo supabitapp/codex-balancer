@@ -472,21 +472,19 @@ func (d dashboard) totals(width int) string {
 			stat("turns", fmt.Sprintf("%d", s.Turns)),
 			stat("http", fmt.Sprintf("%d", s.Turns-s.WSTurns)),
 			stat("ws turns", fmt.Sprintf("%d", s.WSTurns)),
+		},
+		{
 			stat("ws open", fmt.Sprintf("%d", s.WSOpen)),
-		},
-		{
-			stat("threads", fmt.Sprintf("%d", len(s.Threads))),
-			stat("accounts", fmt.Sprintf("%d", d.pool.count())),
-			stat("failovers", fmt.Sprintf("%d", s.Failures)),
-			stat("rate limits", fmt.Sprintf("%d", s.Limited)),
-		},
-		{
-			stat("ttfb", short(s.TTFB)),
 			stat("uptime", short(s.Uptime)),
+			stat("input tokens", fmt.Sprintf("%d", s.MonthlyUsage.InputTokens)),
+		},
+		{
+			stat("cached input", fmt.Sprintf("%d", s.MonthlyUsage.InputDetails.CachedTokens)),
+			stat("output tokens", fmt.Sprintf("%d", s.MonthlyUsage.OutputTokens)),
 			stat("api estimate", formatAPIPrice(s.APICostNanoDollars, s.UnpricedResponses)),
 		},
 	}
-	cellWidth := (width - 3*columnGap) / 4
+	cellWidth := (width - 2*columnGap) / 3
 	rows := make([]string, 0, len(stats))
 	for _, statRow := range stats {
 		cells := make([]string, 0, len(statRow))

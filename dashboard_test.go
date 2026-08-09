@@ -185,20 +185,45 @@ func TestDashboardBankedResetTooltipShowsExpirations(t *testing.T) {
 	}
 }
 
-func TestDashboardAPIEstimateTooltipShowsMonthStart(t *testing.T) {
+func TestDashboardMonthlyTotals(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("BST", 60*60))
-	server := &server{pool: &Pool{}, stats: newStats()}
+	stats := newStats()
+	stats.usageMonth = calendarMonth(now)
+	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
+	usage.InputDetails.CachedTokens = 1_500
+	stats.applyUsageAt(now, "gpt-5.6-sol", "default", usage)
+	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
+	wantValues := map[string]string{
+		"input tokens":  "2000",
+		"cached input":  "1500",
+		"output tokens": "300",
+	}
+	wantInfo := "Calculated from 1 August 2026, 00:00 BST"
+	apiEstimateFound := false
 	for _, total := range view.Totals {
-		if total.Name == "API estimate" {
-			want := "Calculated from 1 August 2026, 00:00 BST"
-			if total.Info != want {
-				t.Fatalf("API estimate info = %q, want %q", total.Info, want)
+		if wantValue, ok := wantValues[total.Name]; ok {
+			if total.Value != wantValue || total.Info != wantInfo {
+				t.Fatalf("%s total = %+v, want value %q and info %q", total.Name, total, wantValue, wantInfo)
 			}
-			return
+			delete(wantValues, total.Name)
+		}
+		switch total.Name {
+		case "API estimate":
+			apiEstimateFound = true
+			if total.Info != wantInfo {
+				t.Fatalf("API estimate info = %q, want %q", total.Info, wantInfo)
+			}
+		case "threads", "accounts", "failovers", "rate limits", "ttfb":
+			t.Fatalf("removed total %q is still present", total.Name)
 		}
 	}
-	t.Fatal("API estimate total missing")
+	if len(wantValues) != 0 {
+		t.Fatalf("missing monthly totals: %v", wantValues)
+	}
+	if !apiEstimateFound {
+		t.Fatal("API estimate total missing")
+	}
 }
 
 func TestDashboardWebSocketRejectsWhenFull(t *testing.T) {

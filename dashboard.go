@@ -251,6 +251,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		})
 	}
 
+	monthInfo := "Calculated from " + calendarMonthStart(now).Format("2 January 2006, 15:04 MST")
 	return dashboardView{
 		Summary:  summary,
 		Meta:     rate(snapshot) + " · up " + short(snapshot.Uptime),
@@ -260,16 +261,14 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			{Name: "http", Value: strconv.FormatInt(snapshot.Turns-snapshot.WSTurns, 10)},
 			{Name: "ws turns", Value: strconv.FormatInt(snapshot.WSTurns, 10)},
 			{Name: "ws open", Value: strconv.FormatInt(snapshot.WSOpen, 10)},
-			{Name: "threads", Value: strconv.Itoa(len(snapshot.Threads))},
-			{Name: "accounts", Value: strconv.Itoa(len(accounts))},
-			{Name: "failovers", Value: strconv.FormatInt(snapshot.Failures, 10)},
-			{Name: "rate limits", Value: strconv.FormatInt(snapshot.Limited, 10)},
-			{Name: "ttfb", Value: short(snapshot.TTFB)},
 			{Name: "uptime", Value: short(snapshot.Uptime)},
+			{Name: "input tokens", Value: strconv.FormatInt(snapshot.MonthlyUsage.InputTokens, 10), Info: monthInfo},
+			{Name: "cached input", Value: strconv.FormatInt(snapshot.MonthlyUsage.InputDetails.CachedTokens, 10), Info: monthInfo},
+			{Name: "output tokens", Value: strconv.FormatInt(snapshot.MonthlyUsage.OutputTokens, 10), Info: monthInfo},
 			{
 				Name:  "API estimate",
 				Value: formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses),
-				Info:  "Calculated from " + calendarMonthStart(now).Format("2 January 2006, 15:04 MST"),
+				Info:  monthInfo,
 			},
 		},
 		Threads: threadViews,

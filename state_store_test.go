@@ -36,9 +36,16 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	want := []string{"accounts", "attempts", "bindings", "events"}
+	want := []string{"accounts", "attempts", "bindings", "client_identity", "events"}
 	if !slices.Equal(tables, want) {
 		t.Fatalf("tables = %v, want %v", tables, want)
+	}
+	key, err := store.clientIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(key) != 32 {
+		t.Fatalf("client ID key length = %d, want 32", len(key))
 	}
 }
 
@@ -50,6 +57,7 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_id;
 		ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';
+		DROP TABLE client_identity;
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, client_ip)
 		VALUES (1, 'thread', 'account', '', 'http', '203.0.113.42');
 		PRAGMA user_version = 2;`); err != nil {
@@ -164,7 +172,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	}
 }
 
-func TestStatsRestoreUsesCurrentMonthAPIUsage(t *testing.T) {
+func TestStatsRestoreUsesCurrentMonthUsage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)
 	if err != nil {
@@ -173,7 +181,8 @@ func TestStatsRestoreUsesCurrentMonthAPIUsage(t *testing.T) {
 	month := time.Now()
 	month = time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, month.Location())
 	previousUsage := responseUsage{InputTokens: 1_000}
-	currentUsage := responseUsage{OutputTokens: 1_000}
+	currentUsage := responseUsage{InputTokens: 2_000, OutputTokens: 1_000}
+	currentUsage.InputDetails.CachedTokens = 1_500
 	for _, event := range []storedEvent{
 		{At: month.Add(-time.Second), Kind: eventResponseUsage, Model: "gpt-5.6-sol", Usage: previousUsage},
 		{At: month.Add(time.Second), Kind: eventResponseUsage, Model: "gpt-5.6-sol", Usage: currentUsage},
@@ -196,6 +205,9 @@ func TestStatsRestoreUsesCurrentMonthAPIUsage(t *testing.T) {
 	}
 	want, _ := estimateAPIPrice("gpt-5.6-sol", "", currentUsage)
 	snapshot := stats.snapshot()
+	if snapshot.MonthlyUsage != currentUsage {
+		t.Fatalf("monthly usage = %+v, want %+v", snapshot.MonthlyUsage, currentUsage)
+	}
 	if snapshot.APICostNanoDollars != want || snapshot.UnpricedResponses != 0 {
 		t.Fatalf("API estimate = %d with %d unpriced, want %d with none", snapshot.APICostNanoDollars, snapshot.UnpricedResponses, want)
 	}
