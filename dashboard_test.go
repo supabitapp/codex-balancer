@@ -32,7 +32,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		t.Fatalf("status = %s, CSP = %q", response.Status, response.Header.Get("Content-Security-Policy"))
 	}
 	for _, expected := range []string{
-		`src="/dashboard/assets/dashboard.js"`,
+		`src="` + dashboardAssetURL("dashboard.js") + `"`,
 		`src="/dashboard/assets/htmx-2.0.10.min.js"`,
 		`src="/dashboard/assets/ws-2.0.4.min.js"`,
 		`hx-ext="ws"`,

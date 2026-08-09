@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"cmp"
+	"crypto/sha256"
 	"embed"
 	"fmt"
 	"html/template"
@@ -23,7 +24,9 @@ const (
 //go:embed web/dashboard.html web/dashboard.js web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
 var dashboardFiles embed.FS
 
-var dashboardTemplate = template.Must(template.ParseFS(dashboardFiles, "web/dashboard.html"))
+var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.FuncMap{
+	"dashboardAssetURL": dashboardAssetURL,
+}).ParseFS(dashboardFiles, "web/dashboard.html"))
 
 type dashboardView struct {
 	Summary  []dashboardCount
@@ -73,6 +76,15 @@ type dashboardEventView struct {
 	Kind    string
 	Account string
 	Detail  string
+}
+
+func dashboardAssetURL(name string) string {
+	content, err := dashboardFiles.ReadFile("web/" + name)
+	if err != nil {
+		panic(err)
+	}
+	hash := sha256.Sum256(content)
+	return fmt.Sprintf("/dashboard/assets/%s?v=%x", name, hash[:8])
 }
 
 func dashboardScript(path string) http.HandlerFunc {
