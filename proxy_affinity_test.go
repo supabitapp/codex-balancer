@@ -131,6 +131,36 @@ func TestHTTPServerFailureRetriesSameAccount(t *testing.T) {
 	}
 }
 
+func TestHTTPCanceledRequestDoesNotFailOver(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {
+		close(started)
+		<-release
+	})
+	defer closeServer()
+	defer close(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt","input":[]}`)).WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		server.responses(httptest.NewRecorder(), request)
+		close(done)
+	}()
+
+	<-started
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("canceled request did not return")
+	}
+
+	requireNoFailedAccounts(t, server, a, b)
+}
+
 func TestHTTPUnsupportedModelRetriesAnotherAccount(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
@@ -911,4 +941,17 @@ func serveHTTPResponse(t *testing.T, server *server, session, turnState, body st
 func writeResponseCreated(w http.ResponseWriter, id string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	fmt.Fprintf(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":%q}}\n\n", id)
+}
+
+func requireNoFailedAccounts(t *testing.T, server *server, accounts ...*Account) {
+	t.Helper()
+	if events := server.stats.snapshot().Events; len(events) != 0 {
+		t.Fatalf("events = %+v, want none", events)
+	}
+	for _, account := range accounts {
+		_, _, cooldown, _ := account.health()
+		if !cooldown.IsZero() {
+			t.Fatalf("account %s cooldown = %s, want none", account.id(), cooldown)
+		}
+	}
 }

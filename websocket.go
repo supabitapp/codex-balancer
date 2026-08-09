@@ -225,6 +225,12 @@ func (s *server) dialResponsesWebSocket(
 			s.log.Debug("websocket routed", attrs...)
 			return &websocketDial{conn: conn, resp: resp, account: account}, nil, nil
 		}
+		if cause := context.Cause(r.Context()); cause != nil {
+			if resp != nil && resp.Body != nil {
+				resp.Body.Close()
+			}
+			return nil, nil, cause
+		}
 
 		if resp != nil && resp.StatusCode == http.StatusUnauthorized && !reauthed[id] {
 			resp.Body.Close()

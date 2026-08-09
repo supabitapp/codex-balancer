@@ -1059,6 +1059,23 @@ func TestWebSocketHandshakeServerFailureRetriesThenUsesAnotherAccount(t *testing
 	}
 }
 
+func TestWebSocketCanceledHandshakeDoesNotFailOver(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
+	defer closeServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodGet, "/v1/responses", nil).WithContext(ctx)
+
+	dial, response, err := server.dialResponsesWebSocket(request, "session", affinityResolution{}, nil, "", "")
+
+	if dial != nil || response != nil || err != context.Canceled {
+		t.Fatalf("dial = %v, response = %v, error = %v", dial, response, err)
+	}
+	requireNoFailedAccounts(t, server, a, b)
+}
+
 type affinityWebSocketUpstream struct {
 	*httptest.Server
 	mu          sync.Mutex

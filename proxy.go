@@ -256,6 +256,9 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
 			s.log.Warn("upstream unreachable", "transport", transportHTTP, "thread", key, "account", id, "attempt", attempt+1, "error", err)
 			s.stats.failedOver(id, "unreachable")
 			account.failed(attempt)
