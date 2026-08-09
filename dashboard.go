@@ -173,6 +173,8 @@ p { margin: 0 }
 .dot { margin: 0 .35rem }
 .strong { font-weight: 600 }
 .scroll { overflow-x: auto }
+#threads { --row-height: 2.25rem; max-height: calc(10 * var(--row-height)); overflow: auto }
+#threads tr { height: var(--row-height) }
 table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums }
 th, td { padding: .5rem .75rem .5rem 0; border-bottom: 1px solid GrayText; text-align: left }
 th:last-child, td:last-child { padding-right: 0 }
