@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -58,6 +57,8 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_id;
 		ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';
+		ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
+		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
 		DROP TABLE client_identity;
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, client_ip)
 		VALUES (1, 'thread', 'account', '', 'http', '203.0.113.42');
@@ -89,6 +90,36 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 	}
 }
 
+func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
+		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
+		PRAGMA user_version = 5;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var columns int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM pragma_table_info('bindings')
+		WHERE name IN ('last_used_at_ns', 'abandoned_at_ns')`).Scan(&columns); err != nil {
+		t.Fatal(err)
+	}
+	if columns != 2 {
+		t.Fatalf("affinity lifecycle columns = %d, want 2", columns)
+	}
+}
+
 func TestStateStoreClearsStoredClientIDs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)
@@ -100,7 +131,9 @@ func TestStateStoreClearsStoredClientIDs(t *testing.T) {
 	) VALUES (1, 'thread', 'account', '', 'http', 'legacy')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(stateMigrations)-1)); err != nil {
+	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
+		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
+		PRAGMA user_version = 4;`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

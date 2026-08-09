@@ -66,6 +66,9 @@ var stateMigrations = []string{
 	) STRICT;
 	INSERT INTO client_identity (id, key) VALUES (1, randomblob(32));`,
 	`UPDATE attempts SET client_id = '';`,
+	`ALTER TABLE bindings ADD COLUMN last_used_at_ns INTEGER NOT NULL DEFAULT 0;
+	UPDATE bindings SET last_used_at_ns = created_at_ns;
+	ALTER TABLE bindings ADD COLUMN abandoned_at_ns INTEGER;`,
 }
 
 type StateStore struct {

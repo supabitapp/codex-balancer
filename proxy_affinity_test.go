@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -312,7 +313,25 @@ func TestHTTPHardPreviousResponseNeverMoves(t *testing.T) {
 	}
 }
 
-func TestHTTPUnknownHardAffinityPinsBeforeRateLimit(t *testing.T) {
+func TestHTTPResponseTurnStateBindsOwner(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Codex-Turn-State", "turn")
+		writeResponseCreated(w, "resp_a")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "session", "", `{"input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := store.lookup(affinityRef{kind: affinityTurnState, value: "turn"}); got != "account-a" {
+		t.Fatalf("turn owner = %q, want account-a", got)
+	}
+}
+
+func TestHTTPUnknownHardAffinityFailsBeforeUpstream(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
 	calls := []string{}
@@ -324,26 +343,18 @@ func TestHTTPUnknownHardAffinityPinsBeforeRateLimit(t *testing.T) {
 	defer closeServer()
 
 	response := serveHTTPResponse(t, server, "", "turn", `{"input":[]}`)
-	if response.Code != http.StatusTooManyRequests {
+	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if fmt.Sprint(calls) != "[account-a]" {
+	if len(calls) != 0 {
 		t.Fatalf("calls = %v", calls)
 	}
-	if got := store.lookup(affinityRef{kind: affinityTurnState, value: "turn"}); got != "account-a" {
-		t.Fatalf("turn owner = %q, want account-a", got)
-	}
-
-	response = serveHTTPResponse(t, server, "", "turn", `{"input":[]}`)
-	if response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("retry status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if fmt.Sprint(calls) != "[account-a]" {
-		t.Fatalf("retry calls = %v", calls)
+	if got := store.lookup(affinityRef{kind: affinityTurnState, value: "turn"}); got != "" {
+		t.Fatalf("turn owner = %q, want none", got)
 	}
 }
 
-func TestHTTPUnknownHardAffinityDoesNotFailOverAfterNetworkFailure(t *testing.T) {
+func TestHTTPHardAffinityDoesNotFailOverAfterNetworkFailure(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
 	var mu sync.Mutex
@@ -365,6 +376,18 @@ func TestHTTPUnknownHardAffinityDoesNotFailOverAfterNetworkFailure(t *testing.T)
 		writeResponseCreated(w, "unexpected")
 	})
 	defer closeServer()
+	if err := store.bind(affinityRef{kind: affinityTurnState, value: "turn"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+	lastUsed := time.Now().Add(-2 * time.Hour).UnixNano()
+	if _, err := store.store.db.Exec(
+		`UPDATE bindings SET last_used_at_ns = ? WHERE kind = ? AND value = ?`,
+		lastUsed,
+		affinityTurnState,
+		"turn",
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	response := serveHTTPResponse(t, server, "", "turn", `{"input":[]}`)
 	if response.Code != http.StatusServiceUnavailable {
@@ -378,6 +401,17 @@ func TestHTTPUnknownHardAffinityDoesNotFailOverAfterNetworkFailure(t *testing.T)
 	}
 	if got := store.lookup(affinityRef{kind: affinityTurnState, value: "turn"}); got != "account-a" {
 		t.Fatalf("turn owner = %q, want account-a", got)
+	}
+	var storedLastUsed int64
+	if err := store.store.db.QueryRow(
+		`SELECT last_used_at_ns FROM bindings WHERE kind = ? AND value = ?`,
+		affinityTurnState,
+		"turn",
+	).Scan(&storedLastUsed); err != nil {
+		t.Fatal(err)
+	}
+	if storedLastUsed != lastUsed {
+		t.Fatalf("last used = %d, want %d", storedLastUsed, lastUsed)
 	}
 }
 

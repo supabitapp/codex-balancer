@@ -44,6 +44,10 @@ func (r affinityRef) hard() bool {
 	}
 }
 
+func (r affinityRef) abandonable() bool {
+	return r.kind == affinityTurnState || r.kind == affinityConversation
+}
+
 func (r affinityRef) storageKey() string {
 	return string(r.kind) + "\n" + r.value
 }
@@ -145,6 +149,14 @@ func affinityFromRequest(headers http.Header, body []byte) (requestAffinity, err
 		affinity.hard = append(affinity.hard, affinityRef{kind: affinityFile, value: fileID})
 	}
 	return affinity, nil
+}
+
+func turnStateAffinity(headers http.Header) affinityRef {
+	value := firstHeader(headers, "x-codex-turn-state")
+	if value == "" {
+		return affinityRef{}
+	}
+	return affinityRef{kind: affinityTurnState, value: value}
 }
 
 func clientTurnStateAffinity(payload map[string]any) affinityRef {

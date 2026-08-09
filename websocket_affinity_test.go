@@ -885,7 +885,35 @@ func TestWebSocketHardOwnerUnauthorizedNeverFailsOver(t *testing.T) {
 	}
 }
 
-func TestWebSocketUnknownHardAffinityPinsBeforeRateLimit(t *testing.T) {
+func TestWebSocketResponseTurnStateBindsOwner(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":    "response.created",
+			"headers": map[string]any{"x-codex-turn-state": "turn"},
+			"response": map[string]any{
+				"id": "resp_a",
+			},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" {
+		t.Fatalf("event = %+v", event)
+	}
+	if got := store.lookup(affinityRef{kind: affinityTurnState, value: "turn"}); got != "account-a" {
+		t.Fatalf("turn owner = %q, want account-a", got)
+	}
+}
+
+func TestWebSocketUnknownHardAffinityFailsBeforeUpstream(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{
 			"type":   "error",
@@ -899,17 +927,23 @@ func TestWebSocketUnknownHardAffinityPinsBeforeRateLimit(t *testing.T) {
 	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
 	defer closeProxy()
 
-	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"X-Codex-Turn-State": {"turn"}})
-	defer conn.CloseNow()
-	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
-	event := readWebSocketEvent(t, conn)
-	if event.Type != "error" || event.Status != http.StatusTooManyRequests {
-		t.Fatalf("event = %+v", event)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, response, err := websocket.Dial(
+		ctx,
+		"ws"+strings.TrimPrefix(proxy.URL, "http")+"/v1/responses",
+		&websocket.DialOptions{HTTPHeader: http.Header{"X-Codex-Turn-State": {"turn"}}},
+	)
+	if conn != nil {
+		conn.CloseNow()
 	}
-	if got := store.lookup(affinityRef{kind: affinityTurnState, value: "turn"}); got != "account-a" {
-		t.Fatalf("turn owner = %q, want account-a", got)
+	if err == nil || response == nil || response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("dial error = %v, response = %+v", err, response)
 	}
-	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a]" {
+	if got := store.lookup(affinityRef{kind: affinityTurnState, value: "turn"}); got != "" {
+		t.Fatalf("turn owner = %q, want none", got)
+	}
+	if len(upstream.RequestAccounts()) != 0 {
 		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
 	}
 }

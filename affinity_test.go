@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func newAffinityStore(path string) (*AffinityStore, error) {
@@ -367,6 +368,50 @@ func TestResolveAffinity(t *testing.T) {
 	t.Run("removed hard owner is unavailable", func(t *testing.T) {
 		removed := affinityRef{kind: affinityTurnState, value: "removed"}
 		if err := store.bind(removed, "account-c"); err != nil {
+			t.Fatal(err)
+		}
+		_, err := store.resolve(requestAffinity{hard: []affinityRef{removed}}, pool)
+		if !errors.Is(err, errAffinityOwnerUnavailable) {
+			t.Fatalf("error = %v, want owner unavailable", err)
+		}
+	})
+
+	t.Run("stale removed turn owner is abandoned", func(t *testing.T) {
+		removed := affinityRef{kind: affinityTurnState, value: "stale-removed"}
+		if err := store.bind(removed, "account-c"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.store.db.Exec(
+			`UPDATE bindings SET last_used_at_ns = ? WHERE kind = ? AND value = ?`,
+			time.Now().Add(-2*time.Hour).UnixNano(),
+			removed.kind,
+			removed.value,
+		); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.resolve(requestAffinity{hard: []affinityRef{removed}}, pool)
+		if err != nil || got.required != "" || !got.hard {
+			t.Fatalf("resolution = %+v, error = %v", got, err)
+		}
+		if err := store.bindAll(got.bindings, "account-a"); err != nil {
+			t.Fatal(err)
+		}
+		if got := store.lookup(removed); got != "account-a" {
+			t.Fatalf("owner = %q, want account-a", got)
+		}
+	})
+
+	t.Run("stale removed response owner is unavailable", func(t *testing.T) {
+		removed := affinityRef{kind: affinityResponse, value: "stale-response"}
+		if err := store.bind(removed, "account-c"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.store.db.Exec(
+			`UPDATE bindings SET last_used_at_ns = ? WHERE kind = ? AND value = ?`,
+			time.Now().Add(-2*time.Hour).UnixNano(),
+			removed.kind,
+			removed.value,
+		); err != nil {
 			t.Fatal(err)
 		}
 		_, err := store.resolve(requestAffinity{hard: []affinityRef{removed}}, pool)

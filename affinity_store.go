@@ -8,8 +8,16 @@ import (
 	"time"
 )
 
+const hardAffinityAbandonAfter = time.Hour
+
 type AffinityStore struct {
 	store *StateStore
+}
+
+type affinityBinding struct {
+	account   string
+	lastUsed  time.Time
+	abandoned bool
 }
 
 func (s *AffinityStore) lookup(ref affinityRef) string {
@@ -18,18 +26,34 @@ func (s *AffinityStore) lookup(ref affinityRef) string {
 }
 
 func (s *AffinityStore) owner(ref affinityRef) (string, error) {
-	if s == nil || !ref.valid() {
-		return "", nil
-	}
-	var account string
-	err := s.store.db.QueryRow(`SELECT account_id FROM bindings WHERE kind = ? AND value = ?`, ref.kind, ref.value).Scan(&account)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
+	binding, err := s.binding(ref)
+	if err != nil || binding.abandoned {
 		return "", err
 	}
-	return account, nil
+	return binding.account, nil
+}
+
+func (s *AffinityStore) binding(ref affinityRef) (affinityBinding, error) {
+	if s == nil || !ref.valid() {
+		return affinityBinding{}, nil
+	}
+	var binding affinityBinding
+	var lastUsed int64
+	var abandoned sql.NullInt64
+	err := s.store.db.QueryRow(
+		`SELECT account_id, last_used_at_ns, abandoned_at_ns FROM bindings WHERE kind = ? AND value = ?`,
+		ref.kind,
+		ref.value,
+	).Scan(&binding.account, &lastUsed, &abandoned)
+	if errors.Is(err, sql.ErrNoRows) {
+		return affinityBinding{}, nil
+	}
+	if err != nil {
+		return affinityBinding{}, err
+	}
+	binding.lastUsed = time.Unix(0, lastUsed)
+	binding.abandoned = abandoned.Valid
+	return binding, nil
 }
 
 func (s *AffinityStore) bind(ref affinityRef, account string) error {
@@ -37,6 +61,14 @@ func (s *AffinityStore) bind(ref affinityRef, account string) error {
 }
 
 func (s *AffinityStore) bindAll(refs []affinityRef, account string) error {
+	return s.storeBindings(refs, account, true)
+}
+
+func (s *AffinityStore) claimAll(refs []affinityRef, account string) error {
+	return s.storeBindings(refs, account, false)
+}
+
+func (s *AffinityStore) storeBindings(refs []affinityRef, account string, touch bool) error {
 	if s == nil || account == "" {
 		return nil
 	}
@@ -46,11 +78,17 @@ func (s *AffinityStore) bindAll(refs []affinityRef, account string) error {
 				continue
 			}
 			var owner string
-			err := conn.QueryRowContext(context.Background(), `SELECT account_id FROM bindings WHERE kind = ? AND value = ?`, ref.kind, ref.value).Scan(&owner)
+			var abandoned sql.NullInt64
+			err := conn.QueryRowContext(
+				context.Background(),
+				`SELECT account_id, abandoned_at_ns FROM bindings WHERE kind = ? AND value = ?`,
+				ref.kind,
+				ref.value,
+			).Scan(&owner, &abandoned)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			if owner != "" && owner != account {
+			if owner != "" && !abandoned.Valid && owner != account {
 				return errAffinityConflict
 			}
 		}
@@ -59,20 +97,64 @@ func (s *AffinityStore) bindAll(refs []affinityRef, account string) error {
 			if !ref.valid() {
 				continue
 			}
-			var err error
-			if ref.hard() {
-				_, err = conn.ExecContext(context.Background(), `INSERT INTO bindings (kind, value, account_id, created_at_ns)
-					VALUES (?, ?, ?, ?) ON CONFLICT (kind, value) DO NOTHING`, ref.kind, ref.value, account, now)
-			} else {
-				_, err = conn.ExecContext(context.Background(), `INSERT INTO bindings (kind, value, account_id, created_at_ns)
-					VALUES (?, ?, ?, ?) ON CONFLICT (kind, value) DO UPDATE SET account_id = excluded.account_id`, ref.kind, ref.value, account, now)
-			}
+			_, err := conn.ExecContext(context.Background(), `INSERT INTO bindings (
+					kind, value, account_id, created_at_ns, last_used_at_ns, abandoned_at_ns
+			) VALUES (?, ?, ?, ?, ?, NULL) ON CONFLICT (kind, value) DO UPDATE SET
+					account_id = excluded.account_id,
+					last_used_at_ns = CASE
+						WHEN ? OR bindings.abandoned_at_ns IS NOT NULL THEN excluded.last_used_at_ns
+						ELSE bindings.last_used_at_ns
+					END,
+					abandoned_at_ns = NULL`, ref.kind, ref.value, account, now, now, touch)
 			if err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+func (s *AffinityStore) bindingForResolution(ref affinityRef, pool *Pool, now time.Time) (affinityBinding, error) {
+	binding, err := s.binding(ref)
+	if err != nil || binding.account == "" || binding.abandoned || !ref.abandonable() || now.Sub(binding.lastUsed) < hardAffinityAbandonAfter {
+		return binding, err
+	}
+	owner := pool.find(binding.account)
+	if owner != nil && !affinityOwnerAbandonable(owner, now) {
+		return binding, nil
+	}
+	result, err := s.store.db.Exec(
+		`UPDATE bindings SET abandoned_at_ns = ?
+		WHERE kind = ? AND value = ? AND account_id = ? AND last_used_at_ns = ? AND abandoned_at_ns IS NULL`,
+		now.UnixNano(),
+		ref.kind,
+		ref.value,
+		binding.account,
+		binding.lastUsed.UnixNano(),
+	)
+	if err != nil {
+		return affinityBinding{}, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return affinityBinding{}, err
+	}
+	if changed == 1 {
+		binding.abandoned = true
+		return binding, nil
+	}
+	return s.binding(ref)
+}
+
+func affinityOwnerAbandonable(account *Account, now time.Time) bool {
+	candidate := account.routingCandidate()
+	if candidate.paused || candidate.reauth != "" {
+		return true
+	}
+	if !candidate.spent {
+		return false
+	}
+	return !candidate.primary.resetsAt.After(now) && !candidate.secondary.resetsAt.After(now)
 }
 
 func (s *AffinityStore) resolve(request requestAffinity, pool *Pool) (affinityResolution, error) {
@@ -89,11 +171,19 @@ func (s *AffinityStore) resolve(request requestAffinity, pool *Pool) (affinityRe
 	ownedFileCount := 0
 	conversationKnown := false
 	turnKnown := false
+	conversationAbandoned := false
+	unknownTurn := false
 	nonFileHard := false
+	now := time.Now()
 	for _, ref := range request.hard {
-		owner, err := s.owner(ref)
+		binding, err := s.bindingForResolution(ref, pool, now)
 		if err != nil {
 			return affinityResolution{}, err
+		}
+		owner := binding.account
+		if binding.abandoned {
+			owner = ""
+			conversationAbandoned = conversationAbandoned || ref.kind == affinityConversation
 		}
 		refOwners[ref] = owner
 		if ref.kind == affinityConversation && owner != "" {
@@ -101,6 +191,8 @@ func (s *AffinityStore) resolve(request requestAffinity, pool *Pool) (affinityRe
 		}
 		if ref.kind == affinityTurnState && owner != "" {
 			turnKnown = true
+		} else if ref.kind == affinityTurnState && !binding.abandoned {
+			unknownTurn = true
 		}
 		if ref.kind == affinityFile {
 			fileCount++
@@ -130,7 +222,14 @@ func (s *AffinityStore) resolve(request requestAffinity, pool *Pool) (affinityRe
 		}
 		resolution.required = owner
 	}
-	if request.requireUnambiguous && !conversationKnown && !turnKnown {
+	if unknownTurn && resolution.required == "" {
+		accounts := pool.all()
+		if len(accounts) != 1 {
+			return affinityResolution{}, errAffinityOwnerUnavailable
+		}
+		resolution.required = accounts[0].id()
+	}
+	if request.requireUnambiguous && !conversationKnown && !turnKnown && !conversationAbandoned {
 		accounts := pool.all()
 		if len(accounts) != 1 {
 			return affinityResolution{}, errAffinityAmbiguous

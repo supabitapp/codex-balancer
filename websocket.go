@@ -109,6 +109,12 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if dial.resp != nil {
+		if err := s.affinity.bind(turnStateAffinity(dial.resp.Header), dial.account.id()); err != nil {
+			dial.conn.CloseNow()
+			status, message := affinityErrorStatus(err)
+			writeError(w, status, message)
+			return
+		}
 		copyWebSocketHeaders(w.Header(), dial.resp.Header)
 	}
 	downstream, err := websocket.Accept(w, r, nil)
@@ -422,7 +428,7 @@ func (s *server) relayResponsesWebSocket(
 				switchDial(next)
 			}
 			if resolution.hard {
-				if err := s.affinity.bindAll(hardAffinityRefs(resolution.bindings), current.account.id()); err != nil {
+				if err := s.affinity.claimAll(hardAffinityRefs(resolution.bindings), current.account.id()); err != nil {
 					writeWebSocketAffinityError(ctx, downstream, err)
 					continue
 				}
@@ -532,7 +538,11 @@ func (s *server) relayResponsesWebSocket(
 						continue
 					}
 					turns[index].created = true
-					if err := s.affinity.bindAll(turns[index].resolution.bindings, current.account.id()); err != nil {
+					bindings := turns[index].resolution.bindings
+					if turnState := turnStateAffinity(headers); turnState.valid() {
+						bindings = append(bindings, turnState)
+					}
+					if err := s.affinity.bindAll(bindings, current.account.id()); err != nil {
 						s.log.Warn("affinity save failed", "thread", turns[index].thread, "account", current.account.id(), "error", err)
 					}
 					if event.Response.ID != "" {

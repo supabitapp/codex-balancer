@@ -190,7 +190,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if resolution.hard {
-			if err := s.affinity.bindAll(hardAffinityRefs(resolution.bindings), id); err != nil {
+			if err := s.affinity.claimAll(hardAffinityRefs(resolution.bindings), id); err != nil {
 				status, message := affinityErrorStatus(err)
 				writeError(w, status, message)
 				return
@@ -282,7 +282,11 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 
 		account.observe(resp.Header)
-		if err := s.affinity.bindAll(resolution.bindings, id); err != nil {
+		bindings := resolution.bindings
+		if turnState := turnStateAffinity(resp.Header); turnState.valid() {
+			bindings = append(bindings, turnState)
+		}
+		if err := s.affinity.bindAll(bindings, id); err != nil {
 			s.log.Warn("affinity save failed", "thread", key, "account", id, "error", err)
 		}
 		s.stats.routed(key, requestClientID(r, s.clientIDKey), id, request.ServiceTier, transportHTTP)
