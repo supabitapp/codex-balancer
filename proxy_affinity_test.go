@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestHTTPSoftSessionMovesFromSpentAccount(t *testing.T) {
@@ -218,6 +221,56 @@ func TestHTTPPreviousResponseOverridesSoftSession(t *testing.T) {
 	}
 	if got := store.lookup(affinityRef{kind: affinitySession, value: "session"}); got != "account-a" {
 		t.Fatalf("session owner = %q, want account-a", got)
+	}
+}
+
+func TestHTTPZstdBodyPreservesAffinityAndForwardedBytes(t *testing.T) {
+	a := testAccount("account-a", 90)
+	b := testAccount("account-b", 0)
+	body := []byte(`{"previous_response_id":"resp_a","input":[]}`)
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := encoder.EncodeAll(body, nil)
+	encoder.Close()
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		got, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if !bytes.Equal(got, compressed) {
+			t.Errorf("forwarded body changed")
+			return
+		}
+		if got := r.Header.Get("Content-Encoding"); got != "zstd" {
+			t.Errorf("content encoding = %q, want zstd", got)
+			return
+		}
+		writeResponseCreated(w, "resp_next")
+	})
+	defer closeServer()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, "account-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.bind(affinityRef{kind: affinityResponse, value: "resp_a"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(compressed))
+	request.Header.Set("Content-Encoding", "zstd")
+	request.Header.Set("session-id", "session")
+	response := httptest.NewRecorder()
+	server.responses(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-a]" {
+		t.Fatalf("calls = %v", calls)
 	}
 }
 

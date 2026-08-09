@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 const (
@@ -19,6 +22,20 @@ const (
 	refreshTimeout = 30 * time.Second
 	upstreamWait   = 90 * time.Second
 )
+
+var requestBodyDecoder = newRequestBodyDecoder()
+
+func newRequestBodyDecoder() *zstd.Decoder {
+	decoder, err := zstd.NewReader(
+		nil,
+		zstd.WithDecoderConcurrency(1),
+		zstd.WithDecoderMaxMemory(maxRequestBody),
+	)
+	if err != nil {
+		panic(err)
+	}
+	return decoder
+}
 
 func newProxyClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -94,8 +111,13 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
-	serviceTier := requestServiceTier(body)
-	affinity, err := affinityFromRequest(r.Header, body)
+	inspectionBody, err := decodeRequestBody(r.Header, body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+		return
+	}
+	serviceTier := requestServiceTier(inspectionBody)
+	affinity, err := affinityFromRequest(r.Header, inspectionBody)
 	if err != nil {
 		status, message := affinityErrorStatus(err)
 		writeError(w, status, message)
@@ -204,6 +226,21 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Warn("every account failed", "transport", transportHTTP, "thread", key, "attempts", maxAttempts)
 	writeError(w, http.StatusServiceUnavailable, "every account failed this turn")
+}
+
+func decodeRequestBody(headers http.Header, body []byte) ([]byte, error) {
+	encoding := strings.TrimSpace(headers.Get("Content-Encoding"))
+	if encoding == "" {
+		return body, nil
+	}
+	if !strings.EqualFold(encoding, "zstd") {
+		return nil, fmt.Errorf("unsupported content encoding %q", encoding)
+	}
+	decoded, err := requestBodyDecoder.DecodeAll(body, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decode zstd: %w", err)
+	}
+	return decoded, nil
 }
 
 func requestServiceTier(body []byte) string {
