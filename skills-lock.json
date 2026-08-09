@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "htmx": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "htmx/SKILL.md",
+      "computedHash": "6e1f97a1af33384fe4e9ea60078770bacdacfb48d26a601c2bf17c61447c8532"
+    }
+  }
+}
