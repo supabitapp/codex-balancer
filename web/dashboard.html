@@ -87,18 +87,48 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </body>
 </html>{{end}}
 
-{{define "dashboard"}}<main id="dashboard" hx-swap-oob="outerHTML">
+{{define "dashboard"}}<main id="dashboard">
 <header>
 <h1>Codex Balancer</h1>
 <p id="meta">{{.Meta}}</p>
 </header>
 <section>
 <h2>Totals</h2>
-<dl id="totals" class="totals">{{range .Totals}}<div><dt>{{.Name}}</dt><dd>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}</dl>
+<dl id="totals" class="totals">{{template "totals" .}}</dl>
 </section>
 <section>
-<h2>Accounts <span id="summary">{{range $index, $item := .Summary}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}</span></h2>
+<h2>Accounts <span id="summary">{{template "summary" .}}</span></h2>
 <div id="accounts" class="scroll">
+{{template "accounts" .}}
+</div>
+</section>
+<section>
+<h2>Routing&nbsp; <span id="routing-count">{{len .Threads}}</span></h2>
+<div id="threads" class="scroll">
+{{template "threads" .}}
+</div>
+</section>
+<section>
+<h2>Events</h2>
+<div id="events" class="scroll">
+{{template "events" .}}
+</div>
+</section>
+</main>{{end}}
+
+{{define "dashboard-update"}}<p id="meta" hx-swap-oob="innerHTML">{{.Meta}}</p>
+<dl id="totals" hx-swap-oob="innerHTML">{{template "totals" .}}</dl>
+<span id="summary" hx-swap-oob="innerHTML">{{template "summary" .}}</span>
+<div id="accounts" hx-swap-oob="innerHTML">{{template "accounts" .}}</div>
+<span id="routing-count" hx-swap-oob="innerHTML">{{len .Threads}}</span>
+<div id="threads" hx-swap-oob="innerHTML">{{template "threads" .}}</div>
+<div id="events" hx-swap-oob="innerHTML">{{template "events" .}}</div>{{end}}
+
+{{define "totals"}}{{range .Totals}}<div><dt>{{.Name}}</dt><dd>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}{{end}}
+
+{{define "summary"}}{{range $index, $item := .Summary}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}{{end}}
+
+{{define "accounts"}}
 {{if .Accounts}}<table>
 <thead><tr>
 <th>Account</th>
@@ -127,11 +157,9 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td class="spark">{{.Activity}}</td>
 </tr>{{end}}</tbody>
 </table>{{else}}<div class="empty">(none)</div>{{end}}
-</div>
-</section>
-<section>
-<h2>Routing&nbsp; {{len .Threads}}</h2>
-<div id="threads" class="scroll">
+{{end}}
+
+{{define "threads"}}
 <table>
 <thead><tr>
 <th>Thread</th>
@@ -166,11 +194,9 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td class="dim">{{.Last}}</td>
 </tr>{{end}}{{else}}<tr><td class="empty" colspan="14">nothing routed yet</td></tr>{{end}}</tbody>
 </table>
-</div>
-</section>
-<section>
-<h2>Events</h2>
-<div id="events" class="scroll">
+{{end}}
+
+{{define "events"}}
 <table>
 <thead><tr>
 <th>Time</th>
@@ -185,6 +211,4 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td class="dim">{{.Detail}}</td>
 </tr>{{end}}{{else}}<tr><td class="empty" colspan="4">quiet</td></tr>{{end}}</tbody>
 </table>
-</div>
-</section>
-</main>{{end}}
+{{end}}

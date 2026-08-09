@@ -147,13 +147,17 @@ func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	ticker := time.NewTicker(dashboardFrame)
 	defer ticker.Stop()
+	var previous []byte
 	for {
-		payload, err := renderDashboard("dashboard", s.currentDashboard(time.Now()))
+		payload, err := renderDashboard("dashboard-update", s.currentDashboard(time.Now()))
 		if err != nil {
 			return
 		}
-		if err := conn.Write(r.Context(), websocket.MessageText, payload); err != nil {
-			return
+		if !bytes.Equal(payload, previous) {
+			if err := conn.Write(r.Context(), websocket.MessageText, payload); err != nil {
+				return
+			}
+			previous = payload
 		}
 		select {
 		case <-r.Context().Done():

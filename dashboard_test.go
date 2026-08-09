@@ -109,7 +109,13 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	}
 	body := string(payload)
 	for _, expected := range []string{
-		`hx-swap-oob="outerHTML"`,
+		`id="meta" hx-swap-oob="innerHTML"`,
+		`id="totals" hx-swap-oob="innerHTML"`,
+		`id="summary" hx-swap-oob="innerHTML"`,
+		`id="accounts" hx-swap-oob="innerHTML"`,
+		`id="routing-count" hx-swap-oob="innerHTML"`,
+		`id="threads" hx-swap-oob="innerHTML"`,
+		`id="events" hx-swap-oob="innerHTML"`,
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
@@ -117,7 +123,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`<td>gpt-5.6-sol</td>`,
 		`<td>high</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
-		`<h2>Accounts <span id="summary"><span>1 checking</span></span></h2>`,
+		`<span>1 checking</span>`,
 		`<td>WS</td>`,
 		`class="fast-icon"`,
 		`aria-label="Fast"`,
@@ -128,6 +134,11 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard update missing %q:\n%s", expected, body)
+		}
+	}
+	for _, replaced := range []string{`id="dashboard"`, `hx-swap-oob="outerHTML"`} {
+		if strings.Contains(body, replaced) {
+			t.Fatalf("dashboard update replaces stable container %q", replaced)
 		}
 	}
 	for _, private := range []string{"alice@example.com", "019fe5c2private", "203.0.113.42", "<script>"} {
