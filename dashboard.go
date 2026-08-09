@@ -64,6 +64,7 @@ type dashboardTotal struct {
 
 type dashboardThreadView struct {
 	KeyPrefix string
+	IP        string
 	Account   string
 	Via       string
 	Fast      bool
@@ -224,6 +225,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	for _, thread := range threads {
 		threadViews = append(threadViews, dashboardThreadView{
 			KeyPrefix: shortKey(thread.Key),
+			IP:        maskIP(thread.IP),
 			Account:   names[thread.Account],
 			Via:       strings.ToUpper(string(thread.Via)),
 			Fast:      isFastServiceTier(thread.ServiceTier),

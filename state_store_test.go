@@ -48,7 +48,7 @@ func TestStateStoreRejectsNewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec("PRAGMA user_version = 2"); err != nil {
+	if _, err := store.db.Exec("PRAGMA user_version = 999"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -86,8 +86,8 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stats.routed("thread", "account-a", serviceTierFast, transportHTTP)
-	stats.routed("thread", "account-a", serviceTierFast, transportWebSocket)
+	stats.routed("thread", "198.51.100.8", "account-a", serviceTierFast, transportHTTP)
+	stats.routed("thread", "198.51.100.9", "account-a", serviceTierFast, transportWebSocket)
 	stats.failedOver("account-a", "unreachable")
 	stats.rateLimited("account-a")
 	stats.answered(2 * time.Second)
@@ -118,7 +118,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if snapshot.WSOpen != 0 || snapshot.Accounts["account-a"].WSOpen != 0 {
 		t.Fatalf("live sockets survived restart: %+v", snapshot)
 	}
-	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
+	if len(snapshot.Threads) != 1 || snapshot.Threads[0].IP != "198.51.100.9" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
 		t.Fatalf("threads = %+v", snapshot.Threads)
 	}
 	if len(snapshot.Events) != 3 {

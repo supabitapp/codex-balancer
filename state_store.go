@@ -57,6 +57,7 @@ var stateMigrations = []string{
 	) STRICT;
 	CREATE INDEX events_kind_at ON events (kind, at_ns);
 	CREATE INDEX events_account_at ON events (account_id, at_ns);`,
+	`ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';`,
 }
 
 type StateStore struct {
@@ -67,6 +68,7 @@ type StateStore struct {
 type storedAttempt struct {
 	At          time.Time
 	Thread      string
+	IP          string
 	Account     string
 	ServiceTier string
 	Transport   transport
@@ -333,8 +335,8 @@ func decodeTime(value int64) time.Time {
 }
 
 func (s *StateStore) recordAttempt(attempt storedAttempt) error {
-	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport) VALUES (?, ?, ?, ?, ?)`,
-		attempt.At.UnixNano(), attempt.Thread, attempt.Account, attempt.ServiceTier, attempt.Transport)
+	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, thread_key, client_ip, account_id, service_tier, transport) VALUES (?, ?, ?, ?, ?, ?)`,
+		attempt.At.UnixNano(), attempt.Thread, attempt.IP, attempt.Account, attempt.ServiceTier, attempt.Transport)
 	return err
 }
 
@@ -349,19 +351,19 @@ func (s *StateStore) recordEvent(event storedEvent) error {
 }
 
 func (s *StateStore) restoreStats(stats *Stats) error {
-	attempts, err := s.db.Query(`SELECT at_ns, thread_key, account_id, service_tier, transport FROM attempts ORDER BY id`)
+	attempts, err := s.db.Query(`SELECT at_ns, thread_key, client_ip, account_id, service_tier, transport FROM attempts ORDER BY id`)
 	if err != nil {
 		return err
 	}
 	for attempts.Next() {
 		var at int64
-		var thread, account, tier string
+		var thread, ip, account, tier string
 		var via transport
-		if err := attempts.Scan(&at, &thread, &account, &tier, &via); err != nil {
+		if err := attempts.Scan(&at, &thread, &ip, &account, &tier, &via); err != nil {
 			attempts.Close()
 			return err
 		}
-		stats.applyRouted(time.Unix(0, at), thread, account, tier, via)
+		stats.applyRouted(time.Unix(0, at), thread, ip, account, tier, via)
 	}
 	if err := attempts.Close(); err != nil {
 		return err

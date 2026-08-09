@@ -541,7 +541,7 @@ func (s *server) relayResponsesWebSocket(
 						}
 					}
 					if turns[index].counted {
-						s.stats.routed(turns[index].thread, current.account.id(), turns[index].serviceTier, transportWebSocket)
+						s.stats.routed(turns[index].thread, requestIP(r), current.account.id(), turns[index].serviceTier, transportWebSocket)
 						s.stats.answered(time.Since(turns[index].sent))
 					}
 					break

@@ -41,7 +41,7 @@ is within five minutes of expiry.
 
 `GET /stats` returns the same live account status as public JSON. Account emails
 hide their domain and all but the first and last local-part characters, such as
-`k***i@***.com`.
+`k***i@***.com`. The dashboard hides the host part of each thread IP.
 
 Open `/dashboard` and enter the server key for the live web dashboard. It
 streams the TUI account, total, thread, and event data over WebSocket.

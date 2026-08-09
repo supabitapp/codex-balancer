@@ -84,7 +84,7 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStats()
-	stats.routed("019fe5c2private", "unused", serviceTierFast, transportWebSocket)
+	stats.routed("019fe5c2private", "203.0.113.42", "unused", serviceTierFast, transportWebSocket)
 	stats.recordUsage("gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
@@ -113,6 +113,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
+		`203.0.113.***`,
 		`<td class="status">◌ checking</td>`,
 		`<td>WS</td>`,
 		`class="fast-icon"`,
@@ -126,7 +127,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 			t.Fatalf("dashboard update missing %q:\n%s", expected, body)
 		}
 	}
-	for _, private := range []string{"alice@example.com", "019fe5c2private", "<script>"} {
+	for _, private := range []string{"alice@example.com", "019fe5c2private", "203.0.113.42", "<script>"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard update exposed %q", private)
 		}
