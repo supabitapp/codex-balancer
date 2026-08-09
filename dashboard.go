@@ -37,7 +37,6 @@ type dashboardView struct {
 type dashboardCount struct {
 	Count int
 	Label string
-	Class string
 }
 
 type dashboardAccountView struct {
@@ -46,9 +45,7 @@ type dashboardAccountView struct {
 	Status         string
 	StatusClass    string
 	Weekly         string
-	WeeklyClass    string
 	Banked         string
-	BankedClass    string
 	BankedInfo     string
 	ResetIn        string
 	Turns          string
@@ -75,7 +72,6 @@ type dashboardThreadView struct {
 type dashboardEventView struct {
 	At      string
 	Kind    string
-	Class   string
 	Account string
 	Detail  string
 }
@@ -160,21 +156,13 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		}
 		names[account.ID] = name
 		status, statusClass := dashboardStatus(account.Status)
-		weekly, weeklyClass := "--", "dim"
+		weekly := "--"
 		if account.WeeklyRemainingPercent != nil {
 			weekly = formatPercent(*account.WeeklyRemainingPercent)
-			weeklyClass = "good"
-			switch {
-			case *account.WeeklyRemainingPercent <= 10:
-				weeklyClass = "bad"
-			case *account.WeeklyRemainingPercent <= 30:
-				weeklyClass = "warn"
-			}
 		}
-		banked, bankedClass := "--", "dim"
+		banked := "--"
 		if account.BankedResets != nil {
 			banked = strconv.FormatInt(*account.BankedResets, 10)
-			bankedClass = "strong"
 		}
 		bankedInfo := dashboardResetInfo(now, account.ResetCredits)
 		resetIn := "--"
@@ -191,9 +179,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Status:         status,
 			StatusClass:    statusClass,
 			Weekly:         weekly,
-			WeeklyClass:    weeklyClass,
 			Banked:         banked,
-			BankedClass:    bankedClass,
 			BankedInfo:     bankedInfo,
 			ResetIn:        resetIn,
 			Turns:          dashboardNumber(account.Turns),
@@ -216,8 +202,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		{accountNeedsReauth, "need reauth"},
 	} {
 		if count := counts[item.status]; count > 0 {
-			_, class := dashboardStatus(item.status)
-			summary = append(summary, dashboardCount{Count: count, Label: item.label, Class: class})
+			summary = append(summary, dashboardCount{Count: count, Label: item.label})
 		}
 	}
 
@@ -240,17 +225,9 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	events := make([]dashboardEventView, 0, len(snapshot.Events))
 	for i := len(snapshot.Events) - 1; i >= 0; i-- {
 		event := snapshot.Events[i]
-		class := "dim"
-		switch event.Kind {
-		case "failover":
-			class = "bad"
-		case "rate limited":
-			class = "hot"
-		}
 		events = append(events, dashboardEventView{
 			At:      event.At.UTC().Format("15:04:05") + " UTC",
 			Kind:    event.Kind,
-			Class:   class,
 			Account: names[event.Account],
 			Detail:  event.Detail,
 		})
@@ -295,15 +272,15 @@ func dashboardResetInfo(now time.Time, credits []resetCreditStatsResponse) strin
 func dashboardStatus(status accountStatus) (string, string) {
 	switch status {
 	case accountPaused:
-		return "⏸ paused", "dim"
+		return "⏸ paused", "status-idle"
 	case accountNeedsReauth:
-		return "✕ reauth", "bad"
+		return "✕ reauth", "status-error"
 	case accountCooling:
-		return "◐ cooling", "hot"
+		return "◐ cooling", "status-warn"
 	case accountChecking:
-		return "◌ checking", "dim"
+		return "◌ checking", "status-idle"
 	case accountLive:
-		return "● live", "good"
+		return "● live", "status-live"
 	default:
 		return string(status), ""
 	}
