@@ -266,6 +266,7 @@ func TestDashboardOverview(t *testing.T) {
 		"cached input":  "1.5K",
 		"output tokens": "300",
 		"turn rate":     "0.0 turns/min",
+		"estimated TPS": "--",
 		"uptime":        "28m",
 	}
 	wantInfo := "Calculated from 1 August 2026, 00:00 BST"
@@ -275,7 +276,7 @@ func TestDashboardOverview(t *testing.T) {
 			if metric.Value != wantValue {
 				t.Fatalf("%s overview metric = %+v, want value %q", metric.Name, metric, wantValue)
 			}
-			if metric.Name != "turn rate" && metric.Name != "uptime" && metric.Info != wantInfo {
+			if metric.Name != "turn rate" && metric.Name != "estimated TPS" && metric.Name != "uptime" && metric.Info != wantInfo {
 				t.Fatalf("%s overview info = %q, want %q", metric.Name, metric.Info, wantInfo)
 			}
 			delete(wantValues, metric.Name)
@@ -295,6 +296,18 @@ func TestDashboardOverview(t *testing.T) {
 	}
 	if !apiEstimateFound {
 		t.Fatal("API estimate overview metric missing")
+	}
+}
+
+func TestEstimatedTPSWeightsLatestActiveResponses(t *testing.T) {
+	threads := []ThreadSnapshot{
+		{LatestUsage: responseUsage{OutputTokens: 100}, TTFB: time.Second, Latency: 3 * time.Second},
+		{LatestUsage: responseUsage{OutputTokens: 200}, TTFB: 500 * time.Millisecond, Latency: 2500 * time.Millisecond},
+		{LatestUsage: responseUsage{OutputTokens: 1_000}, TTFB: 2 * time.Second, Latency: time.Second},
+		{TTFB: time.Second, Latency: 2 * time.Second},
+	}
+	if got := estimatedTPS(threads); got != "75" {
+		t.Fatalf("estimated TPS = %q, want 75", got)
 	}
 }
 

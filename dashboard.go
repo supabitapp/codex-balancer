@@ -279,6 +279,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			{Name: "ws turns", Value: strconv.FormatInt(snapshot.WSTurns, 10)},
 			{Name: "ws open", Value: strconv.FormatInt(snapshot.WSOpen, 10)},
 			{Name: "turn rate", Value: rate(snapshot)},
+			{Name: "estimated TPS", Value: estimatedTPS(snapshot.Threads), Info: "Latest active-thread output tokens divided by time from first byte to completion"},
 			{Name: "uptime", Value: short(snapshot.Uptime)},
 			{Name: "input tokens", Value: formatTokenCount(snapshot.MonthlyUsage.InputTokens), Info: monthInfo},
 			{Name: "cached input", Value: formatTokenCount(snapshot.MonthlyUsage.InputDetails.CachedTokens), Info: monthInfo},
@@ -328,6 +329,23 @@ func dashboardCacheRate(usage responseUsage) string {
 		return "--"
 	}
 	return formatDecimal(float64(usage.InputDetails.CachedTokens) * 100 / float64(usage.InputTokens))
+}
+
+func estimatedTPS(threads []ThreadSnapshot) string {
+	var outputTokens int64
+	var generationTime time.Duration
+	for _, thread := range threads {
+		duration := thread.Latency - thread.TTFB
+		if thread.LatestUsage.OutputTokens <= 0 || duration <= 0 {
+			continue
+		}
+		outputTokens += thread.LatestUsage.OutputTokens
+		generationTime += duration
+	}
+	if generationTime <= 0 {
+		return "--"
+	}
+	return formatDecimal(float64(outputTokens) / generationTime.Seconds())
 }
 
 func dashboardContext(used int64, limits modelContextLimits, compactions int64) string {
