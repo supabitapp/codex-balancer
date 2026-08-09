@@ -27,13 +27,12 @@
 body { min-height: 100vh; margin: 0; background: var(--gray-1); color: var(--gray-12) }
 main { width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding: 1rem 0 3rem }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding-bottom: .5rem }
-header > div { display: flex; align-items: baseline; gap: .75rem; min-width: 0 }
 h1 { margin: 0; font-size: 1.125rem; font-weight: 600 }
 h2 { margin: 0 0 .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase }
 section { margin-top: 1.5rem }
 p { margin: 0 }
 #summary, #meta, .dim, .empty, th, dt { color: var(--gray-11) }
-#summary { white-space: nowrap }
+#summary { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }
 #summary, #meta, td, dd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace }
 .dot { margin: 0 .35rem; color: var(--gray-7) }
 .status-mark { display: inline-block; min-width: 1em; text-align: center }
@@ -76,7 +75,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 @media (max-width: 760px) {
   main { width: min(calc(100% - 1.25rem), 100rem) }
   header { align-items: flex-start; flex-direction: column }
-  header > div { align-items: flex-start; flex-direction: column; gap: .25rem }
   #meta { font-size: .8rem }
 }
 </style>
@@ -91,10 +89,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 
 {{define "dashboard"}}<main id="dashboard" hx-swap-oob="outerHTML">
 <header>
-<div>
 <h1>Codex Balancer</h1>
-<span id="summary">{{range $index, $item := .Summary}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}</span>
-</div>
 <p id="meta">{{.Meta}}</p>
 </header>
 <section>
@@ -102,7 +97,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <dl id="totals" class="totals">{{range .Totals}}<div><dt>{{.Name}}</dt><dd>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}</dl>
 </section>
 <section>
-<h2>Accounts</h2>
+<h2>Accounts <span id="summary">{{range $index, $item := .Summary}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}</span></h2>
 <div id="accounts" class="scroll">
 {{if .Accounts}}<table>
 <thead><tr>

@@ -45,7 +45,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		}
 	}
 	totals := strings.Index(body, `<h2>Totals</h2>`)
-	accounts := strings.Index(body, `<h2>Accounts</h2>`)
+	accounts := strings.Index(body, `<h2>Accounts <span id="summary">`)
 	if totals < 0 || accounts < 0 || totals > accounts {
 		t.Fatalf("dashboard section order: totals = %d, accounts = %d", totals, accounts)
 	}
@@ -117,6 +117,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`<td>gpt-5.6-sol</td>`,
 		`<td>high</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
+		`<h2>Accounts <span id="summary"><span>1 checking</span></span></h2>`,
 		`<td>WS</td>`,
 		`class="fast-icon"`,
 		`aria-label="Fast"`,
