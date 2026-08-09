@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -14,7 +15,7 @@ import (
 
 const (
 	eventLog           = 200
-	threadActiveWindow = 10 * time.Minute
+	threadActiveWindow = 5 * time.Minute
 	activityLen        = 24
 	activitySpan       = 30 * time.Second
 
@@ -199,7 +200,7 @@ func (s *Stats) websocketClosed(account string) {
 func (s *Stats) pruneInactiveThreads(now time.Time) {
 	cutoff := now.Add(-threadActiveWindow)
 	for key, t := range s.threads {
-		if t.last.Before(cutoff) {
+		if !t.last.After(cutoff) {
 			delete(s.threads, key)
 		}
 	}
@@ -389,6 +390,9 @@ func (s *Stats) snapshot() Snapshot {
 			Via:         t.via,
 		})
 	}
+	slices.SortFunc(out.Threads, func(left, right ThreadSnapshot) int {
+		return strings.Compare(left.Key, right.Key)
+	})
 	return out
 }
 

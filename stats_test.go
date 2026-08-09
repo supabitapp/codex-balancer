@@ -26,6 +26,19 @@ func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
 	}
 }
 
+func TestSnapshotSortsThreadsByIDAndExpiresAfterFiveMinutes(t *testing.T) {
+	stats := newStats()
+	now := time.Now()
+	stats.applyRouted(now.Add(-5*time.Minute), "019f03", "", "account", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now.Add(-4*time.Minute), "019f02", "", "account", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now, "019f01", "", "account", "", "", "", transportHTTP, turnMetadata{})
+
+	snapshot := stats.snapshot()
+	if len(snapshot.Threads) != 2 || snapshot.Threads[0].Key != "019f01" || snapshot.Threads[1].Key != "019f02" {
+		t.Fatalf("threads = %+v", snapshot.Threads)
+	}
+}
+
 func TestThreadUsageFollowsActiveRoutingWindow(t *testing.T) {
 	stats := newStats()
 	now := time.Now()

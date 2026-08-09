@@ -3,7 +3,6 @@ package main
 import (
 	"cmp"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -419,12 +418,9 @@ func column(title string, rows []string, width, limit int) string {
 }
 
 func (d dashboard) threads(width, height int) string {
-	threads := slices.Clone(d.snap.Threads)
-	slices.SortFunc(threads, func(x, y ThreadSnapshot) int { return cmp.Compare(y.Last.UnixNano(), x.Last.UnixNano()) })
-
 	names := d.shortNames()
 	rows := []string{}
-	for _, t := range threads {
+	for _, t := range d.snap.Threads {
 		tier := strings.Repeat(" ", 5)
 		if isFastServiceTier(t.ServiceTier) {
 			tier = sHot.Render("FAST ")
@@ -441,7 +437,7 @@ func (d dashboard) threads(width, height int) string {
 	if len(rows) == 0 {
 		rows = []string{sDim.Render("nothing routed yet")}
 	}
-	return column(fmt.Sprintf("ROUTING  %d", len(threads)), rows, width, height)
+	return column(fmt.Sprintf("ROUTING  %d", len(d.snap.Threads)), rows, width, height)
 }
 
 func (d dashboard) events(width, height int) string {

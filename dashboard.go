@@ -2,13 +2,11 @@ package main
 
 import (
 	"bytes"
-	"cmp"
 	"crypto/sha256"
 	"embed"
 	"fmt"
 	"html/template"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -236,12 +234,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		}
 	}
 
-	threads := slices.Clone(snapshot.Threads)
-	slices.SortFunc(threads, func(left, right ThreadSnapshot) int {
-		return cmp.Compare(right.Last.UnixNano(), left.Last.UnixNano())
-	})
-	threadViews := make([]dashboardThreadView, 0, len(threads))
-	for _, thread := range threads {
+	threadViews := make([]dashboardThreadView, 0, len(snapshot.Threads))
+	for _, thread := range snapshot.Threads {
 		limits := s.catalog.contextLimits(thread.Account, thread.Model)
 		used := thread.LatestUsage.contextTokens()
 		threadViews = append(threadViews, dashboardThreadView{
