@@ -28,7 +28,7 @@ func newProxyClient() *http.Client {
 type server struct {
 	ctx        context.Context
 	pool       *Pool
-	sticky     *Sticky
+	affinity   *AffinityStore
 	stats      *Stats
 	logins     accountLoginStore
 	upstream   string
@@ -91,15 +91,25 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serviceTier := requestServiceTier(body)
-
-	key := stickyKey(r.Header)
-	pinned := s.sticky.get(key)
+	affinity, err := affinityFromRequest(r.Header, body)
+	if err != nil {
+		status, message := affinityErrorStatus(err)
+		writeError(w, status, message)
+		return
+	}
+	resolution, err := s.affinity.resolve(affinity, s.pool)
+	if err != nil {
+		status, message := affinityErrorStatus(err)
+		writeError(w, status, message)
+		return
+	}
+	key := affinity.label()
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
-	s.log.Debug("http turn received", "thread", key, "pinned_account", pinned, "service_tier", serviceTier)
+	s.log.Debug("http turn received", "thread", key, "required_account", resolution.required, "preferred_account", resolution.preferred, "service_tier", serviceTier)
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		account := s.pickAccount(key, pinned, skip, attempt, transportHTTP)
+		account := s.pickAccount(key, resolution.required, resolution.preferred, skip, attempt, transportHTTP)
 		if account == nil {
 			writeError(w, http.StatusServiceUnavailable, "no account available")
 			return
@@ -112,6 +122,14 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 				skip[id] = true
 				continue
 			}
+		}
+		if resolution.hard {
+			if err := s.affinity.bindAll(hardAffinityRefs(resolution.bindings), id); err != nil {
+				status, message := affinityErrorStatus(err)
+				writeError(w, status, message)
+				return
+			}
+			resolution.required = id
 		}
 
 		sent := time.Now()
@@ -155,8 +173,8 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 				s.log.Warn("upstream refused the turn", "transport", transportHTTP, "thread", key, "account", id, "attempt", attempt+1, "status", status)
 				account.failed(attempt)
 			}
-			if pinned != "" {
-				s.log.Info("thread stays on its account", "transport", transportHTTP, "thread", key, "account", id, "status", status)
+			if resolution.hard {
+				s.log.Info("hard affinity stays on its account", "transport", transportHTTP, "thread", key, "account", id, "status", status)
 				copyHeaders(w.Header(), resp.Header)
 				w.WriteHeader(status)
 				io.Copy(w, resp.Body)
@@ -170,14 +188,14 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 
 		account.observe(resp.Header)
-		if err := s.sticky.bind(key, id); err != nil {
-			s.log.Warn("thread binding save failed", "thread", key, "account", id, "error", err)
+		if err := s.affinity.bindAll(resolution.bindings, id); err != nil {
+			s.log.Warn("affinity save failed", "thread", key, "account", id, "error", err)
 		}
 		s.stats.routed(key, id, serviceTier, transportHTTP)
 		attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
 		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 		s.log.Debug("http turn routed", attrs...)
-		s.relay(w, resp, sent)
+		s.relay(w, resp, sent, id)
 		return
 	}
 	s.log.Warn("every account failed", "transport", transportHTTP, "thread", key, "attempts", maxAttempts)
@@ -245,17 +263,19 @@ func (s *server) forward(r *http.Request, body []byte, account *Account) (*http.
 	return s.client.Do(req)
 }
 
-func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time) {
+func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, account string) {
 	defer resp.Body.Close()
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
 	control := http.NewResponseController(w)
+	inspector := responseOwnerInspector{store: s.affinity, account: account, log: s.log}
 	first := true
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
+			inspector.write(buf[:n])
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				return
 			}
@@ -266,11 +286,65 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Tim
 			}
 		}
 		if err != nil {
+			inspector.finish()
 			if err != io.EOF {
 				s.log.Warn("stream cut short", "error", err)
 			}
 			return
 		}
+	}
+}
+
+type responseOwnerInspector struct {
+	store   *AffinityStore
+	account string
+	buffer  []byte
+	log     *slog.Logger
+}
+
+func (i *responseOwnerInspector) write(data []byte) {
+	i.buffer = append(i.buffer, data...)
+	for {
+		index := bytes.IndexByte(i.buffer, '\n')
+		if index < 0 {
+			return
+		}
+		i.inspect(i.buffer[:index])
+		i.buffer = i.buffer[index+1:]
+	}
+}
+
+func (i *responseOwnerInspector) finish() {
+	i.inspect(i.buffer)
+	i.buffer = nil
+}
+
+func (i *responseOwnerInspector) inspect(line []byte) {
+	line = bytes.TrimSpace(line)
+	line = bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	if len(line) == 0 || bytes.Equal(line, []byte("[DONE]")) {
+		return
+	}
+	var event struct {
+		ID       string `json:"id"`
+		Object   string `json:"object"`
+		Type     string `json:"type"`
+		Response struct {
+			ID string `json:"id"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(line, &event) != nil {
+		return
+	}
+	id := event.Response.ID
+	if id == "" && event.Object == "response" {
+		id = event.ID
+	}
+	if id == "" || (event.Type != "" && event.Type != "response.created") {
+		return
+	}
+	if err := i.store.bind(affinityRef{kind: affinityResponse, value: id}, i.account); err != nil {
+		i.log.Warn("response affinity save failed", "response", id, "account", i.account, "error", err)
 	}
 }
 

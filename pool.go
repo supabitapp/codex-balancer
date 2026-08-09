@@ -139,24 +139,32 @@ func (p *Pool) persistTokens(a *Account) error {
 	})
 }
 
-func (p *Pool) pick(pinned string, skip map[string]bool) *Account {
-	return p.route(pinned, skip).account
+func (p *Pool) pick(required, preferred string, skip map[string]bool) *Account {
+	return p.route(required, preferred, skip).account
 }
 
-func (p *Pool) route(pinned string, skip map[string]bool) routingDecision {
+func (p *Pool) route(required, preferred string, skip map[string]bool) routingDecision {
 	now := time.Now()
 	decision := routingDecision{now: now}
 	for _, account := range p.all() {
 		decision.candidates = append(decision.candidates, account.routingCandidate())
 	}
-	if pinned != "" {
+	if required != "" {
 		for _, candidate := range decision.candidates {
-			if candidate.id == pinned && !skip[pinned] && !candidate.paused && candidate.quotaKnown() {
+			if candidate.id == required && !skip[required] && candidate.available(now) {
 				decision.account = candidate.account
 				break
 			}
 		}
 		return decision
+	}
+	if preferred != "" && !skip[preferred] {
+		for _, candidate := range decision.candidates {
+			if candidate.id == preferred && candidate.available(now) {
+				decision.account = candidate.account
+				return decision
+			}
+		}
 	}
 
 	var best *routingCandidate

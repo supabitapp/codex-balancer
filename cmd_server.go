@@ -75,16 +75,16 @@ func serverCmd(args []string) error {
 	if logFile != nil {
 		defer logFile.Close()
 	}
-	sticky, err := newSticky(defaultStickyPath())
+	affinity, err := newAffinityStore(defaultAffinityPath())
 	if err != nil {
-		return fmt.Errorf("load thread bindings: %w", err)
+		return fmt.Errorf("load affinity bindings: %w", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	srv := &server{
 		ctx:      ctx,
 		pool:     pool,
-		sticky:   sticky,
+		affinity: affinity,
 		stats:    stats,
 		upstream: *upstream,
 		key:      *key,
@@ -112,7 +112,7 @@ func serverCmd(args []string) error {
 		return nil
 	}
 
-	go sweepSticky(ctx, sticky, log)
+	go sweepAffinity(ctx, affinity, log)
 	go srv.watchUsage(ctx, *poll)
 
 	go func() {
@@ -150,7 +150,7 @@ func serverCmd(args []string) error {
 	return <-serving
 }
 
-func sweepSticky(ctx context.Context, s *Sticky, log *slog.Logger) {
+func sweepAffinity(ctx context.Context, s *AffinityStore, log *slog.Logger) {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -159,7 +159,7 @@ func sweepSticky(ctx context.Context, s *Sticky, log *slog.Logger) {
 			return
 		case <-ticker.C:
 			if err := s.sweep(); err != nil {
-				log.Warn("thread binding sweep failed", "error", err)
+				log.Warn("affinity binding sweep failed", "error", err)
 			}
 		}
 	}

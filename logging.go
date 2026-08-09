@@ -5,13 +5,14 @@ import (
 	"time"
 )
 
-func (s *server) pickAccount(thread, pinned string, skip map[string]bool, attempt int, via transport) *Account {
-	decision := s.pool.route(pinned, skip)
+func (s *server) pickAccount(thread, required, preferred string, skip map[string]bool, attempt int, via transport) *Account {
+	decision := s.pool.route(required, preferred, skip)
 	s.log.Debug("routing attempt",
 		"transport", via,
 		"thread", thread,
 		"attempt", attempt+1,
-		"pinned_account", pinned,
+		"required_account", required,
+		"preferred_account", preferred,
 		"accounts", len(decision.candidates),
 	)
 	for _, candidate := range decision.candidates {
@@ -20,7 +21,8 @@ func (s *server) pickAccount(thread, pinned string, skip map[string]bool, attemp
 			"thread", thread,
 			"attempt", attempt + 1,
 			"selected", candidate.account == decision.account,
-			"pinned", candidate.id == pinned,
+			"required", candidate.id == required,
+			"preferred", candidate.id == preferred,
 			"skipped", skip[candidate.id],
 		}
 		attrs = append(attrs, routingLogAttrs(candidate, decision.now)...)
@@ -31,7 +33,8 @@ func (s *server) pickAccount(thread, pinned string, skip map[string]bool, attemp
 			"transport", via,
 			"thread", thread,
 			"attempt", attempt+1,
-			"pinned_account", pinned,
+			"required_account", required,
+			"preferred_account", preferred,
 		)
 	}
 	return decision.account
