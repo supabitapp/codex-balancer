@@ -187,11 +187,11 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		names[account.ID] = name
 		weekly := "--"
 		if account.WeeklyRemainingPercent != nil {
-			weekly = formatPercent(*account.WeeklyRemainingPercent)
+			weekly = formatDecimal(*account.WeeklyRemainingPercent)
 		}
 		banked := "--"
 		if account.BankedResets != nil {
-			banked = strconv.FormatInt(*account.BankedResets, 10)
+			banked = dashboardNumber(*account.BankedResets)
 		}
 		bankedInfo := dashboardResetInfo(now, account.ResetCredits)
 		resetIn := "--"
@@ -200,7 +200,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		}
 		traffic := ""
 		if snapshot.Turns > 0 {
-			traffic = fmt.Sprintf("%d%%", account.Turns*100/snapshot.Turns)
+			traffic = dashboardNumber(account.Turns * 100 / snapshot.Turns)
 		}
 		accounts = append(accounts, dashboardAccountView{
 			Name:           name,
@@ -255,7 +255,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Output:      formatTokenCount(thread.Usage.OutputTokens),
 			Context:     dashboardContext(thread.LatestUsage.contextTokens(), limits),
 			ContextInfo: dashboardContextInfo(thread.LatestUsage.contextTokens(), limits),
-			Compactions: strconv.FormatInt(thread.Compactions, 10),
+			Compactions: dashboardNumber(thread.Compactions),
 			Latency:     formatLatency(thread.Latency),
 			LatencyInfo: dashboardLatencyInfo(thread.TTFB, thread.Latency),
 			Turns:       dashboardNumber(thread.Turns),
@@ -284,7 +284,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			{Name: "http", Value: strconv.FormatInt(snapshot.Turns-snapshot.WSTurns, 10)},
 			{Name: "ws turns", Value: strconv.FormatInt(snapshot.WSTurns, 10)},
 			{Name: "ws open", Value: strconv.FormatInt(snapshot.WSOpen, 10)},
-			{Name: "uptime", Value: short(snapshot.Uptime)},
 			{Name: "input tokens", Value: formatTokenCount(snapshot.MonthlyUsage.InputTokens), Info: monthInfo},
 			{Name: "cached input", Value: formatTokenCount(snapshot.MonthlyUsage.InputDetails.CachedTokens), Info: monthInfo},
 			{Name: "output tokens", Value: formatTokenCount(snapshot.MonthlyUsage.OutputTokens), Info: monthInfo},
@@ -325,7 +324,7 @@ func dashboardCacheRate(usage responseUsage) string {
 	if usage.InputTokens == 0 {
 		return "--"
 	}
-	return formatPercent(float64(usage.InputDetails.CachedTokens) * 100 / float64(usage.InputTokens))
+	return formatDecimal(float64(usage.InputDetails.CachedTokens) * 100 / float64(usage.InputTokens))
 }
 
 func dashboardContext(used int64, limits modelContextLimits) string {

@@ -370,9 +370,12 @@ func remainingPercent(w window) (float64, bool) {
 	return min(max(100-w.usedPercent, 0), 100), true
 }
 
+func formatDecimal(value float64) string {
+	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", value), "0"), ".")
+}
+
 func formatPercent(value float64) string {
-	formatted := strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", value), "0"), ".")
-	return formatted + "%"
+	return formatDecimal(value) + "%"
 }
 
 func plural(n int64, noun string) string {

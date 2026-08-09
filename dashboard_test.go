@@ -137,6 +137,41 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	}
 }
 
+func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
+	now := time.Now()
+	account := testAccount("account-a", 20)
+	account.adoptResetCredits(0, nil)
+	other := testAccount("account-b", 20)
+	stats := newStats()
+	stats.applyRouted(now, "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
+	for range 100 {
+		stats.applyRouted(now, "", "", "account-b", "", "", "", transportHTTP, turnMetadata{})
+	}
+	server := &server{pool: &Pool{accounts: []*Account{account, other}}, stats: stats}
+
+	view := server.currentDashboard(now)
+	if len(view.Accounts) != 2 {
+		t.Fatalf("accounts = %d, want two", len(view.Accounts))
+	}
+	accountView := view.Accounts[0]
+	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.Traffic != "" {
+		t.Fatalf("account values = %+v", accountView)
+	}
+	if view.Accounts[1].Traffic != "99" {
+		t.Fatalf("other account traffic = %q, want 99", view.Accounts[1].Traffic)
+	}
+	payload, err := renderDashboard("dashboard", view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(payload)
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Traffic %</th>"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("dashboard missing %q", expected)
+		}
+	}
+}
+
 func TestDashboardBankedResetTooltipShowsExpirations(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(4 * time.Minute)
@@ -168,8 +203,11 @@ func TestDashboardBankedResetTooltipShowsExpirations(t *testing.T) {
 	}
 	view := server.currentDashboard(now)
 	wantInfo := "Expires in 4m at 2026-08-09 12:04 UTC\nExpires in 2h00m at 2026-08-09 14:00 UTC"
-	if len(view.Accounts) != 1 || view.Accounts[0].BankedInfo != wantInfo {
-		t.Fatalf("banked info = %q", view.Accounts[0].BankedInfo)
+	if len(view.Accounts) != 1 {
+		t.Fatalf("accounts = %d, want one", len(view.Accounts))
+	}
+	if view.Accounts[0].Banked != "2" || view.Accounts[0].BankedInfo != wantInfo {
+		t.Fatalf("banked account = %+v", view.Accounts[0])
 	}
 	payload, err := renderDashboard("dashboard", view)
 	if err != nil {
@@ -217,7 +255,7 @@ func TestDashboardMonthlyTotals(t *testing.T) {
 			if total.Info != wantInfo {
 				t.Fatalf("API estimate info = %q, want %q", total.Info, wantInfo)
 			}
-		case "threads", "accounts", "failovers", "rate limits", "ttfb":
+		case "threads", "accounts", "failovers", "rate limits", "ttfb", "uptime":
 			t.Fatalf("removed total %q is still present", total.Name)
 		}
 	}
@@ -251,7 +289,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "gpt-5.6-sol" || thread.Thinking != "xhigh" || thread.Input != "2K" || thread.CacheRate != "75%" || thread.Output != "300" || thread.Context != "2.3K / 258.4K" || thread.Compactions != "1" || thread.Latency != "2s" || thread.Turns != "1" {
+	if thread.Model != "gpt-5.6-sol" || thread.Thinking != "xhigh" || thread.Input != "2K" || thread.CacheRate != "75" || thread.Output != "300" || thread.Context != "2.3K / 258.4K" || thread.Compactions != "1" || thread.Latency != "2s" || thread.Turns != "1" {
 		t.Fatalf("routing row = %+v", thread)
 	}
 	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
