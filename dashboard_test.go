@@ -108,7 +108,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
-		`<td class="status status-idle">◌ checking</td>`,
+		`<td class="status">◌ checking</td>`,
 		`<td>WS</td>`,
 		`<td>FAST</td>`,
 		`API estimate`,

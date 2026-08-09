@@ -17,9 +17,6 @@
   --neutral-7: #d4d4d4;
   --neutral-11: #717171;
   --neutral-12: #181818;
-  --status-live: #218358;
-  --status-warn: #cc4e00;
-  --status-error: #ce2c31;
   background: var(--neutral-1);
   color: var(--neutral-12);
 }
@@ -36,10 +33,6 @@ p { margin: 0 }
 #summary { white-space: nowrap }
 .dot { margin: 0 .35rem; color: var(--neutral-7) }
 .status { font-weight: 600 }
-.status-live { color: var(--status-live) }
-.status-warn { color: var(--status-warn) }
-.status-error { color: var(--status-error) }
-.status-idle { color: var(--neutral-11) }
 .banked-info { cursor: help; text-decoration: underline dotted; text-underline-offset: .2em }
 #banked-tooltip { position: fixed; z-index: 1; width: max-content; max-width: min(28rem, calc(100vw - 1rem)); padding: .5rem .75rem; border-radius: .5rem; background: var(--neutral-12); box-shadow: 0 .25rem 1rem rgb(0 0 0 / 20%); color: var(--neutral-1); font-size: .8125rem; line-height: 1.4; pointer-events: none; white-space: pre-line }
 .scroll { overflow-x: auto }
@@ -101,7 +94,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <tbody>{{range .Accounts}}<tr>
 <td>{{.Name}}</td>
 <td class="dim">{{.Plan}}</td>
-<td class="status{{if .StatusClass}} {{.StatusClass}}{{end}}">{{.Status}}</td>
+<td class="status">{{.Status}}</td>
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span class="banked-info" data-info="{{.BankedInfo}}" aria-describedby="banked-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>

@@ -43,7 +43,6 @@ type dashboardAccountView struct {
 	Name           string
 	Plan           string
 	Status         string
-	StatusClass    string
 	Weekly         string
 	Banked         string
 	BankedInfo     string
@@ -155,7 +154,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			name = "account " + strconv.Itoa(i+1)
 		}
 		names[account.ID] = name
-		status, statusClass := dashboardStatus(account.Status)
+		status := dashboardStatus(account.Status)
 		weekly := "--"
 		if account.WeeklyRemainingPercent != nil {
 			weekly = formatPercent(*account.WeeklyRemainingPercent)
@@ -177,7 +176,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Name:           name,
 			Plan:           account.Plan,
 			Status:         status,
-			StatusClass:    statusClass,
 			Weekly:         weekly,
 			Banked:         banked,
 			BankedInfo:     bankedInfo,
@@ -269,20 +267,20 @@ func dashboardResetInfo(now time.Time, credits []resetCreditStatsResponse) strin
 	return strings.Join(lines, "\n")
 }
 
-func dashboardStatus(status accountStatus) (string, string) {
+func dashboardStatus(status accountStatus) string {
 	switch status {
 	case accountPaused:
-		return "⏸ paused", "status-idle"
+		return "⏸ paused"
 	case accountNeedsReauth:
-		return "✕ reauth", "status-error"
+		return "✕ reauth"
 	case accountCooling:
-		return "◐ cooling", "status-warn"
+		return "◐ cooling"
 	case accountChecking:
-		return "◌ checking", "status-idle"
+		return "◌ checking"
 	case accountLive:
-		return "● live", "status-live"
+		return "● live"
 	default:
-		return string(status), ""
+		return string(status)
 	}
 }
 
