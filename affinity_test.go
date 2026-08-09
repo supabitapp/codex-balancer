@@ -54,6 +54,12 @@ func TestAffinityFromRequest(t *testing.T) {
 			hard:    []affinityRef{{kind: affinityTurnState, value: "turn"}},
 		},
 		{
+			name:    "client metadata turn state overrides connection header",
+			headers: http.Header{"X-Codex-Turn-State": {"stale"}, "Session-Id": {"session"}},
+			body:    `{"type":"response.create","client_metadata":{"x-codex-turn-state":"turn"},"input":[]}`,
+			hard:    []affinityRef{{kind: affinityTurnState, value: "turn"}},
+		},
+		{
 			name:      "previous response overrides soft session",
 			headers:   http.Header{"Session-Id": {"session"}},
 			body:      `{"previous_response_id":"resp_a","input":[]}`,
