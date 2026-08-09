@@ -108,6 +108,17 @@ func TestPoolRouteDoesNotRetryExcludedOwner(t *testing.T) {
 	}
 }
 
+func TestPoolRouteBreaksTiesByAccountID(t *testing.T) {
+	a := testAccount("account-a", 10)
+	b := testAccount("account-b", 10)
+	a.lastUsed = time.Time{}
+	b.lastUsed = time.Time{}
+	pool := &Pool{accounts: []*Account{b, a}}
+	if got := pool.route("", "", nil, nil).account; got != a {
+		t.Fatalf("account = %s, want account-a", got.id())
+	}
+}
+
 func testAccount(id string, used float64) *Account {
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"email":"%s@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"%s","chatgpt_plan_type":"pro"}}`, id, id)))
 	account := accountFromState(accountState{

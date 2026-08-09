@@ -2,13 +2,19 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
-	"slices"
 	"testing"
-	"time"
 )
+
+func newAffinityStore(path string) (*AffinityStore, error) {
+	store, err := openStateStore(path, "", "")
+	if err != nil {
+		return nil, err
+	}
+	return &AffinityStore{store: store}, nil
+}
 
 func TestAffinityFromRequest(t *testing.T) {
 	tests := []struct {
@@ -148,7 +154,7 @@ func TestAffinityStatsKey(t *testing.T) {
 }
 
 func TestAffinityStoreSeparatesKindsAndPersists(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "affinity.json")
+	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := newAffinityStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -174,30 +180,8 @@ func TestAffinityStoreSeparatesKindsAndPersists(t *testing.T) {
 	}
 }
 
-func TestAffinityStoreExpiresOnlySoftBindings(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "affinity.json")
-	store, err := newAffinityStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Unix(1_000, 0)
-	store.now = func() time.Time { return now }
-	soft := affinityRef{kind: affinitySession, value: "session"}
-	hard := affinityRef{kind: affinityTurnState, value: "turn"}
-	if err := store.bindAll([]affinityRef{soft, hard}, "account-a"); err != nil {
-		t.Fatal(err)
-	}
-	now = now.Add(affinityTTL + time.Second)
-	if got := store.lookup(soft); got != "" {
-		t.Fatalf("expired soft owner = %q", got)
-	}
-	if got := store.lookup(hard); got != "account-a" {
-		t.Fatalf("hard owner = %q, want account-a", got)
-	}
-}
-
 func TestAffinityStoreRejectsHardRebindAtomically(t *testing.T) {
-	store, err := newAffinityStore(filepath.Join(t.TempDir(), "affinity.json"))
+	store, err := newAffinityStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,128 +201,37 @@ func TestAffinityStoreRejectsHardRebindAtomically(t *testing.T) {
 	}
 }
 
-func TestAffinityStoreKeepsMemoryUnchangedWhenSaveFails(t *testing.T) {
-	store, err := newAffinityStore(filepath.Join(t.TempDir(), "affinity.json"))
+func TestAffinityStoreKeepsAllBindings(t *testing.T) {
+	store, err := newAffinityStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocker := filepath.Join(t.TempDir(), "blocker")
-	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+	refs := make([]affinityRef, 0, 16_386)
+	for i := range 8_193 {
+		refs = append(refs,
+			affinityRef{kind: affinityResponse, value: fmt.Sprintf("response-%d", i)},
+			affinityRef{kind: affinityTurnState, value: fmt.Sprintf("turn-%d", i)},
+		)
+	}
+	if err := store.bindAll(refs, "account-a"); err != nil {
 		t.Fatal(err)
 	}
-	store.path = filepath.Join(blocker, "affinity.json")
-	session := affinityRef{kind: affinitySession, value: "session"}
-	if err := store.bind(session, "account-a"); err == nil {
-		t.Fatal("expected save error")
+	for _, ref := range []affinityRef{refs[0], refs[1], refs[len(refs)-2], refs[len(refs)-1]} {
+		if got := store.lookup(ref); got != "account-a" {
+			t.Fatalf("owner for %#v = %q", ref, got)
+		}
 	}
-	if got := store.lookup(session); got != "" {
-		t.Fatalf("session owner = %q, want empty", got)
-	}
-}
-
-func TestAffinityStoreSweepPersistsSoftExpiry(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "affinity.json")
-	store, err := newAffinityStore(path)
-	if err != nil {
+	var count int
+	if err := store.store.db.QueryRow("SELECT COUNT(*) FROM bindings").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Unix(1_000, 0)
-	store.now = func() time.Time { return now }
-	soft := affinityRef{kind: affinityPromptCache, value: "cache"}
-	hard := affinityRef{kind: affinityResponse, value: "response"}
-	if err := store.bindAll([]affinityRef{soft, hard}, "account-a"); err != nil {
-		t.Fatal(err)
-	}
-	now = now.Add(affinityTTL + time.Second)
-	if err := store.sweep(); err != nil {
-		t.Fatal(err)
-	}
-	reloaded, err := newAffinityStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := reloaded.lookup(soft); got != "" {
-		t.Fatalf("soft owner = %q, want empty", got)
-	}
-	if got := reloaded.lookup(hard); got != "account-a" {
-		t.Fatalf("hard owner = %q, want account-a", got)
-	}
-}
-
-func TestLimitHardAffinityStateDropsOldestRecords(t *testing.T) {
-	state := affinityState{
-		Hard: map[string]string{
-			"response\nfirst":  "account-a",
-			"response\nsecond": "account-a",
-			"response\nthird":  "account-b",
-		},
-		HardOrder: []string{"response\nfirst", "response\nsecond", "response\nthird"},
-	}
-	limitHardAffinityState(&state, 2)
-	if state.Hard["response\nfirst"] != "" {
-		t.Fatal("oldest hard record remained")
-	}
-	if got := state.HardOrder; !slices.Equal(got, []string{"response\nsecond", "response\nthird"}) {
-		t.Fatalf("hard order = %v", got)
-	}
-}
-
-func TestLimitHardAffinityStateRepairsPersistedOrder(t *testing.T) {
-	state := affinityState{
-		Hard: map[string]string{
-			"response\na": "account-a",
-			"response\nb": "account-b",
-		},
-		HardOrder: []string{"missing", "response\nb", "response\nb"},
-	}
-	limitHardAffinityState(&state, 2)
-	if got := state.HardOrder; !slices.Equal(got, []string{"response\na", "response\nb"}) {
-		t.Fatalf("hard order = %v", got)
-	}
-}
-
-func TestLimitHardAffinityStateKeepsEachKindIndependent(t *testing.T) {
-	state := affinityState{
-		Hard: map[string]string{
-			"file\nfile-a":       "account-a",
-			"response\nfirst":    "account-a",
-			"response\nsecond":   "account-a",
-			"response\nthird":    "account-b",
-			"turn_state\nturn-a": "account-a",
-		},
-		HardOrder: []string{"file\nfile-a", "response\nfirst", "response\nsecond", "response\nthird", "turn_state\nturn-a"},
-	}
-	limitHardAffinityState(&state, 2)
-	if state.Hard["file\nfile-a"] == "" || state.Hard["turn_state\nturn-a"] == "" {
-		t.Fatal("one affinity kind evicted another")
-	}
-	if state.Hard["response\nfirst"] != "" {
-		t.Fatal("oldest response remained")
-	}
-}
-
-func TestEvictedResponseAffinityFailsClosed(t *testing.T) {
-	state := affinityState{
-		Soft: map[string]softAffinityBinding{},
-		Hard: map[string]string{
-			"response\nold": "account-a",
-			"response\nnew": "account-b",
-		},
-		HardOrder: []string{"response\nold", "response\nnew"},
-	}
-	limitHardAffinityState(&state, 1)
-	store := &AffinityStore{state: state, now: time.Now}
-	pool := &Pool{accounts: []*Account{testAccount("account-a", 10), testAccount("account-b", 20)}}
-	_, err := store.resolve(requestAffinity{
-		hard: []affinityRef{{kind: affinityResponse, value: "old"}},
-	}, pool)
-	if !errors.Is(err, errAffinityOwnerUnavailable) {
-		t.Fatalf("error = %v, want owner unavailable", err)
+	if count != len(refs) {
+		t.Fatalf("bindings = %d, want %d", count, len(refs))
 	}
 }
 
 func TestResolveAffinity(t *testing.T) {
-	store, err := newAffinityStore(filepath.Join(t.TempDir(), "affinity.json"))
+	store, err := newAffinityStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

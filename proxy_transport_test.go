@@ -205,7 +205,7 @@ func TestHTTPUpstreamCompressionStillRegistersResponseOwner(t *testing.T) {
 }
 
 func TestResponseOwnerInspectorBoundsMalformedEvents(t *testing.T) {
-	store, err := newAffinityStore(filepath.Join(t.TempDir(), "affinity.json"))
+	store, err := newAffinityStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestResponseOwnerInspectorBoundsMalformedEvents(t *testing.T) {
 }
 
 func TestHTTPDownstreamWriteFailureClosesUpstreamBody(t *testing.T) {
-	store, err := newAffinityStore(filepath.Join(t.TempDir(), "affinity.json"))
+	store, err := newAffinityStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

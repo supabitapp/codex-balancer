@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -865,10 +864,6 @@ func TestWebSocketHardOwnerUnauthorizedNeverFailsOver(t *testing.T) {
 	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
 	closeUnusedUpstream()
 	server.upstream = upstream.URL
-	server.pool.path = filepath.Join(t.TempDir(), "accounts.json")
-	if err := writeAccounts(server.pool.path, []*Account{a, b}); err != nil {
-		t.Fatal(err)
-	}
 	if err := store.bind(affinityRef{kind: affinityTurnState, value: "turn"}, "account-a"); err != nil {
 		t.Fatal(err)
 	}
@@ -1121,10 +1116,6 @@ func newRefreshableAffinityProxyWebSocketServer(
 	server, _, closeUnusedUpstream := newAffinityHTTPServer(t, accounts, func(http.ResponseWriter, *http.Request) {})
 	closeUnusedUpstream()
 	server.upstream = upstream
-	server.pool.path = filepath.Join(t.TempDir(), "accounts.json")
-	if err := writeAccounts(server.pool.path, accounts); err != nil {
-		t.Fatal(err)
-	}
 	return httptest.NewServer(server.routes())
 }
 

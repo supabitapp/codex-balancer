@@ -19,7 +19,7 @@ const (
 )
 
 type Pool struct {
-	path      string
+	store     *StateStore
 	storageMu sync.Mutex
 	mu        sync.RWMutex
 	accounts  []*Account
@@ -223,7 +223,7 @@ func (c routingCandidate) roomierThan(other routingCandidate) bool {
 	if math.Abs(c.pressure-other.pressure) > 1 {
 		return c.pressure < other.pressure
 	}
-	return c.lastUsed.Before(other.lastUsed)
+	return cmp.Or(c.lastUsed.Compare(other.lastUsed), cmp.Compare(c.id, other.id)) < 0
 }
 
 func (p *Pool) sorted() []*Account {

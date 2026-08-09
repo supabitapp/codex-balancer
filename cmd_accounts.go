@@ -24,13 +24,13 @@ Usage:
   codex-balancer accounts rm <email>          Drop an account
 
 Flags:
-  -accounts string   account pool file (default %s)
+  -state string      state database (default %s)
   -device-auth       sign in with a one-time code, add only
   -json              machine-readable output, list only
 `
 
 func printAccountsHelp(w io.Writer) {
-	fmt.Fprintf(w, accountsHelp, defaultAccountsPath())
+	fmt.Fprintf(w, accountsHelp, defaultStatePath())
 }
 
 func accountsCmd(args []string) error {
@@ -41,14 +41,19 @@ func accountsCmd(args []string) error {
 
 	fs := flag.NewFlagSet("accounts", flag.ContinueOnError)
 	fs.Usage = func() { printAccountsHelp(os.Stderr) }
-	path := fs.String("accounts", defaultAccountsPath(), "account pool file")
+	path := fs.String("state", defaultStatePath(), "state database")
 	deviceAuth := fs.Bool("device-auth", false, "sign in with a one-time code")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 
-	pool, err := loadPool(*path)
+	store, err := openConfiguredState(*path)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	pool, err := loadPool(store)
 	if err != nil {
 		return err
 	}
@@ -158,7 +163,7 @@ func tokenStatus(a *Account) string {
 	}
 }
 
-func defaultAccountsPath() string {
+func defaultLegacyAccountsPath() string {
 	return filepath.Join(homeDir(), ".codex-balancer", "accounts.json")
 }
 

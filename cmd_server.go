@@ -45,7 +45,7 @@ func serverCmd(args []string) error {
 		fs.PrintDefaults()
 	}
 	addr := fs.String("addr", "127.0.0.1:8317", "address to listen on")
-	path := fs.String("accounts", defaultAccountsPath(), "account pool file")
+	path := fs.String("state", defaultStatePath(), "state database")
 	upstream := fs.String("upstream", "https://chatgpt.com/backend-api/codex", "upstream Codex base URL")
 	key := fs.String("key", os.Getenv("CODEX_BALANCER_KEY"), "bearer key clients must present (env CODEX_BALANCER_KEY)")
 	insecure := fs.Bool("no-auth", false, "serve without a bearer key; any local process can spend your quota")
@@ -63,12 +63,16 @@ func serverCmd(args []string) error {
 		*key = ""
 	}
 
-	pool, err := loadPool(*path)
+	store, err := openConfiguredState(*path)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	pool, err := loadPool(store)
 	if err != nil {
 		return err
 	}
 
-	stats := newStats()
 	log, logFile, err := newLogger(*jsonLogs, *plain, *logPath)
 	if err != nil {
 		return err
@@ -76,10 +80,13 @@ func serverCmd(args []string) error {
 	if logFile != nil {
 		defer logFile.Close()
 	}
-	affinity, err := newAffinityStore(defaultAffinityPath())
+	stats, err := newPersistentStats(store, func(err error) {
+		log.Error("state write failed", "error", err)
+	})
 	if err != nil {
-		return fmt.Errorf("load affinity bindings: %w", err)
+		return fmt.Errorf("load dashboard state: %w", err)
 	}
+	affinity := &AffinityStore{store: store}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -96,7 +103,7 @@ func serverCmd(args []string) error {
 		log:       log,
 		admission: newAdmissionGate(maxActiveProxyRequests),
 	}
-	if err := pool.watch(ctx, func(change poolChange) {
+	pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)
 		stats.note("accounts updated", "", fmt.Sprintf("%d added, %d removed, %d updated", change.added, change.removed, change.updated))
 		srv.catalog.invalidate()
@@ -108,9 +115,7 @@ func serverCmd(args []string) error {
 	}, func(err error) {
 		log.Warn("account watch failed", "error", err)
 		stats.note("account watch failed", "", err.Error())
-	}); err != nil {
-		return fmt.Errorf("watch accounts: %w", err)
-	}
+	})
 
 	httpServer := &http.Server{
 		Addr:              *addr,
@@ -137,7 +142,6 @@ func serverCmd(args []string) error {
 		return nil
 	}
 
-	go sweepAffinity(ctx, affinity, log)
 	go srv.watchUsage(ctx, *poll)
 	go srv.watchModels(ctx)
 
@@ -182,21 +186,6 @@ func drainServer(httpServer *http.Server, admission *admissionGate, cancel conte
 	httpServer.Shutdown(shutdown)
 	admission.wait(shutdown)
 	cancel()
-}
-
-func sweepAffinity(ctx context.Context, s *AffinityStore, log *slog.Logger) {
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.sweep(); err != nil {
-				log.Warn("affinity binding sweep failed", "error", err)
-			}
-		}
-	}
 }
 
 func defaultLogPath() string {

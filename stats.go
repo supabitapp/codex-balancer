@@ -12,6 +12,11 @@ const (
 	threadLog    = 100
 	activityLen  = 24
 	activitySpan = 30 * time.Second
+
+	eventRateLimited      = "rate limited"
+	eventFailover         = "failover"
+	eventResponseAnswered = "response answered"
+	eventResponseUsage    = "response usage"
 )
 
 type transport string
@@ -24,6 +29,8 @@ const (
 
 type Stats struct {
 	mu                 sync.Mutex
+	store              *StateStore
+	persistFailed      func(error)
 	started            time.Time
 	turns              int64
 	failures           int64
@@ -71,6 +78,16 @@ func newStats() *Stats {
 	}
 }
 
+func newPersistentStats(store *StateStore, persistFailed func(error)) (*Stats, error) {
+	stats := newStats()
+	stats.store = store
+	stats.persistFailed = persistFailed
+	if err := store.restoreStats(stats); err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
 func (s *Stats) account(id string) *accountStats {
 	a := s.accounts[id]
 	if a == nil {
@@ -81,47 +98,48 @@ func (s *Stats) account(id string) *accountStats {
 }
 
 func (s *Stats) note(kind, account, detail string) {
+	now := time.Now()
+	s.persistEvent(storedEvent{At: now, Kind: kind, Account: account, Detail: detail})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.events = append(s.events, Event{At: time.Now(), Kind: kind, Account: account, Detail: detail})
-	if len(s.events) > eventLog {
-		s.events = s.events[len(s.events)-eventLog:]
-	}
+	s.appendEvent(Event{At: now, Kind: kind, Account: account, Detail: detail})
 }
 
 func (s *Stats) rateLimited(account string) {
+	now := time.Now()
+	s.persistEvent(storedEvent{At: now, Kind: eventRateLimited, Account: account})
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.limited++
 	s.account(account).limited++
-	s.mu.Unlock()
-	s.note("rate limited", account, "")
+	s.appendEvent(Event{At: now, Kind: eventRateLimited, Account: account})
 }
 
 func (s *Stats) failedOver(account, reason string) {
+	now := time.Now()
+	s.persistEvent(storedEvent{At: now, Kind: eventFailover, Account: account, Detail: reason})
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.failures++
-	s.mu.Unlock()
-	s.note("failover", account, reason)
+	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
 func (s *Stats) routed(thread, account, serviceTier string, via transport) {
 	now := time.Now()
+	s.persistAttempt(storedAttempt{At: now, Thread: thread, Account: account, ServiceTier: serviceTier, Transport: via})
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.applyRouted(now, thread, account, serviceTier, via)
+}
 
+func (s *Stats) applyRouted(now time.Time, thread, account, serviceTier string, via transport) {
 	s.turns++
 	if via == transportWebSocket {
 		s.wsTurns++
 	}
 	a := s.account(account)
 	a.turns++
-	slot := now.UnixNano() / int64(activitySpan)
-	if slot != a.bucket {
-		shift := min(slot-a.bucket, activityLen)
-		copy(a.activity[shift:], a.activity[:activityLen-shift])
-		clear(a.activity[:shift])
-		a.bucket = slot
-	}
+	advanceActivity(a, now)
 	a.activity[0]++
 
 	if thread == "" {
@@ -168,6 +186,7 @@ func (s *Stats) trimThreads() {
 }
 
 func (s *Stats) answered(ttfb time.Duration) {
+	s.persistEvent(storedEvent{At: time.Now(), Kind: eventResponseAnswered, Duration: ttfb})
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ttfbSum += ttfb
@@ -178,6 +197,11 @@ func (s *Stats) recordUsage(model, serviceTier string, usage responseUsage) {
 	if usage.empty() {
 		return
 	}
+	s.persistEvent(storedEvent{At: time.Now(), Kind: eventResponseUsage, Model: model, ServiceTier: serviceTier, Usage: usage})
+	s.applyUsage(model, serviceTier, usage)
+}
+
+func (s *Stats) applyUsage(model, serviceTier string, usage responseUsage) {
 	cost, known := estimateAPIPrice(model, serviceTier, usage)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -186,6 +210,31 @@ func (s *Stats) recordUsage(model, serviceTier string, usage responseUsage) {
 		return
 	}
 	s.apiCostNanoDollars += cost
+}
+
+func (s *Stats) appendEvent(event Event) {
+	s.events = append(s.events, event)
+	if len(s.events) > eventLog {
+		s.events = s.events[len(s.events)-eventLog:]
+	}
+}
+
+func (s *Stats) persistAttempt(attempt storedAttempt) {
+	if s.store == nil {
+		return
+	}
+	if err := s.store.recordAttempt(attempt); err != nil && s.persistFailed != nil {
+		s.persistFailed(err)
+	}
+}
+
+func (s *Stats) persistEvent(event storedEvent) {
+	if s.store == nil {
+		return
+	}
+	if err := s.store.recordEvent(event); err != nil && s.persistFailed != nil {
+		s.persistFailed(err)
+	}
 }
 
 type Snapshot struct {
@@ -222,6 +271,10 @@ type ThreadSnapshot struct {
 func (s *Stats) snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
+	for _, account := range s.accounts {
+		advanceActivity(account, now)
+	}
 
 	out := Snapshot{
 		Uptime:             time.Since(s.started),
@@ -258,6 +311,21 @@ func (s *Stats) snapshot() Snapshot {
 		})
 	}
 	return out
+}
+
+func advanceActivity(account *accountStats, now time.Time) {
+	slot := now.UnixNano() / int64(activitySpan)
+	if account.bucket == 0 {
+		account.bucket = slot
+		return
+	}
+	if slot <= account.bucket {
+		return
+	}
+	shift := min(slot-account.bucket, activityLen)
+	copy(account.activity[shift:], account.activity[:activityLen-shift])
+	clear(account.activity[:shift])
+	account.bucket = slot
 }
 
 type statsResponse struct {

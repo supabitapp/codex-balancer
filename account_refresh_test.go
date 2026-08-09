@@ -135,14 +135,22 @@ func TestAccountRefreshIgnoresFailureAfterCredentialsChange(t *testing.T) {
 func TestServerRefreshPersistsRotatedTokenForRestart(t *testing.T) {
 	useOAuthRefreshServer(t)
 	account := testAccount("account-a", 10)
-	path := filepath.Join(t.TempDir(), "accounts.json")
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := loadPool(store)
+	if err != nil {
+		t.Fatal(err)
+	}
 	stored := accountFromState(account.persisted())
 	stored.Paused = true
-	if err := writeAccounts(path, []*Account{stored}); err != nil {
+	if err := pool.add(stored); err != nil {
 		t.Fatal(err)
 	}
 	server := &server{
-		pool:   &Pool{path: path, accounts: []*Account{account}},
+		pool:   pool,
 		client: http.DefaultClient,
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -150,7 +158,15 @@ func TestServerRefreshPersistsRotatedTokenForRestart(t *testing.T) {
 		t.Fatal("refresh failed")
 	}
 
-	reloaded, err := readAccounts(path)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := openStateStore(path, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reloaded, err := reopened.readAccounts()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,8 +186,22 @@ func TestServerRefreshFailsWhenRotatedTokenCannotPersist(t *testing.T) {
 	useOAuthRefreshServer(t)
 	account := testAccount("account-a", 10)
 	original := account.persisted()
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := loadPool(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.add(account); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
 	server := &server{
-		pool:   &Pool{path: t.TempDir(), accounts: []*Account{account}},
+		pool:   pool,
 		client: http.DefaultClient,
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}

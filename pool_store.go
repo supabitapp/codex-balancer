@@ -2,13 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-
-	"github.com/fsnotify/fsnotify"
-	"github.com/gofrs/flock"
+	"time"
 )
 
 type poolChange struct {
@@ -21,92 +15,22 @@ func (c poolChange) changed() bool {
 	return c.added+c.removed+c.updated > 0
 }
 
-func loadPool(path string) (*Pool, error) {
-	accounts, err := readAccounts(path)
+func loadPool(store *StateStore) (*Pool, error) {
+	accounts, err := store.readAccounts()
 	if err != nil {
 		return nil, err
 	}
-	return &Pool{path: path, accounts: accounts}, nil
-}
-
-func readAccounts(path string) ([]*Account, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
+	if err := store.restoreLastUsed(accounts); err != nil {
 		return nil, err
 	}
-	var accounts []*Account
-	if err := json.Unmarshal(data, &accounts); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	seen := make(map[string]bool, len(accounts))
-	for _, account := range accounts {
-		id := account.id()
-		if id == "" {
-			return nil, fmt.Errorf("parse %s: credentials carry no chatgpt_account_id", path)
-		}
-		if seen[id] {
-			return nil, fmt.Errorf("parse %s: duplicate account %q", path, id)
-		}
-		seen[id] = true
-	}
-	return accounts, nil
-}
-
-func writeAccounts(path string, accounts []*Account) error {
-	return writeJSONFile(path, accounts)
-}
-
-func writeJSONFile(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".codex-balancer-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return &Pool{store: store, accounts: accounts}, nil
 }
 
 func (p *Pool) mutate(change func([]*Account) ([]*Account, error)) error {
 	p.storageMu.Lock()
 	defer p.storageMu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
-		return err
-	}
-	lock := flock.New(p.path + ".lock")
-	if err := lock.Lock(); err != nil {
-		return err
-	}
-	defer lock.Unlock()
-	accounts, err := readAccounts(p.path)
+	accounts, err := p.store.mutateAccounts(change)
 	if err != nil {
-		return err
-	}
-	accounts, err = change(accounts)
-	if err != nil {
-		return err
-	}
-	if err := writeAccounts(p.path, accounts); err != nil {
 		return err
 	}
 	p.reconcile(accounts)
@@ -116,8 +40,11 @@ func (p *Pool) mutate(change func([]*Account) ([]*Account, error)) error {
 func (p *Pool) reload() (poolChange, error) {
 	p.storageMu.Lock()
 	defer p.storageMu.Unlock()
-	accounts, err := readAccounts(p.path)
+	accounts, err := p.store.readAccounts()
 	if err != nil {
+		return poolChange{}, err
+	}
+	if err := p.store.restoreLastUsed(accounts); err != nil {
 		return poolChange{}, err
 	}
 	return p.reconcile(accounts), nil
@@ -151,33 +78,15 @@ func (p *Pool) reconcile(accounts []*Account) poolChange {
 	return change
 }
 
-func (p *Pool) watch(ctx context.Context, changed func(poolChange), failed func(error)) error {
-	if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
-		return err
-	}
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return err
-	}
-	if err := watcher.Add(filepath.Dir(p.path)); err != nil {
-		watcher.Close()
-		return err
-	}
-	path := filepath.Clean(p.path)
+func (p *Pool) watch(ctx context.Context, changed func(poolChange), failed func(error)) {
 	go func() {
-		defer watcher.Close()
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-				if filepath.Clean(event.Name) != path ||
-					event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) == 0 {
-					continue
-				}
+			case <-ticker.C:
 				change, err := p.reload()
 				if err != nil {
 					failed(err)
@@ -186,13 +95,7 @@ func (p *Pool) watch(ctx context.Context, changed func(poolChange), failed func(
 				if change.changed() {
 					changed(change)
 				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-				failed(err)
 			}
 		}
 	}()
-	return nil
 }

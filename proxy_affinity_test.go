@@ -760,15 +760,30 @@ func newAffinityHTTPServer(
 ) (*server, *AffinityStore, func()) {
 	t.Helper()
 	upstream := httptest.NewServer(handler)
-	store, err := newAffinityStore(filepath.Join(t.TempDir(), "affinity.json"))
+	state, err := openStateStore(filepath.Join(t.TempDir(), "state.db"), "", "")
 	if err != nil {
 		upstream.Close()
 		t.Fatal(err)
 	}
+	pool, err := loadPool(state)
+	if err != nil {
+		state.Close()
+		upstream.Close()
+		t.Fatal(err)
+	}
+	for _, account := range accounts {
+		if err := pool.add(account); err != nil {
+			state.Close()
+			upstream.Close()
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { state.Close() })
+	store := &AffinityStore{store: state}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	server := &server{
 		ctx:      context.Background(),
-		pool:     &Pool{accounts: accounts},
+		pool:     pool,
 		catalog:  newModelCatalog(),
 		affinity: store,
 		stats:    newStats(),
