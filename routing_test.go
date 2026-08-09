@@ -131,3 +131,10 @@ func testAccount(id string, used float64) *Account {
 	account.secondary = window{usedPercent: used, seenAt: time.Now()}
 	return account
 }
+
+func setTestAccountUsage(account *Account, used float64) {
+	account.mu.Lock()
+	defer account.mu.Unlock()
+	account.primary.usedPercent = used
+	account.secondary.usedPercent = used
+}

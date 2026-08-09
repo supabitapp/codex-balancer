@@ -262,6 +262,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	})
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
+	setTestAccountUsage(a, 80)
 
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
@@ -343,6 +344,75 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	}
 }
 
+func TestWebSocketCompactionRotationKeepsFreshRouteSource(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_" + account},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.completed",
+			"response": map[string]any{"id": "resp_" + account},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 60)
+	b := testAccount("account-b", 80)
+	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	logs := &testLogBuffer{}
+	server.log = slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	rotation, err := newCompactionRotation(store.store, server.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rotation.toggle(); err != nil {
+		t.Fatal(err)
+	}
+	server.compactionRotation = rotation
+	server.upstream = upstream.URL
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+
+	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(compaction)},
+		"input":           []any{map[string]any{"type": "compaction_trigger"}},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+
+	next := turnMetadata{RequestKind: "normal", ThreadID: "logical-thread", TurnID: "turn-b"}
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
+		"input":           []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+	if owner := store.lookup(affinityRef{kind: affinitySession, value: "session"}); owner != "account-a" {
+		t.Fatalf("session owner = %q, want account-a", owner)
+	}
+	requireLogRecord(t, logs.records(t), "compaction rotation decision", map[string]any{
+		"decision":       "cancel_source_selected",
+		"session":        "session",
+		"thread":         "logical-thread",
+		"source_account": "account-a",
+		"fresh_account":  "account-a",
+	})
+	for _, event := range server.stats.snapshot().Events {
+		if event.Kind == eventCompactionSwitch {
+			t.Fatalf("unexpected switch event = %+v", event)
+		}
+	}
+}
+
 func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		metadata := requestTurnMetadata("", request.ClientMetadata)
@@ -391,6 +461,7 @@ func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testin
 	})
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
+	setTestAccountUsage(a, 80)
 
 	next := turnMetadata{RequestKind: "normal", ThreadID: "logical-thread", TurnID: "turn-b"}
 	writeWebSocketEvent(t, conn, map[string]any{

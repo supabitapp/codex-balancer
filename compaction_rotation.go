@@ -106,7 +106,7 @@ func (r *compactionRotation) arm(session, account string, metadata turnMetadata)
 	)
 }
 
-func (r *compactionRotation) shouldReconnect(session, account string, metadata turnMetadata, hard bool, activeTurns int, alternate bool) bool {
+func (r *compactionRotation) shouldReconnect(session, account string, metadata turnMetadata, hard bool, activeTurns int, freshAccount string) bool {
 	if r == nil || metadata.ThreadID == "" {
 		return false
 	}
@@ -140,9 +140,14 @@ func (r *compactionRotation) shouldReconnect(session, account string, metadata t
 	case sameCompactionTurn(pending, metadata):
 		decision = "wait_same_turn"
 		level = slog.LevelDebug
-	case !alternate:
-		decision = "cancel_no_alternate"
+	case freshAccount == "":
+		decision = "cancel_no_account"
 		level = slog.LevelWarn
+		delete(r.pending, metadata.ThreadID)
+	case freshAccount == account:
+		decision = "cancel_source_selected"
+		level = slog.LevelInfo
+		delete(r.pending, metadata.ThreadID)
 	}
 	r.log.Log(context.Background(), level, "compaction rotation decision",
 		"decision", decision,
@@ -155,12 +160,9 @@ func (r *compactionRotation) shouldReconnect(session, account string, metadata t
 		"request_kind", metadata.RequestKind,
 		"hard_affinity", hard,
 		"active_turns", activeTurns,
-		"alternate_available", alternate,
+		"fresh_account", freshAccount,
 	)
 	if decision != "restart" {
-		if decision == "cancel_no_alternate" {
-			delete(r.pending, metadata.ThreadID)
-		}
 		return false
 	}
 	pending.reconnecting = true

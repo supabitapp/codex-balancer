@@ -113,20 +113,20 @@ func TestCompactionRotationWaitsForNewUnanchoredTurn(t *testing.T) {
 	}
 	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
 	rotation.arm("session", "account-a", compaction)
-	if rotation.shouldReconnect("session", "account-a", turnMetadata{RequestKind: "memory"}, false, 0, true) {
+	if rotation.shouldReconnect("session", "account-a", turnMetadata{RequestKind: "memory"}, false, 0, "account-b") {
 		t.Fatal("memory request triggered reconnect")
 	}
-	if rotation.shouldReconnect("session", "account-a", turnMetadata{RequestKind: "turn", ThreadID: "other-thread", TurnID: "turn-b", SubagentKind: "thread_spawn"}, false, 0, true) {
+	if rotation.shouldReconnect("session", "account-a", turnMetadata{RequestKind: "turn", ThreadID: "other-thread", TurnID: "turn-b", SubagentKind: "thread_spawn"}, false, 0, "account-b") {
 		t.Fatal("other logical thread triggered reconnect")
 	}
-	if rotation.shouldReconnect("session", "account-a", compaction, false, 0, true) {
+	if rotation.shouldReconnect("session", "account-a", compaction, false, 0, "account-b") {
 		t.Fatal("same turn triggered reconnect")
 	}
 	next := turnMetadata{RequestKind: "turn", ThreadID: "logical-thread", TurnID: "turn-b"}
-	if rotation.shouldReconnect("session", "account-a", next, true, 0, true) {
+	if rotation.shouldReconnect("session", "account-a", next, true, 0, "account-b") {
 		t.Fatal("hard affinity triggered reconnect")
 	}
-	if !rotation.shouldReconnect("session", "account-a", next, false, 0, true) {
+	if !rotation.shouldReconnect("session", "account-a", next, false, 0, "account-b") {
 		t.Fatal("new unanchored turn did not trigger reconnect")
 	}
 	if skip, _, ok := rotation.handshakeSkip("session", false); !ok || !skip["account-a"] {
@@ -170,5 +170,38 @@ func TestCompactionRotationWaitsForNewUnanchoredTurn(t *testing.T) {
 		"thread":         "logical-thread",
 		"source_account": "account-a",
 		"account":        "account-b",
+	})
+}
+
+func TestCompactionRotationKeepsFreshRouteSource(t *testing.T) {
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	logs := &testLogBuffer{}
+	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	rotation, err := newCompactionRotation(store, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rotation.toggle(); err != nil {
+		t.Fatal(err)
+	}
+	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
+	rotation.arm("session", "account-a", compaction)
+	next := turnMetadata{RequestKind: "turn", ThreadID: "logical-thread", TurnID: "turn-b"}
+	if rotation.shouldReconnect("session", "account-a", next, false, 0, "account-a") {
+		t.Fatal("fresh route source triggered reconnect")
+	}
+	if _, _, ok := rotation.handshakeSkip("session", false); ok {
+		t.Fatal("source decision left a pending reconnect")
+	}
+	requireLogRecord(t, logs.records(t), "compaction rotation decision", map[string]any{
+		"decision":       "cancel_source_selected",
+		"session":        "session",
+		"thread":         "logical-thread",
+		"source_account": "account-a",
+		"fresh_account":  "account-a",
 	})
 }

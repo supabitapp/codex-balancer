@@ -528,8 +528,11 @@ func (s *server) relayResponsesWebSocket(
 			}
 			metadata := requestTurnMetadata("", event.ClientMetadata)
 			allowed := s.allowedAccounts(event.Model, event.ServiceTier)
-			alternate := s.pool.pick("", "", map[string]bool{current.account.id(): true}, allowed) != nil
-			if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, resolution.hard, len(turns), alternate) {
+			freshAccount := ""
+			if fresh := s.pool.route("", "", nil, allowed).account; fresh != nil {
+				freshAccount = fresh.id()
+			}
+			if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, resolution.hard, len(turns), freshAccount) {
 				if err := downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction"); err != nil {
 					s.log.Warn("compaction rotation downstream restart failed",
 						"thread", turnThread,
