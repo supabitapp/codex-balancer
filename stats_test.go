@@ -1,10 +1,30 @@
 package main
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
+	stats := newStats()
+	now := time.Now()
+	stats.applyRouted(now.Add(-threadActiveWindow-time.Second), "inactive", "", "account", "", transportHTTP)
+	for i := range 150 {
+		stats.applyRouted(now, fmt.Sprintf("active-%d", i), "", "account", "", transportHTTP)
+	}
+
+	snapshot := stats.snapshot()
+	if len(snapshot.Threads) != 150 {
+		t.Fatalf("threads = %d, want 150", len(snapshot.Threads))
+	}
+	for _, thread := range snapshot.Threads {
+		if thread.Key == "inactive" {
+			t.Fatal("inactive thread included")
+		}
+	}
+}
 
 func TestMaskEmailHidesLocalPartAndDomain(t *testing.T) {
 	for email, want := range map[string]string{

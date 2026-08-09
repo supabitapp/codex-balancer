@@ -438,7 +438,7 @@ func (d dashboard) threads(width, height int) string {
 	if len(rows) == 0 {
 		rows = []string{sDim.Render("nothing routed yet")}
 	}
-	return column(fmt.Sprintf("THREADS  %d", len(threads)), rows, width, height)
+	return column(fmt.Sprintf("ROUTING  %d", len(threads)), rows, width, height)
 }
 
 func (d dashboard) events(width, height int) string {

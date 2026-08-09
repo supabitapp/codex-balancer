@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	eventLog     = 200
-	threadLog    = 100
-	activityLen  = 24
-	activitySpan = 30 * time.Second
+	eventLog           = 200
+	threadActiveWindow = 10 * time.Minute
+	activityLen        = 24
+	activitySpan       = 30 * time.Second
 
 	eventRateLimited      = "rate limited"
 	eventFailover         = "failover"
@@ -163,7 +163,7 @@ func (s *Stats) applyRouted(now time.Time, thread, ip, account, serviceTier stri
 	t.turns++
 	t.last = now
 	t.via = via
-	s.trimThreads()
+	s.pruneInactiveThreads(now)
 }
 
 func (s *Stats) websocketOpened(account string) {
@@ -180,17 +180,13 @@ func (s *Stats) websocketClosed(account string) {
 	s.account(account).wsOpen--
 }
 
-func (s *Stats) trimThreads() {
-	if len(s.threads) <= threadLog {
-		return
-	}
-	oldest, at := "", time.Now()
+func (s *Stats) pruneInactiveThreads(now time.Time) {
+	cutoff := now.Add(-threadActiveWindow)
 	for key, t := range s.threads {
-		if t.last.Before(at) {
-			oldest, at = key, t.last
+		if t.last.Before(cutoff) {
+			delete(s.threads, key)
 		}
 	}
-	delete(s.threads, oldest)
 }
 
 func (s *Stats) answered(ttfb time.Duration) {
@@ -288,6 +284,7 @@ func (s *Stats) snapshot() Snapshot {
 	defer s.mu.Unlock()
 	now := time.Now()
 	s.syncAPIMonth(calendarMonth(now))
+	s.pruneInactiveThreads(now)
 	for _, account := range s.accounts {
 		advanceActivity(account, now)
 	}
