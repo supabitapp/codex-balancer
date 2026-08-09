@@ -314,7 +314,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			Turns:                  traffic.Turns,
 			OpenWebSockets:         traffic.WSOpen,
 			RateLimits:             traffic.Limited,
-			Activity:               traffic.Activity,
+			Activity:               append([]int64{}, traffic.Activity...),
 		})
 	}
 	return out

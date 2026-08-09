@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -14,7 +15,9 @@ import (
 func TestDashboardWebSocketAuthenticatesAndStreams(t *testing.T) {
 	stats := newStats()
 	stats.routed("019fe5c2", "account", serviceTierFast, transportWebSocket)
-	server := &server{pool: &Pool{}, stats: stats, key: "secret"}
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"a@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
+	account := accountFromState(accountState{IDToken: "x." + payload + ".x"})
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: stats, key: "secret"}
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
 
@@ -32,7 +35,7 @@ func TestDashboardWebSocketAuthenticatesAndStreams(t *testing.T) {
 	if err := wsjson.Read(ctx, conn, &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Stats.Turns != 1 || len(response.Threads) != 1 || response.Threads[0].Key != "019fe5c2" || response.Events == nil {
+	if response.Stats.Turns != 1 || len(response.Stats.Accounts) != 1 || response.Stats.Accounts[0].Activity == nil || len(response.Threads) != 1 || response.Threads[0].Key != "019fe5c2" || response.Events == nil {
 		t.Fatalf("unexpected dashboard response: %+v", response)
 	}
 }
