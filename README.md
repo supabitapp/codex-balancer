@@ -31,6 +31,9 @@ export CODEX_BALANCER_KEY=$(openssl rand -hex 16)
 codex-balancer server           # serve the proxy
 ```
 
+The usage poll redeems the earliest available rate-limit reset credit once it
+is within five minutes of expiry.
+
 `GET /stats` returns the same live account status as public JSON. Account emails
 hide their domain and all but the first and last local-part characters, such as
 `k***i@***.com`.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"time"
 )
 
-var usageEndpoint = "https://chatgpt.com/backend-api/wham/usage"
+const resetCreditLead = 5 * time.Minute
+
+var accountAPIBaseURL = "https://chatgpt.com/backend-api/wham"
 
 type usagePayload struct {
 	RateLimit struct {
@@ -42,6 +45,27 @@ type usageWindow struct {
 	LimitWindowSeconds int      `json:"limit_window_seconds"`
 }
 
+type resetCreditsPayload struct {
+	Credits []resetCredit `json:"credits"`
+}
+
+type resetCredit struct {
+	ID        string     `json:"id"`
+	ResetType string     `json:"reset_type"`
+	Status    string     `json:"status"`
+	ExpiresAt *time.Time `json:"expires_at"`
+}
+
+type consumeResetCreditRequest struct {
+	RedeemRequestID string `json:"redeem_request_id"`
+	CreditID        string `json:"credit_id"`
+}
+
+type consumeResetCreditResponse struct {
+	Code         string `json:"code"`
+	WindowsReset int64  `json:"windows_reset"`
+}
+
 func (u usageWindow) window() window {
 	if u.UsedPercent == nil {
 		return window{}
@@ -58,32 +82,12 @@ func (u usageWindow) window() window {
 }
 
 func (s *server) pollUsage(ctx context.Context, account *Account) error {
-	return s.pollUsageWithReauth(ctx, account, true)
-}
-
-func (s *server) pollUsageWithReauth(ctx context.Context, account *Account, canReauth bool) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, usageEndpoint, nil)
-	if err != nil {
-		return err
-	}
-	account.mu.Lock()
-	token := account.AccessToken
-	account.mu.Unlock()
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("chatgpt-account-id", account.id())
-
-	resp, err := s.client.Do(req)
+	resp, err := s.doAccountRequest(ctx, account, http.MethodGet, accountAPIBaseURL+"/usage", nil)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized && canReauth {
-		if err := s.reauthorize(account); err != nil {
-			return err
-		}
-		return s.pollUsageWithReauth(ctx, account, false)
-	}
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("usage returned %s", resp.Status)
 	}
@@ -106,6 +110,105 @@ func (s *server) pollUsageWithReauth(ctx context.Context, account *Account, canR
 	attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 	s.log.Debug("usage polled", attrs...)
 	return nil
+}
+
+func (s *server) doAccountRequest(ctx context.Context, account *Account, method, endpoint string, body []byte) (*http.Response, error) {
+	for canReauth := true; ; canReauth = false {
+		req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		account.mu.Lock()
+		token := account.AccessToken
+		account.mu.Unlock()
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("chatgpt-account-id", account.id())
+		if len(body) > 0 {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusUnauthorized || !canReauth {
+			return resp, nil
+		}
+		resp.Body.Close()
+		if err := s.reauthorize(account); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func expiringResetCredit(credits []resetCredit, now time.Time) (resetCredit, bool) {
+	deadline := now.Add(resetCreditLead)
+	var next resetCredit
+	found := false
+	for _, credit := range credits {
+		if credit.ResetType != "codex_rate_limits" || credit.Status != "available" || credit.ExpiresAt == nil {
+			continue
+		}
+		if !credit.ExpiresAt.After(now) || credit.ExpiresAt.After(deadline) {
+			continue
+		}
+		if !found || credit.ExpiresAt.Before(*next.ExpiresAt) {
+			next = credit
+			found = true
+		}
+	}
+	return next, found
+}
+
+func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Account, now time.Time) (consumeResetCreditResponse, string, error) {
+	if count, known := account.bankedResets(); !known || count <= 0 {
+		return consumeResetCreditResponse{}, "", nil
+	}
+
+	resp, err := s.doAccountRequest(ctx, account, http.MethodGet, accountAPIBaseURL+"/rate-limit-reset-credits", nil)
+	if err != nil {
+		return consumeResetCreditResponse{}, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return consumeResetCreditResponse{}, "", fmt.Errorf("reset credits returned %s", resp.Status)
+	}
+
+	var payload resetCreditsPayload
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return consumeResetCreditResponse{}, "", err
+	}
+	credit, ok := expiringResetCredit(payload.Credits, now)
+	if !ok {
+		return consumeResetCreditResponse{}, "", nil
+	}
+
+	body, err := json.Marshal(consumeResetCreditRequest{
+		RedeemRequestID: credit.ID,
+		CreditID:        credit.ID,
+	})
+	if err != nil {
+		return consumeResetCreditResponse{}, credit.ID, err
+	}
+	resp, err = s.doAccountRequest(ctx, account, http.MethodPost, accountAPIBaseURL+"/rate-limit-reset-credits/consume", body)
+	if err != nil {
+		return consumeResetCreditResponse{}, credit.ID, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return consumeResetCreditResponse{}, credit.ID, fmt.Errorf("reset credit consume returned %s", resp.Status)
+	}
+
+	var result consumeResetCreditResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return consumeResetCreditResponse{}, credit.ID, err
+	}
+	switch result.Code {
+	case "reset", "nothing_to_reset", "no_credit", "already_redeemed":
+		return result, credit.ID, nil
+	default:
+		return consumeResetCreditResponse{}, credit.ID, fmt.Errorf("reset credit consume returned code %q", result.Code)
+	}
 }
 
 func (s *server) reauthorize(account *Account) error {
@@ -133,9 +236,40 @@ func (a *Account) adopt(primary, secondary window, banked *int64, spent bool) {
 
 func (s *server) pollAllUsage(ctx context.Context) {
 	for _, account := range s.pool.all() {
-		if err := s.pollUsage(ctx, account); err != nil && ctx.Err() == nil {
+		if err := s.pollUsage(ctx, account); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			s.log.Warn("usage poll failed", "account", account.id(), "error", err)
 			s.stats.note("usage poll failed", account.id(), err.Error())
+			continue
+		}
+
+		result, creditID, err := s.consumeExpiringResetCredit(ctx, account, time.Now())
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.log.Warn("automatic reset failed", "account", account.id(), "credit", creditID, "error", err)
+			s.stats.note("automatic reset failed", account.id(), err.Error())
+			continue
+		}
+		if creditID == "" {
+			continue
+		}
+
+		attrs := []any{"account", account.id(), "credit", creditID, "outcome", result.Code, "windows_reset", result.WindowsReset}
+		if result.Code == "reset" || result.Code == "already_redeemed" {
+			s.log.Info("expiring reset credit redeemed", attrs...)
+			s.stats.note("account reset", account.id(), result.Code)
+		} else {
+			s.log.Debug("expiring reset credit kept", attrs...)
+		}
+		if result.Code != "nothing_to_reset" {
+			if err := s.pollUsage(ctx, account); err != nil && ctx.Err() == nil {
+				s.log.Warn("usage refresh after reset failed", "account", account.id(), "error", err)
+				s.stats.note("usage refresh after reset failed", account.id(), err.Error())
+			}
 		}
 	}
 }
