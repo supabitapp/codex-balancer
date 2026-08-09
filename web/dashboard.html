@@ -31,7 +31,7 @@ h1 { margin: 0; font-size: 1.125rem; font-weight: 600 }
 h2 { margin: 0 0 .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase }
 section { margin-top: 1.5rem }
 p { margin: 0 }
-#summary, #meta, .dim, .empty, th, dt { color: var(--gray-11) }
+#summary, #meta, .dim, .empty, th, td, dt { color: var(--gray-11) }
 #summary { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }
 #summary, #meta, td, dd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace }
 .dot { margin: 0 .35rem; color: var(--gray-7) }
@@ -46,7 +46,7 @@ p { margin: 0 }
 #threads tr { height: var(--row-height) }
 #threads thead { position: sticky; top: 0; z-index: 1; background: var(--gray-1) }
 table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums }
-tbody tr { background: var(--gray-3) }
+tbody tr:nth-child(even) { background: var(--gray-3) }
 tbody tr:hover { background: var(--gray-4) }
 th, td { padding: .5rem .75rem .5rem 0; text-align: left }
 th:last-child, td:last-child { padding-right: 0 }
