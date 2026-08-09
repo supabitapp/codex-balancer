@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -17,10 +18,11 @@ import (
 )
 
 const (
-	maxRequestBody = 64 << 20
-	maxAttempts    = 3
-	refreshTimeout = 30 * time.Second
-	upstreamWait   = 90 * time.Second
+	maxRequestBody       = 64 << 20
+	maxUpstreamErrorBody = 64 << 10
+	maxAttempts          = 3
+	refreshTimeout       = 30 * time.Second
+	upstreamWait         = 90 * time.Second
 )
 
 var requestBodyDecoder = newRequestBodyDecoder()
@@ -186,8 +188,9 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		unsupportedModel := resp.StatusCode == http.StatusBadRequest && responseAccountModelUnsupported(resp, request.Model)
 		if status := resp.StatusCode; status == http.StatusTooManyRequests ||
-			status == http.StatusUnauthorized || status >= 500 {
+			status == http.StatusUnauthorized || status >= 500 || unsupportedModel {
 			if status == http.StatusTooManyRequests {
 				account.observe(resp.Header)
 				account.rateLimited(resp.Header, attempt)
@@ -195,12 +198,20 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 				attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1}
 				attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 				s.log.Info("account rate limited", attrs...)
-			} else {
+			} else if !unsupportedModel {
 				s.log.Warn("upstream refused the turn", "transport", transportHTTP, "thread", key, "account", id, "attempt", attempt+1, "status", status)
 				account.failed(attempt)
 			}
-			if resolution.hard {
-				s.log.Info("hard affinity stays on its account", "transport", transportHTTP, "thread", key, "account", id, "status", status)
+			noReplacement := false
+			if unsupportedModel && !resolution.hard {
+				replacementSkip := maps.Clone(skip)
+				replacementSkip[id] = true
+				noReplacement = s.pool.pick("", "", replacementSkip) == nil
+			}
+			if resolution.hard || noReplacement {
+				if resolution.hard {
+					s.log.Info("hard affinity stays on its account", "transport", transportHTTP, "thread", key, "account", id, "status", status)
+				}
 				copyHeaders(w.Header(), resp.Header)
 				w.WriteHeader(status)
 				io.Copy(w, resp.Body)
@@ -252,6 +263,35 @@ func responseRequest(body []byte) responseRequestData {
 	var request responseRequestData
 	json.Unmarshal(body, &request)
 	return request
+}
+
+func responseAccountModelUnsupported(resp *http.Response, model string) bool {
+	original := resp.Body
+	prefix, _ := io.ReadAll(io.LimitReader(original, maxUpstreamErrorBody))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.MultiReader(bytes.NewReader(prefix), original),
+		Closer: original,
+	}
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(prefix, &envelope) != nil {
+		return false
+	}
+	return accountModelUnsupported(envelope.Error.Message, model)
+}
+
+func accountModelUnsupported(message, model string) bool {
+	if model == "" {
+		return false
+	}
+	want := fmt.Sprintf("The '%s' model is not supported when using Codex with a ChatGPT account.", model)
+	return strings.TrimSpace(message) == want
 }
 
 func (s *server) refreshed(account *Account, id string) bool {
@@ -353,30 +393,75 @@ type responseOwnerInspector struct {
 	model         string
 	serviceTier   string
 	buffer        []byte
+	event         []byte
+	afterCR       bool
 	usageRecorded bool
 	log           *slog.Logger
 }
 
 func (i *responseOwnerInspector) write(data []byte) {
+	if i.afterCR {
+		if len(data) > 0 && data[0] == '\n' {
+			data = data[1:]
+		}
+		i.afterCR = false
+	}
 	i.buffer = append(i.buffer, data...)
 	for {
-		index := bytes.IndexByte(i.buffer, '\n')
+		index := bytes.IndexAny(i.buffer, "\r\n")
 		if index < 0 {
 			return
 		}
-		i.inspect(i.buffer[:index])
-		i.buffer = i.buffer[index+1:]
+		line := i.buffer[:index]
+		ending := i.buffer[index]
+		advance := index + 1
+		if ending == '\r' {
+			if advance < len(i.buffer) && i.buffer[advance] == '\n' {
+				advance++
+			} else if advance == len(i.buffer) {
+				i.afterCR = true
+			}
+		}
+		i.buffer = i.buffer[advance:]
+		i.line(line)
 	}
 }
 
 func (i *responseOwnerInspector) finish() {
-	i.inspect(i.buffer)
+	if len(i.buffer) > 0 {
+		i.line(i.buffer)
+	}
+	i.dispatch()
 	i.buffer = nil
+}
+
+func (i *responseOwnerInspector) line(line []byte) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		i.dispatch()
+		return
+	}
+	if bytes.HasPrefix(line, []byte("data:")) {
+		data := bytes.TrimPrefix(line, []byte("data:"))
+		if len(data) > 0 && data[0] == ' ' {
+			data = data[1:]
+		}
+		if len(i.event) > 0 {
+			i.event = append(i.event, '\n')
+		}
+		i.event = append(i.event, data...)
+		return
+	}
+	i.inspect(line)
+}
+
+func (i *responseOwnerInspector) dispatch() {
+	i.inspect(i.event)
+	i.event = nil
 }
 
 func (i *responseOwnerInspector) inspect(line []byte) {
 	line = bytes.TrimSpace(line)
-	line = bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
 	if len(line) == 0 || bytes.Equal(line, []byte("[DONE]")) {
 		return
 	}

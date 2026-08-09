@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -57,6 +58,44 @@ func TestWebSocketSoftRateLimitReplaysOnAnotherAccount(t *testing.T) {
 	}
 }
 
+func TestWebSocketPrecreatedUsageLimitReplaysOnAnotherAccount(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		if account == "account-a" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type": "response.failed",
+				"response": map[string]any{
+					"id":    "resp_limited",
+					"error": map[string]any{"code": "usage_limit_reached"},
+				},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_b"},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_b" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-b]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+}
+
 func TestWebSocketPreviousResponseSwitchesBeforeSend(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{
@@ -89,6 +128,9 @@ func TestWebSocketPreviousResponseSwitchesBeforeSend(t *testing.T) {
 	}
 	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a]" {
 		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	if got := store.lookup(affinityRef{kind: affinitySession, value: "session"}); got != "account-b" {
+		t.Fatalf("session owner = %q, want account-b", got)
 	}
 }
 
@@ -238,6 +280,45 @@ func TestWebSocketSoftServerFailureReplaysOnAnotherAccount(t *testing.T) {
 	}
 }
 
+func TestWebSocketUnsupportedModelReplaysOnAnotherAccount(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		if account == "account-a" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":   "error",
+				"status": http.StatusBadRequest,
+				"error": map[string]any{
+					"code":    "invalid_request_error",
+					"message": "The 'gpt-route' model is not supported when using Codex with a ChatGPT account.",
+				},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_b"},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-route", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_b" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-b]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+}
+
 func TestWebSocketSoftDisconnectReplaysOnAnotherAccount(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		if account == "account-a" {
@@ -330,6 +411,406 @@ func TestWebSocketFailureAfterCreatedDoesNotReplay(t *testing.T) {
 	}
 	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a]" {
 		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+}
+
+func TestWebSocketFailureAfterResponseEventDoesNotReplay(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		if account == "account-b" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":     "response.created",
+				"response": map[string]any{"id": "resp_b"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":  "response.output_text.delta",
+			"delta": "visible",
+		})
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":   "error",
+			"status": http.StatusBadGateway,
+			"error":  map[string]any{"code": "upstream_error"},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	visible := readWebSocketEvent(t, conn)
+	failed := readWebSocketEvent(t, conn)
+	if visible.Type != "response.output_text.delta" || failed.Type != "error" {
+		t.Fatalf("events = %+v, %+v", visible, failed)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+}
+
+func TestWebSocketIDBearingAuthFailureDoesNotReplay(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		if account == "account-b" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":     "response.created",
+				"response": map[string]any{"id": "resp_b"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":   "response.failed",
+			"status": http.StatusUnauthorized,
+			"response": map[string]any{
+				"id":    "resp_a",
+				"error": map[string]any{"code": "invalid_api_key"},
+			},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.failed" || event.Response.ID != "resp_a" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	recovered := readWebSocketEvent(t, conn)
+	if recovered.Type != "response.created" || recovered.Response.ID != "resp_b" {
+		t.Fatalf("recovered event = %+v", recovered)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-b]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+}
+
+func TestWebSocketReplaySafetyRequiresNoResponseIdentity(t *testing.T) {
+	nested := websocketEnvelope{}
+	nested.Response.ID = "nested"
+	tests := []struct {
+		name  string
+		event websocketEnvelope
+		want  bool
+	}{
+		{name: "anonymous", want: true},
+		{name: "event id", event: websocketEnvelope{ID: "event"}},
+		{name: "response id", event: websocketEnvelope{ResponseID: "response"}},
+		{name: "nested response id", event: nested},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := websocketReplaySafe(test.event); got != test.want {
+				t.Fatalf("replay safe = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestWebSocketRateLimitClassification(t *testing.T) {
+	topLevel := websocketEnvelope{}
+	topLevel.Error.Code = "usage_limit_reached"
+	nested := websocketEnvelope{}
+	nested.Response.Error.Code = "rate_limit_exceeded"
+	tests := []struct {
+		name  string
+		event websocketEnvelope
+		want  bool
+	}{
+		{name: "status", event: websocketEnvelope{Status: http.StatusTooManyRequests}, want: true},
+		{name: "status code", event: websocketEnvelope{StatusCode: http.StatusTooManyRequests}, want: true},
+		{name: "top-level usage code", event: topLevel, want: true},
+		{name: "nested rate code", event: nested, want: true},
+		{name: "server failure", event: websocketEnvelope{Status: http.StatusBadGateway}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := websocketRateLimited(test.event); got != test.want {
+				t.Fatalf("rate limited = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestResponsesWebSocketHeadersSanitizeTransport(t *testing.T) {
+	account := testAccount("account-a", 0)
+	inbound := http.Header{}
+	inbound.Set("Accept", "text/event-stream")
+	inbound.Set("Accept-Encoding", "gzip")
+	inbound.Set("Authorization", "Bearer inbound")
+	inbound.Set("Content-Type", "application/json")
+	inbound.Set("Cookie", "secret=value")
+	inbound.Set("OpenAI-Beta", "responses=experimental, custom=1")
+	inbound.Set("Session-Id", "session")
+	inbound.Set("X-Custom", "preserved")
+	headers := responsesWebSocketHeaders(inbound, account)
+	for _, name := range []string{"Accept", "Accept-Encoding", "Content-Type", "Cookie"} {
+		if value := headers.Get(name); value != "" {
+			t.Fatalf("%s = %q, want empty", name, value)
+		}
+	}
+	if got := headers.Get("Authorization"); got != "Bearer token-account-a" {
+		t.Fatalf("authorization = %q", got)
+	}
+	if got := headers.Get("chatgpt-account-id"); got != "account-a" {
+		t.Fatalf("account = %q", got)
+	}
+	if got := headers.Get("Session-Id"); got != "session" {
+		t.Fatalf("session = %q", got)
+	}
+	if got := headers.Get("X-Custom"); got != "preserved" {
+		t.Fatalf("custom = %q", got)
+	}
+	if got := headers.Get("OpenAI-Beta"); got != "custom=1, "+responsesWebSocketBeta {
+		t.Fatalf("beta = %q", got)
+	}
+}
+
+func TestWebSocketOpaqueFileCanFailOver(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		if account == "account-a" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":   "error",
+				"status": http.StatusTooManyRequests,
+				"error":  map[string]any{"code": "rate_limit_exceeded"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_b"},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":  "response.create",
+		"input": []any{map[string]any{"type": "input_file", "file_id": "file_unknown"}},
+	})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_b" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-b]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	if got := store.lookup(affinityRef{kind: affinityFile, value: "file_unknown"}); got != "" {
+		t.Fatalf("file owner = %q, want empty", got)
+	}
+	if got := store.lookup(affinityRef{kind: affinitySession, value: "session"}); got != "account-b" {
+		t.Fatalf("session owner = %q, want account-b", got)
+	}
+}
+
+func TestWebSocketRevalidatesConversationEachTurn(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_a"},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy, _, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":         "response.create",
+		"conversation": "conversation",
+		"input":        []any{},
+	})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "error" || event.Status != http.StatusServiceUnavailable || websocketErrorCode(event) != "affinity_error" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+}
+
+func TestWebSocketStatusCodeRateLimitReplaysOnAnotherAccount(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		if account == "account-a" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":        "error",
+				"status_code": http.StatusTooManyRequests,
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_b"},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_b" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-b]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+}
+
+func TestWebSocketUnauthorizedRefreshesOnceThenFailsOver(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		if account == "account-a" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":   "error",
+				"status": http.StatusUnauthorized,
+				"error":  map[string]any{"code": "invalid_token"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_b"},
+		})
+	})
+	defer upstream.Close()
+	oauthCalls := useOAuthRefreshServer(t)
+
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy := newRefreshableAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer proxy.Close()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_b" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-a account-b]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	if got := oauthCalls(); got != 1 {
+		t.Fatalf("oauth calls = %d, want 1", got)
+	}
+}
+
+func TestWebSocketUnauthorizedRefreshBudgetIsPerAccount(t *testing.T) {
+	var attemptsMu sync.Mutex
+	attempts := map[string]int{}
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		attemptsMu.Lock()
+		attempts[account]++
+		attempt := attempts[account]
+		attemptsMu.Unlock()
+		if account == "account-b" && attempt == 2 {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":     "response.created",
+				"response": map[string]any{"id": "resp_b"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":   "error",
+			"status": http.StatusUnauthorized,
+			"error":  map[string]any{"code": "invalid_token"},
+		})
+	})
+	defer upstream.Close()
+	oauthCalls := useOAuthRefreshServer(t)
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy := newRefreshableAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer proxy.Close()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_b" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-a account-b account-b]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	if got := oauthCalls(); got != 2 {
+		t.Fatalf("oauth calls = %d, want 2", got)
+	}
+}
+
+func TestWebSocketHardOwnerUnauthorizedNeverFailsOver(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":   "error",
+			"status": http.StatusUnauthorized,
+			"error":  map[string]any{"code": "invalid_token"},
+		})
+	})
+	defer upstream.Close()
+	oauthCalls := useOAuthRefreshServer(t)
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	server.upstream = upstream.URL
+	server.pool.path = filepath.Join(t.TempDir(), "accounts.json")
+	if err := writeAccounts(server.pool.path, []*Account{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.bind(affinityRef{kind: affinityTurnState, value: "turn"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"X-Codex-Turn-State": {"turn"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "error" || event.Status != http.StatusUnauthorized {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-a]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	if got := oauthCalls(); got != 1 {
+		t.Fatalf("oauth calls = %d, want 1", got)
 	}
 }
 
@@ -553,6 +1034,46 @@ func newAffinityProxyWebSocketServer(
 	server.upstream = upstream
 	proxy := httptest.NewServer(server.routes())
 	return proxy, store, proxy.Close
+}
+
+func newRefreshableAffinityProxyWebSocketServer(
+	t *testing.T,
+	upstream string,
+	accounts []*Account,
+) *httptest.Server {
+	t.Helper()
+	server, _, closeUnusedUpstream := newAffinityHTTPServer(t, accounts, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	server.upstream = upstream
+	server.pool.path = filepath.Join(t.TempDir(), "accounts.json")
+	if err := writeAccounts(server.pool.path, accounts); err != nil {
+		t.Fatal(err)
+	}
+	return httptest.NewServer(server.routes())
+}
+
+func useOAuthRefreshServer(t *testing.T) func() int {
+	t.Helper()
+	var mu sync.Mutex
+	calls := 0
+	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"refreshed-token","refresh_token":"refreshed-refresh"}`)
+	}))
+	previous := oauthEndpoint
+	oauthEndpoint = oauth.URL
+	t.Cleanup(func() {
+		oauthEndpoint = previous
+		oauth.Close()
+	})
+	return func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls
+	}
 }
 
 func dialAffinityWebSocket(t *testing.T, proxyURL string, headers http.Header) *websocket.Conn {

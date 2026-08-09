@@ -131,7 +131,9 @@ func affinityFromRequest(headers http.Header, body []byte) (requestAffinity, err
 		affinity.hard = append(affinity.hard, affinityRef{kind: affinityConversation, value: conversation})
 		affinity.requireUnambiguous = true
 	} else if value, exists := payload["conversation"]; exists && value != nil {
-		affinity.requireUnambiguous = true
+		if _, ok := value.(string); !ok {
+			affinity.requireUnambiguous = true
+		}
 	}
 	for _, fileID := range inputFileIDs(payload["input"]) {
 		affinity.hard = append(affinity.hard, affinityRef{kind: affinityFile, value: fileID})

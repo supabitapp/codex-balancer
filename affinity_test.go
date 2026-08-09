@@ -60,6 +60,10 @@ func TestAffinityFromRequest(t *testing.T) {
 			requireUnambiguous: true,
 		},
 		{
+			name: "blank conversation has no affinity",
+			body: `{"conversation":"  ","input":[]}`,
+		},
+		{
 			name: "nested files are hard owner evidence",
 			body: `{"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_a"},{"type":"input_file","file_id":"file_b"}]}]}`,
 			hard: []affinityRef{
@@ -306,8 +310,22 @@ func TestResolveAffinity(t *testing.T) {
 
 	t.Run("unknown files remain opaque", func(t *testing.T) {
 		got, err := store.resolve(requestAffinity{hard: []affinityRef{{kind: affinityFile, value: "missing"}}}, pool)
-		if err != nil || got.required != "" {
+		if err != nil || got.required != "" || got.hard || len(got.bindings) != 0 {
 			t.Fatalf("resolution = %+v, error = %v", got, err)
+		}
+	})
+
+	t.Run("hard owner does not rewrite soft affinity", func(t *testing.T) {
+		file := affinityRef{kind: affinityFile, value: "owned-file"}
+		if err := store.bind(file, "account-b"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.resolve(requestAffinity{preferred: session, hard: []affinityRef{file}}, pool)
+		if err != nil || got.required != "account-b" || !got.hard {
+			t.Fatalf("resolution = %+v, error = %v", got, err)
+		}
+		if !sameAffinityRefs(got.bindings, []affinityRef{file}) {
+			t.Fatalf("bindings = %#v, want only file owner", got.bindings)
 		}
 	})
 
@@ -346,6 +364,20 @@ func TestResolveAffinity(t *testing.T) {
 		}, pool)
 		if !errors.Is(err, errAffinityAmbiguous) {
 			t.Fatalf("error = %v, want ambiguous owner", err)
+		}
+	})
+
+	t.Run("hard turn owner proves conversation ownership", func(t *testing.T) {
+		conversation := affinityRef{kind: affinityConversation, value: "turn-conversation"}
+		got, err := store.resolve(requestAffinity{
+			hard:               []affinityRef{turn, conversation},
+			requireUnambiguous: true,
+		}, pool)
+		if err != nil || got.required != "account-a" || !got.hard {
+			t.Fatalf("resolution = %+v, error = %v", got, err)
+		}
+		if !sameAffinityRefs(got.bindings, []affinityRef{turn, conversation}) {
+			t.Fatalf("bindings = %#v", got.bindings)
 		}
 	})
 

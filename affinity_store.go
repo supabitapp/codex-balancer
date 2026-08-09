@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 )
@@ -148,23 +149,30 @@ func (s *AffinityStore) bindAll(refs []affinityRef, account string) error {
 func (s *AffinityStore) resolve(request requestAffinity, pool *Pool) (affinityResolution, error) {
 	resolution := affinityResolution{
 		preferred: s.lookup(request.preferred),
-		bindings:  request.bindings(),
-		hard:      len(request.hard) > 0 || request.requireUnambiguous,
 	}
 	owners := map[string]bool{}
+	refOwners := map[affinityRef]string{}
 	fileCount := 0
 	ownedFileCount := 0
 	conversationKnown := false
+	turnKnown := false
+	nonFileHard := false
 	for _, ref := range request.hard {
 		owner := s.lookup(ref)
+		refOwners[ref] = owner
 		if ref.kind == affinityConversation && owner != "" {
 			conversationKnown = true
+		}
+		if ref.kind == affinityTurnState && owner != "" {
+			turnKnown = true
 		}
 		if ref.kind == affinityFile {
 			fileCount++
 			if owner != "" {
 				ownedFileCount++
 			}
+		} else {
+			nonFileHard = true
 		}
 		if owner != "" {
 			owners[owner] = true
@@ -186,13 +194,21 @@ func (s *AffinityStore) resolve(request requestAffinity, pool *Pool) (affinityRe
 		}
 		resolution.required = owner
 	}
-	if request.requireUnambiguous && !conversationKnown {
+	if request.requireUnambiguous && !conversationKnown && !turnKnown {
 		accounts := pool.all()
 		if len(accounts) != 1 {
 			return affinityResolution{}, errAffinityAmbiguous
 		}
 		resolution.required = accounts[0].id()
 	}
+	resolution.hard = nonFileHard || ownedFileCount > 0 || request.requireUnambiguous
+	resolution.bindings = request.bindings()
+	if resolution.hard {
+		resolution.bindings = hardAffinityRefs(resolution.bindings)
+	}
+	resolution.bindings = slices.DeleteFunc(resolution.bindings, func(ref affinityRef) bool {
+		return ref.kind == affinityFile && refOwners[ref] == ""
+	})
 	return resolution, nil
 }
 
