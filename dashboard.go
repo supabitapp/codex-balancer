@@ -158,70 +158,60 @@ const dashboardHTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Codex Balancer</title>
 <style>
-:root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: #11111b; color: #cdd6f4 }
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; background: Canvas; color: CanvasText }
 * { box-sizing: border-box }
-body { min-height: 100vh; margin: 0; background: #11111b }
-.dashboard { width: min(112rem, 100%); margin: 0 auto; padding: 1rem }
-.panel { border: 1px solid #45475a; border-radius: .75rem; background: #181825 }
-.top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 1.1rem }
-.brand { color: #89b4fa; font-weight: 800; letter-spacing: .04em }
-.summary, .meta { color: #6c7086 }
-.summary { margin-left: .8rem }
-.dot { margin: 0 .35rem; color: #45475a }
-.live { color: #a6e3a1 }
-.checking, .paused { color: #6c7086 }
-.cooling, .fast { color: #fab387 }
-.reauth, .limits { color: #f38ba8 }
-.section { margin-top: 1rem; overflow: hidden }
-.section h2 { margin: 0; padding: .8rem 1rem; border-bottom: 1px solid #313244; color: #89b4fa; font-size: .85rem; letter-spacing: .08em }
+body { margin: 0 }
+main { width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding-bottom: 3rem }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 2rem 0 1rem; border-bottom: 1px solid GrayText }
+header > div { display: flex; align-items: baseline; gap: .75rem; min-width: 0 }
+h1 { margin: 0; font-size: 1.125rem }
+h2 { margin: 0 0 .75rem; font-size: .875rem }
+section { margin-top: 2rem }
+p { margin: 0 }
+#summary, #meta, .dim, .empty, th, dt { color: GrayText }
+#summary { white-space: nowrap }
+.dot { margin: 0 .35rem }
+.strong { font-weight: 600 }
 .scroll { overflow-x: auto }
-table { width: 100%; border-collapse: collapse; white-space: nowrap }
-th, td { padding: .65rem .8rem; border-bottom: 1px solid #252538; text-align: left }
-th { color: #89b4fa; font-size: .75rem; font-weight: 700 }
-td { color: #a6adc8 }
-tbody tr:last-child td { border-bottom: 0 }
-.number { color: #cdd6f4; font-weight: 700 }
-.good { color: #a6e3a1 }
-.warn { color: #f9e2af }
-.bad { color: #f38ba8 }
-.accent { color: #89b4fa }
-.dim { color: #6c7086 }
-.spark { color: #89b4fa; letter-spacing: .08em }
-.empty { padding: 1rem; color: #6c7086 }
-.totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #181825 }
-.total { min-width: 0; padding: .8rem 1rem; border-right: 1px solid #313244; border-bottom: 1px solid #313244; background: #181825 }
-.total span { display: block; color: #6c7086; font-size: .72rem; text-transform: uppercase }
-.total strong { display: block; margin-top: .3rem; overflow: hidden; color: #cdd6f4; font-size: 1.05rem; text-overflow: ellipsis }
+table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums }
+th, td { padding: .5rem .75rem .5rem 0; border-bottom: 1px solid GrayText; text-align: left }
+th:last-child, td:last-child { padding-right: 0 }
+th { font-size: .75rem; font-weight: 500 }
+.spark { font-family: ui-monospace, monospace; letter-spacing: .08em }
+.empty { padding: .5rem 0 }
+.totals { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1.5rem; margin: 0 }
+.totals div { min-width: 0 }
+dt { font-size: .75rem }
+dd { margin: .2rem 0 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis }
 @media (max-width: 760px) {
-  .dashboard { padding: .6rem }
-  .top { align-items: flex-start; flex-direction: column }
-  .summary { display: block; margin: .35rem 0 0 }
-  .meta { font-size: .78rem }
+  main { width: min(calc(100% - 1.25rem), 100rem) }
+  header { align-items: flex-start; flex-direction: column; padding-top: 1.25rem }
+  header > div { align-items: flex-start; flex-direction: column; gap: .25rem }
+  #meta { font-size: .8rem }
   .totals { grid-template-columns: repeat(2, minmax(0, 1fr)) }
-  th, td { padding: .6rem }
 }
 </style>
 </head>
 <body>
-<main class="dashboard">
-<header class="top panel">
-<div><span class="brand">CODEX BALANCER</span><span id="summary" class="summary"></span></div>
-<div id="meta" class="meta">connecting…</div>
+<main>
+<header>
+<div><h1>Codex Balancer</h1><span id="summary"></span></div>
+<p id="meta">connecting…</p>
 </header>
-<section class="section panel">
-<h2>ACCOUNTS</h2>
+<section>
+<h2>Accounts</h2>
 <div id="accounts" class="scroll"></div>
 </section>
-<section class="section panel">
-<h2>TOTALS</h2>
-<div id="totals" class="totals"></div>
+<section>
+<h2>Totals</h2>
+<dl id="totals" class="totals"></dl>
 </section>
-<section class="section panel">
-<h2 id="threads-title">THREADS</h2>
+<section>
+<h2 id="threads-title">Threads</h2>
 <div id="threads" class="scroll"></div>
 </section>
-<section class="section panel">
-<h2>EVENTS</h2>
+<section>
+<h2>Events</h2>
 <div id="events" class="scroll"></div>
 </section>
 </main>
@@ -253,11 +243,11 @@ function render(stats) {
     return total
   }, [])
   const summary = []
-  addCount(summary, counts.live, 'live', 'live')
-  addCount(summary, counts.checking, 'checking', 'checking')
-  addCount(summary, counts.cooling, 'cooling', 'cooling')
-  addCount(summary, counts.paused, 'paused', 'paused')
-  addCount(summary, counts.needs_reauth, 'need reauth', 'reauth')
+  addCount(summary, counts.live, 'live')
+  addCount(summary, counts.checking, 'checking')
+  addCount(summary, counts.cooling, 'cooling')
+  addCount(summary, counts.paused, 'paused')
+  addCount(summary, counts.needs_reauth, 'need reauth')
   document.getElementById('summary').innerHTML = summary.join('<span class="dot">·</span>')
   document.getElementById('meta').textContent = rate(activity) + ' · up ' + short(stats.uptime_seconds * 1000)
   renderAccounts(stats.accounts, stats.turns)
@@ -266,8 +256,8 @@ function render(stats) {
   renderEvents(stats.events)
 }
 
-function addCount(parts, count, label, kind) {
-  if (count) parts.push('<span class="' + kind + '">' + count + ' ' + h(label) + '</span>')
+function addCount(parts, count, label) {
+  if (count) parts.push('<span>' + count + ' ' + h(label) + '</span>')
 }
 
 function renderAccounts(accounts, turns) {
@@ -277,19 +267,19 @@ function renderAccounts(accounts, turns) {
   }
   const rows = accounts.map(account => {
     const remaining = account.weekly_remaining_percent
-    const remainingClass = remaining === null ? 'dim' : remaining <= 10 ? 'bad' : remaining <= 30 ? 'warn' : 'good'
+    const remainingClass = remaining === null ? 'dim' : remaining <= 30 ? 'strong' : ''
     const traffic = turns ? Math.floor(account.turns * 100 / turns) + '%' : ''
     return '<tr>' +
-      cell(account.name, 'number') +
+      cell(account.name, 'strong') +
       cell(account.plan, 'dim') +
       cell(status(account.status), statusClass(account.status)) +
       cell(remaining === null ? '--' : percent(remaining), remainingClass) +
-      cell(account.banked_resets === null ? '--' : account.banked_resets, account.banked_resets === null ? 'dim' : 'number') +
+      cell(account.banked_resets === null ? '--' : account.banked_resets, account.banked_resets === null ? 'dim' : 'strong') +
       cell(account.reset_at ? short(new Date(account.reset_at).getTime() - Date.now()) : '--', 'dim') +
-      cell(account.turns || '', 'number') +
-      cell(account.open_websockets || '', 'good') +
+      cell(account.turns || '', 'strong') +
+      cell(account.open_websockets || '', 'strong') +
       cell(traffic, 'dim') +
-      cell(account.rate_limits || '', 'limits') +
+      cell(account.rate_limits || '', 'strong') +
       cell(spark(account.activity), 'spark') +
       '</tr>'
   }).join('')
@@ -312,23 +302,23 @@ function renderTotals(stats) {
     ['uptime', short(stats.uptime_seconds * 1000)]
   ]
   document.getElementById('totals').innerHTML = values.map(value =>
-    '<div class="total"><span>' + h(value[0]) + '</span><strong>' + h(value[1]) + '</strong></div>'
+    '<div><dt>' + h(value[0]) + '</dt><dd>' + h(value[1]) + '</dd></div>'
   ).join('')
 }
 
 function renderThreads(threads) {
   const sorted = [...threads].sort((left, right) => new Date(right.last) - new Date(left.last))
-  document.getElementById('threads-title').textContent = 'THREADS  ' + sorted.length
+  document.getElementById('threads-title').textContent = 'Threads  ' + sorted.length
   if (!sorted.length) {
     document.getElementById('threads').innerHTML = '<div class="empty">nothing routed yet</div>'
     return
   }
   const rows = sorted.map(thread => '<tr>' +
-    cell(thread.key_prefix, 'number') +
+    cell(thread.key_prefix, 'strong') +
     cell('→', 'dim') +
-    cell(thread.account, 'accent') +
-    cell(String(thread.via).toUpperCase(), 'good') +
-    cell(thread.service_tier === 'priority' ? 'FAST' : '', 'fast') +
+    cell(thread.account) +
+    cell(String(thread.via).toUpperCase()) +
+    cell(thread.service_tier === 'priority' ? 'FAST' : '', 'strong') +
     cell(plural(thread.turns, 'turn'), 'dim') +
     cell(ago(thread.last), 'dim') +
     '</tr>').join('')
@@ -343,8 +333,8 @@ function renderEvents(events) {
   }
   const rows = sorted.map(event => '<tr>' +
     cell(clock(event.at), 'dim') +
-    cell(event.kind, event.kind === 'failover' ? 'bad' : event.kind === 'rate limited' ? 'fast' : 'dim') +
-    cell(event.account, 'number') +
+    cell(event.kind, event.kind === 'failover' || event.kind === 'rate limited' ? 'strong' : 'dim') +
+    cell(event.account, 'strong') +
     cell(event.detail, 'dim') +
     '</tr>').join('')
   document.getElementById('events').innerHTML = '<table><tbody>' + rows + '</tbody></table>'
@@ -355,7 +345,7 @@ function headers(values) {
 }
 
 function cell(value, className) {
-  return '<td class="' + className + '">' + h(value) + '</td>'
+  return '<td' + (className ? ' class="' + className + '"' : '') + '>' + h(value) + '</td>'
 }
 
 function status(value) {
@@ -370,7 +360,7 @@ function status(value) {
 }
 
 function statusClass(value) {
-  return value === 'live' ? 'good' : value === 'cooling' ? 'fast' : value === 'needs_reauth' ? 'bad' : 'dim'
+  return value === 'checking' || value === 'paused' ? 'dim' : 'strong'
 }
 
 function spark(activity) {
