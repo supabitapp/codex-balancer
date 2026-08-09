@@ -121,6 +121,53 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	}
 }
 
+func TestDashboardBankedResetHoverShowsSafeCreditDetails(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(4 * time.Minute)
+	account := testAccount("account-a", 20)
+	account.adoptResetCredits(2, []resetCredit{
+		{
+			ID:          "private-credit-id",
+			ResetType:   "codex_rate_limits",
+			Status:      "available",
+			ExpiresAt:   &expiresAt,
+			Title:       "Full <reset>",
+			Description: "Weekly & five-hour windows",
+		},
+		{
+			ID:        "redeemed-credit-id",
+			ResetType: "codex_rate_limits",
+			Status:    "redeemed",
+		},
+	})
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
+
+	stats := server.currentStats(now)
+	if len(stats.Accounts) != 1 || len(stats.Accounts[0].ResetCredits) != 1 {
+		t.Fatalf("reset credits = %+v", stats.Accounts)
+	}
+	view := server.currentDashboard(now)
+	wantInfo := "2 reset credits available\n\nFull <reset>\nWeekly & five-hour windows\nExpires in 4m at 2026-08-09 12:04 UTC"
+	if len(view.Accounts) != 1 || view.Accounts[0].BankedInfo != wantInfo {
+		t.Fatalf("banked info = %q", view.Accounts[0].BankedInfo)
+	}
+	payload, err := renderDashboard("dashboard", view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(payload)
+	for _, expected := range []string{`class="banked-info"`, `Full &lt;reset&gt;`, `Weekly &amp; five-hour windows`} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("dashboard missing %q:\n%s", expected, body)
+		}
+	}
+	for _, private := range []string{"private-credit-id", "redeemed-credit-id"} {
+		if strings.Contains(body, private) {
+			t.Fatalf("dashboard exposed %q", private)
+		}
+	}
+}
+
 func TestDashboardWebSocketRejectsWhenFull(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: newStats()}
 	server.dashboardConnections.Store(dashboardMaxConnections)

@@ -68,6 +68,7 @@ func TestPollAllUsageConsumesExpiringResetCredit(t *testing.T) {
 			})
 		case "GET /rate-limit-reset-credits":
 			json.NewEncoder(w).Encode(map[string]any{
+				"available_count": 1,
 				"credits": []map[string]any{{
 					"id":         "credit-a",
 					"reset_type": "codex_rate_limits",
@@ -120,7 +121,7 @@ func TestPollAllUsageConsumesExpiringResetCredit(t *testing.T) {
 	if got := account.status(time.Now()); got != accountLive {
 		t.Fatalf("status = %s, want %s", got, accountLive)
 	}
-	if count, known := account.bankedResets(); !known || count != 0 {
+	if count, credits, known := account.bankedResets(); !known || count != 0 || len(credits) != 0 {
 		t.Fatalf("banked resets = %d, %v", count, known)
 	}
 }

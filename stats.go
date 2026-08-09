@@ -273,17 +273,24 @@ type statsResponse struct {
 }
 
 type accountStatsResponse struct {
-	ID                     string        `json:"id"`
-	Email                  string        `json:"email,omitempty"`
-	Plan                   string        `json:"plan"`
-	Status                 accountStatus `json:"status"`
-	WeeklyRemainingPercent *float64      `json:"weekly_remaining_percent"`
-	BankedResets           *int64        `json:"banked_resets"`
-	ResetAt                *time.Time    `json:"reset_at"`
-	Turns                  int64         `json:"turns"`
-	OpenWebSockets         int64         `json:"open_websockets"`
-	RateLimits             int64         `json:"rate_limits"`
-	Activity               []int64       `json:"activity"`
+	ID                     string                     `json:"id"`
+	Email                  string                     `json:"email,omitempty"`
+	Plan                   string                     `json:"plan"`
+	Status                 accountStatus              `json:"status"`
+	WeeklyRemainingPercent *float64                   `json:"weekly_remaining_percent"`
+	BankedResets           *int64                     `json:"banked_resets"`
+	ResetCredits           []resetCreditStatsResponse `json:"reset_credits,omitempty"`
+	ResetAt                *time.Time                 `json:"reset_at"`
+	Turns                  int64                      `json:"turns"`
+	OpenWebSockets         int64                      `json:"open_websockets"`
+	RateLimits             int64                      `json:"rate_limits"`
+	Activity               []int64                    `json:"activity"`
+}
+
+type resetCreditStatsResponse struct {
+	Title       string     `json:"title,omitempty"`
+	Description string     `json:"description,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
 
 func (s *server) statsJSON(w http.ResponseWriter, _ *http.Request) {
@@ -316,8 +323,19 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			weeklyRemaining = &remaining
 		}
 		var bankedResets *int64
-		if count, known := account.bankedResets(); known {
+		var resetCredits []resetCreditStatsResponse
+		if count, credits, known := account.bankedResets(); known {
 			bankedResets = &count
+			for _, credit := range credits {
+				if !credit.available() {
+					continue
+				}
+				resetCredits = append(resetCredits, resetCreditStatsResponse{
+					Title:       credit.Title,
+					Description: credit.Description,
+					ExpiresAt:   credit.ExpiresAt,
+				})
+			}
 		}
 		var resetAt *time.Time
 		if reset := nextReset(now, primary, secondary); !reset.IsZero() {
@@ -330,6 +348,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			Status:                 account.status(now),
 			WeeklyRemainingPercent: weeklyRemaining,
 			BankedResets:           bankedResets,
+			ResetCredits:           resetCredits,
 			ResetAt:                resetAt,
 			Turns:                  traffic.Turns,
 			OpenWebSockets:         traffic.WSOpen,

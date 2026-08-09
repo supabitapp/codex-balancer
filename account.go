@@ -36,13 +36,19 @@ type Account struct {
 	inflight    chan struct{}
 	lastRefresh error
 
-	cooldown         time.Time
-	dead             string
-	primary          window
-	secondary        window
-	spent            bool
-	bankedResetCount *int64
-	lastUsed         time.Time
+	cooldown     time.Time
+	dead         string
+	primary      window
+	secondary    window
+	spent        bool
+	resetCredits resetCreditState
+	lastUsed     time.Time
+}
+
+type resetCreditState struct {
+	known   bool
+	count   int64
+	details []resetCredit
 }
 
 type window struct {
@@ -95,13 +101,13 @@ func accountStatusAt(paused bool, reauth string, cooldown time.Time, spent, know
 	}
 }
 
-func (a *Account) bankedResets() (int64, bool) {
+func (a *Account) bankedResets() (int64, []resetCredit, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.bankedResetCount == nil {
-		return 0, false
+	if !a.resetCredits.known {
+		return 0, nil, false
 	}
-	return *a.bankedResetCount, true
+	return a.resetCredits.count, append([]resetCredit(nil), a.resetCredits.details...), true
 }
 
 func (a *Account) MarshalJSON() ([]byte, error) {

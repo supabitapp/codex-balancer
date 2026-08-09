@@ -49,6 +49,7 @@ type dashboardAccountView struct {
 	WeeklyClass    string
 	Banked         string
 	BankedClass    string
+	BankedInfo     string
 	ResetIn        string
 	Turns          string
 	OpenWebSockets string
@@ -175,6 +176,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			banked = strconv.FormatInt(*account.BankedResets, 10)
 			bankedClass = "strong"
 		}
+		bankedInfo := dashboardResetInfo(now, account.BankedResets, account.ResetCredits)
 		resetIn := "--"
 		if account.ResetAt != nil {
 			resetIn = short(account.ResetAt.Sub(now))
@@ -192,6 +194,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			WeeklyClass:    weeklyClass,
 			Banked:         banked,
 			BankedClass:    bankedClass,
+			BankedInfo:     bankedInfo,
 			ResetIn:        resetIn,
 			Turns:          dashboardNumber(account.Turns),
 			OpenWebSockets: dashboardNumber(account.OpenWebSockets),
@@ -273,6 +276,28 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		Threads: threadViews,
 		Events:  events,
 	}
+}
+
+func dashboardResetInfo(now time.Time, count *int64, credits []resetCreditStatsResponse) string {
+	if count == nil {
+		return ""
+	}
+	sections := []string{plural(*count, "reset credit") + " available"}
+	for _, credit := range credits {
+		lines := []string{cmp.Or(strings.TrimSpace(credit.Title), "Rate-limit reset")}
+		if description := strings.TrimSpace(credit.Description); description != "" {
+			lines = append(lines, description)
+		}
+		if credit.ExpiresAt == nil {
+			lines = append(lines, "Does not expire")
+		} else if credit.ExpiresAt.After(now) {
+			lines = append(lines, "Expires in "+short(credit.ExpiresAt.Sub(now))+" at "+credit.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC"))
+		} else {
+			lines = append(lines, "Expired at "+credit.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC"))
+		}
+		sections = append(sections, strings.Join(lines, "\n"))
+	}
+	return strings.Join(sections, "\n\n")
 }
 
 func dashboardStatus(status accountStatus) (string, string) {

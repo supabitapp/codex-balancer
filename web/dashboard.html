@@ -46,6 +46,7 @@ p { margin: 0 }
 .warn { color: var(--amber-11); font-weight: 600 }
 .hot { color: var(--orange-11); font-weight: 600 }
 .bad { color: var(--red-11); font-weight: 600 }
+.banked-info { cursor: help; text-decoration: underline dotted; text-underline-offset: .2em }
 .scroll { overflow-x: auto }
 #threads { --row-height: 2.25rem; max-height: calc(10 * var(--row-height)); overflow: auto }
 #threads tr { height: var(--row-height) }
@@ -106,7 +107,7 @@ dd { margin: .2rem 0 0; overflow: hidden; color: var(--blue-12); font-weight: 60
 <td class="dim">{{.Plan}}</td>
 <td{{if .StatusClass}} class="{{.StatusClass}}"{{end}}>{{.Status}}</td>
 <td{{if .WeeklyClass}} class="{{.WeeklyClass}}"{{end}}>{{.Weekly}}</td>
-<td{{if .BankedClass}} class="{{.BankedClass}}"{{end}}>{{.Banked}}</td>
+<td{{if .BankedClass}} class="{{.BankedClass}}"{{end}}>{{if .BankedInfo}}<span class="banked-info" title="{{.BankedInfo}}" aria-label="{{.BankedInfo}}">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>
 <td class="strong">{{.Turns}}</td>
 <td class="strong">{{.OpenWebSockets}}</td>

@@ -46,14 +46,21 @@ type usageWindow struct {
 }
 
 type resetCreditsPayload struct {
-	Credits []resetCredit `json:"credits"`
+	Credits        []resetCredit `json:"credits"`
+	AvailableCount int64         `json:"available_count"`
 }
 
 type resetCredit struct {
-	ID        string     `json:"id"`
-	ResetType string     `json:"reset_type"`
-	Status    string     `json:"status"`
-	ExpiresAt *time.Time `json:"expires_at"`
+	ID          string     `json:"id"`
+	ResetType   string     `json:"reset_type"`
+	Status      string     `json:"status"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+}
+
+func (c resetCredit) available() bool {
+	return c.ResetType == "codex_rate_limits" && c.Status == "available"
 }
 
 type consumeResetCreditRequest struct {
@@ -146,7 +153,7 @@ func expiringResetCredit(credits []resetCredit, now time.Time) (resetCredit, boo
 	var next resetCredit
 	found := false
 	for _, credit := range credits {
-		if credit.ResetType != "codex_rate_limits" || credit.Status != "available" || credit.ExpiresAt == nil {
+		if !credit.available() || credit.ExpiresAt == nil {
 			continue
 		}
 		if !credit.ExpiresAt.After(now) || credit.ExpiresAt.After(deadline) {
@@ -161,7 +168,7 @@ func expiringResetCredit(credits []resetCredit, now time.Time) (resetCredit, boo
 }
 
 func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Account, now time.Time) (consumeResetCreditResponse, string, error) {
-	if count, known := account.bankedResets(); !known || count <= 0 {
+	if count, _, known := account.bankedResets(); !known || count <= 0 {
 		return consumeResetCreditResponse{}, "", nil
 	}
 
@@ -178,6 +185,7 @@ func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Accoun
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return consumeResetCreditResponse{}, "", err
 	}
+	account.adoptResetCredits(payload.AvailableCount, payload.Credits)
 	credit, ok := expiringResetCredit(payload.Credits, now)
 	if !ok {
 		return consumeResetCreditResponse{}, "", nil
@@ -227,10 +235,24 @@ func (a *Account) adopt(primary, secondary window, banked *int64, spent bool) {
 	if secondary.known() {
 		a.secondary = secondary
 	}
-	a.bankedResetCount = banked
+	if banked == nil {
+		a.resetCredits = resetCreditState{}
+	} else if !a.resetCredits.known || a.resetCredits.count != *banked {
+		a.resetCredits = resetCreditState{known: true, count: *banked}
+	}
 	a.spent = spent
 	if a.dead == "" && !spent {
 		a.cooldown = time.Time{}
+	}
+}
+
+func (a *Account) adoptResetCredits(count int64, credits []resetCredit) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.resetCredits = resetCreditState{
+		known:   true,
+		count:   count,
+		details: append([]resetCredit(nil), credits...),
 	}
 }
 

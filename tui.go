@@ -312,7 +312,7 @@ func (d dashboard) accounts(limit int) string {
 		}
 
 		banked := sDim.Render(fit("--", bankedW))
-		if count, known := a.bankedResets(); known {
+		if count, _, known := a.bankedResets(); known {
 			banked = sNum.Render(fit(fmt.Sprintf("%d", count), bankedW))
 		}
 
