@@ -71,11 +71,17 @@ func (a requestAffinity) bindings() []affinityRef {
 	return bindings
 }
 
-func (a requestAffinity) label() string {
+func (a requestAffinity) statsKey(headers http.Header) string {
+	if session := sessionAffinity(headers); session.valid() {
+		return session.value
+	}
+	if a.preferred.valid() {
+		return a.preferred.value
+	}
 	if len(a.hard) > 0 {
 		return a.hard[0].value
 	}
-	return a.preferred.value
+	return ""
 }
 
 func hardAffinityRefs(refs []affinityRef) []affinityRef {
@@ -106,15 +112,8 @@ func affinityFromRequest(headers http.Header, body []byte) (requestAffinity, err
 	var affinity requestAffinity
 	if turnState := firstHeader(headers, "x-codex-turn-state"); turnState != "" {
 		affinity.hard = append(affinity.hard, affinityRef{kind: affinityTurnState, value: turnState})
-	} else if session := firstHeader(
-		headers,
-		"session_id",
-		"session-id",
-		"x-codex-session-id",
-		"x-codex-conversation-id",
-		"thread-id",
-	); session != "" {
-		affinity.preferred = affinityRef{kind: affinitySession, value: session}
+	} else if session := sessionAffinity(headers); session.valid() {
+		affinity.preferred = session
 	} else {
 		cache, ok := nonEmptyString(payload["prompt_cache_key"])
 		if !ok {
@@ -138,6 +137,21 @@ func affinityFromRequest(headers http.Header, body []byte) (requestAffinity, err
 		affinity.hard = append(affinity.hard, affinityRef{kind: affinityFile, value: fileID})
 	}
 	return affinity, nil
+}
+
+func sessionAffinity(headers http.Header) affinityRef {
+	value := firstHeader(
+		headers,
+		"session_id",
+		"session-id",
+		"x-codex-session-id",
+		"x-codex-conversation-id",
+		"thread-id",
+	)
+	if value == "" {
+		return affinityRef{}
+	}
+	return affinityRef{kind: affinitySession, value: value}
 }
 
 func firstHeader(headers http.Header, names ...string) string {

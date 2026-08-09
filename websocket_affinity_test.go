@@ -92,6 +92,50 @@ func TestWebSocketPreviousResponseSwitchesBeforeSend(t *testing.T) {
 	}
 }
 
+func TestWebSocketFollowUpsKeepStableSessionStats(t *testing.T) {
+	calls := 0
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		calls++
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": fmt.Sprintf("resp_%d", calls)},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	account := testAccount("account", 0)
+	server, _, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{account}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	server.upstream = upstream.URL
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":                 "response.create",
+		"previous_response_id": "resp_1",
+		"input":                []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+
+	snapshot := server.stats.snapshot()
+	if snapshot.Turns != 2 {
+		t.Fatalf("turns = %d, want 2", snapshot.Turns)
+	}
+	if len(snapshot.Threads) != 1 {
+		t.Fatalf("threads = %+v, want one session", snapshot.Threads)
+	}
+	thread := snapshot.Threads[0]
+	if thread.Key != "session" || thread.Turns != 2 || thread.Via != transportWebSocket {
+		t.Fatalf("thread = %+v, want session with two WebSocket turns", thread)
+	}
+}
+
 func TestWebSocketHardRateLimitDoesNotReplay(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{

@@ -100,6 +100,48 @@ func TestAffinityFromRequestRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestAffinityStatsKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers http.Header
+		body    string
+		want    string
+	}{
+		{
+			name:    "session wins over hard references",
+			headers: http.Header{"Session-Id": {"session"}, "X-Codex-Turn-State": {"turn"}},
+			body:    `{"previous_response_id":"response","input":[]}`,
+			want:    "session",
+		},
+		{
+			name: "prompt cache wins over response",
+			body: `{"prompt_cache_key":"cache","previous_response_id":"response","input":[]}`,
+			want: "cache",
+		},
+		{
+			name: "hard reference is the fallback",
+			body: `{"previous_response_id":"response","input":[]}`,
+			want: "response",
+		},
+		{
+			name: "missing affinity stays empty",
+			body: `{"input":[]}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			affinity, err := affinityFromRequest(test.headers, []byte(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := affinity.statsKey(test.headers); got != test.want {
+				t.Fatalf("stats key = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestAffinityStoreSeparatesKindsAndPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "affinity.json")
 	store, err := newAffinityStore(path)

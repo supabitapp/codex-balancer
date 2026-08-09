@@ -82,7 +82,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, message)
 		return
 	}
-	thread := affinity.label()
+	thread := affinity.statsKey(r.Header)
 	s.log.Debug("websocket requested", "thread", thread, "required_account", resolution.required, "preferred_account", resolution.preferred)
 	dial, failed, err := s.dialResponsesWebSocket(r, thread, resolution, nil)
 	if err != nil {
@@ -383,7 +383,7 @@ func (s *server) relayResponsesWebSocket(
 				writeWebSocketAffinityError(ctx, downstream, errAffinityOwnerUnavailable)
 				continue
 			}
-			turnThread := requestAffinity.label()
+			turnThread := requestAffinity.statsKey(r.Header)
 			if turnThread == "" {
 				turnThread = thread
 			}

@@ -221,6 +221,37 @@ func TestHTTPPreviousResponseOverridesSoftSession(t *testing.T) {
 	}
 }
 
+func TestHTTPFollowUpsKeepStableSessionStats(t *testing.T) {
+	account := testAccount("account", 0)
+	calls := 0
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{account}, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		writeResponseCreated(w, fmt.Sprintf("resp_%d", calls))
+	})
+	defer closeServer()
+
+	first := serveHTTPResponse(t, server, "session", "", `{"input":[]}`)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body = %s", first.Code, first.Body.String())
+	}
+	second := serveHTTPResponse(t, server, "session", "", `{"previous_response_id":"resp_1","input":[]}`)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, body = %s", second.Code, second.Body.String())
+	}
+
+	snapshot := server.stats.snapshot()
+	if snapshot.Turns != 2 {
+		t.Fatalf("turns = %d, want 2", snapshot.Turns)
+	}
+	if len(snapshot.Threads) != 1 {
+		t.Fatalf("threads = %+v, want one session", snapshot.Threads)
+	}
+	thread := snapshot.Threads[0]
+	if thread.Key != "session" || thread.Turns != 2 || thread.Via != transportHTTP {
+		t.Fatalf("thread = %+v, want session with two HTTP turns", thread)
+	}
+}
+
 func TestHTTPConflictingHardOwnersFailBeforeUpstream(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 0)

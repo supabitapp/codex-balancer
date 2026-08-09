@@ -105,7 +105,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, message)
 		return
 	}
-	key := affinity.label()
+	key := affinity.statsKey(r.Header)
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
 	s.log.Debug("http turn received", "thread", key, "required_account", resolution.required, "preferred_account", resolution.preferred, "service_tier", serviceTier)
