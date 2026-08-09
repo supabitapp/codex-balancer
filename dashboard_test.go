@@ -57,10 +57,10 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
 	}
-	totals := strings.Index(body, `<h2>Totals</h2>`)
+	overview := strings.Index(body, `<h2>Overview</h2>`)
 	accounts := strings.Index(body, `<h2>Accounts <span id="summary">`)
-	if totals < 0 || accounts < 0 || totals > accounts {
-		t.Fatalf("dashboard section order: totals = %d, accounts = %d", totals, accounts)
+	if overview < 0 || accounts < 0 || overview > accounts {
+		t.Fatalf("dashboard section order: overview = %d, accounts = %d", overview, accounts)
 	}
 }
 
@@ -122,8 +122,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	}
 	body := string(payload)
 	for _, expected := range []string{
-		`id="meta" hx-swap-oob="innerHTML"`,
-		`id="totals" hx-swap-oob="innerHTML"`,
+		`id="overview" hx-swap-oob="innerHTML"`,
 		`id="summary" hx-swap-oob="innerHTML"`,
 		`id="accounts" hx-swap-oob="innerHTML"`,
 		`id="routing-count" hx-swap-oob="innerHTML"`,
@@ -249,9 +248,10 @@ func TestDashboardBankedResetTooltipShowsExpirations(t *testing.T) {
 	}
 }
 
-func TestDashboardMonthlyTotals(t *testing.T) {
+func TestDashboardOverview(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("BST", 60*60))
 	stats := newStats()
+	stats.started = time.Now().Add(-28 * time.Minute)
 	stats.usageMonth = calendarMonth(now)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
@@ -262,31 +262,36 @@ func TestDashboardMonthlyTotals(t *testing.T) {
 		"input tokens":  "2K",
 		"cached input":  "1.5K",
 		"output tokens": "300",
+		"turn rate":     "0.0 turns/min",
+		"uptime":        "28m",
 	}
 	wantInfo := "Calculated from 1 August 2026, 00:00 BST"
 	apiEstimateFound := false
-	for _, total := range view.Totals {
-		if wantValue, ok := wantValues[total.Name]; ok {
-			if total.Value != wantValue || total.Info != wantInfo {
-				t.Fatalf("%s total = %+v, want value %q and info %q", total.Name, total, wantValue, wantInfo)
+	for _, metric := range view.Overview {
+		if wantValue, ok := wantValues[metric.Name]; ok {
+			if metric.Value != wantValue {
+				t.Fatalf("%s overview metric = %+v, want value %q", metric.Name, metric, wantValue)
 			}
-			delete(wantValues, total.Name)
+			if metric.Name != "turn rate" && metric.Name != "uptime" && metric.Info != wantInfo {
+				t.Fatalf("%s overview info = %q, want %q", metric.Name, metric.Info, wantInfo)
+			}
+			delete(wantValues, metric.Name)
 		}
-		switch total.Name {
+		switch metric.Name {
 		case "API estimate":
 			apiEstimateFound = true
-			if total.Info != wantInfo {
-				t.Fatalf("API estimate info = %q, want %q", total.Info, wantInfo)
+			if metric.Info != wantInfo {
+				t.Fatalf("API estimate info = %q, want %q", metric.Info, wantInfo)
 			}
-		case "threads", "accounts", "failovers", "rate limits", "ttfb", "uptime":
-			t.Fatalf("removed total %q is still present", total.Name)
+		case "threads", "accounts", "failovers", "rate limits", "ttfb":
+			t.Fatalf("removed overview metric %q is still present", metric.Name)
 		}
 	}
 	if len(wantValues) != 0 {
-		t.Fatalf("missing monthly totals: %v", wantValues)
+		t.Fatalf("missing overview metrics: %v", wantValues)
 	}
 	if !apiEstimateFound {
-		t.Fatal("API estimate total missing")
+		t.Fatal("API estimate overview metric missing")
 	}
 }
 

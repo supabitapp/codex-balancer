@@ -30,9 +30,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 
 type dashboardView struct {
 	Summary  []dashboardCount
-	Meta     string
 	Accounts []dashboardAccountView
-	Totals   []dashboardTotal
+	Overview []dashboardMetric
 	Threads  []dashboardThreadView
 	Events   []dashboardEventView
 }
@@ -62,7 +61,7 @@ type dashboardStatusView struct {
 	Label string
 }
 
-type dashboardTotal struct {
+type dashboardMetric struct {
 	Name  string
 	Value string
 	Info  string
@@ -273,13 +272,14 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	monthInfo := "Calculated from " + calendarMonthStart(now).Format("2 January 2006, 15:04 MST")
 	return dashboardView{
 		Summary:  summary,
-		Meta:     rate(snapshot) + " · up " + short(snapshot.Uptime),
 		Accounts: accounts,
-		Totals: []dashboardTotal{
+		Overview: []dashboardMetric{
 			{Name: "turns", Value: strconv.FormatInt(snapshot.Turns, 10)},
 			{Name: "http", Value: strconv.FormatInt(snapshot.Turns-snapshot.WSTurns, 10)},
 			{Name: "ws turns", Value: strconv.FormatInt(snapshot.WSTurns, 10)},
 			{Name: "ws open", Value: strconv.FormatInt(snapshot.WSOpen, 10)},
+			{Name: "turn rate", Value: rate(snapshot)},
+			{Name: "uptime", Value: short(snapshot.Uptime)},
 			{Name: "input tokens", Value: formatTokenCount(snapshot.MonthlyUsage.InputTokens), Info: monthInfo},
 			{Name: "cached input", Value: formatTokenCount(snapshot.MonthlyUsage.InputDetails.CachedTokens), Info: monthInfo},
 			{Name: "output tokens", Value: formatTokenCount(snapshot.MonthlyUsage.OutputTokens), Info: monthInfo},
