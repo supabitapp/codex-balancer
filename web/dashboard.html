@@ -52,6 +52,7 @@ th, td { padding: .5rem .75rem .5rem 0; text-align: left }
 th:last-child, td:last-child { padding-right: 0 }
 th { font-size: .75rem; font-weight: 500 }
 td { font-weight: 400 }
+.fit { width: 1% }
 .spark { letter-spacing: .08em }
 .fast-icon { display: block; width: 1rem; height: 1rem; color: var(--amber-11); fill: currentColor; opacity: .75 }
 .empty { padding: .5rem 0 }
@@ -136,7 +137,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <thead><tr>
 <th>Thread</th>
 <th>Client</th>
-<th>Route</th>
+<th class="fit">Route</th>
 <th>Account</th>
 <th>Model</th>
 <th>Thinking</th>
@@ -146,7 +147,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Cache %</th>
 <th>Output</th>
 <th>Context</th>
-<th>Compacts</th>
+<th class="fit">Compacts</th>
 <th>Latency</th>
 <th>Turns</th>
 <th>Last active</th>
@@ -154,7 +155,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <tbody>{{if .Threads}}{{range .Threads}}<tr>
 <td>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.KeyPrefix}}</span>{{else}}{{.KeyPrefix}}{{end}}</td>
 <td class="dim">{{.ClientID}}</td>
-<td class="dim">→</td>
+<td class="fit dim">→</td>
 <td>{{.Account}}</td>
 <td>{{.Model}}</td>
 <td>{{.Thinking}}</td>
@@ -164,7 +165,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.CacheRate}}</td>
 <td>{{.Output}}</td>
 <td>{{if .ContextInfo}}<span class="has-tooltip" data-tooltip="{{.ContextInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Context}}</span>{{else}}{{.Context}}{{end}}</td>
-<td>{{.Compactions}}</td>
+<td class="fit">{{.Compactions}}</td>
 <td>{{if .LatencyInfo}}<span class="has-tooltip" data-tooltip="{{.LatencyInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Latency}}</span>{{else}}{{.Latency}}{{end}}</td>
 <td class="dim">{{.Turns}}</td>
 <td class="dim">{{.Last}}</td>
