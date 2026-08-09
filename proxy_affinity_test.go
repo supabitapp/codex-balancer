@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -797,6 +798,40 @@ func TestHTTPCompletedResponseTracksAPIEstimate(t *testing.T) {
 	wantUsage.InputDetails.CachedTokens = 800
 	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Usage != wantUsage {
 		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads, wantUsage)
+	}
+}
+
+func TestHTTPV2CompactionTracksMetadataAndUsage(t *testing.T) {
+	account := testAccount("account-a", 0)
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{account}, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"type":"response.completed","response":{"model":"gpt-5.6-sol","usage":{"input_tokens":1000,"output_tokens":100,"total_tokens":1100,"output_tokens_details":{"reasoning_tokens":60}}}}`+"\n\n")
+	})
+	defer closeServer()
+
+	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "codex-turn", WindowID: "codex-window:1", SubagentKind: "compact"}
+	body, err := json.Marshal(map[string]any{
+		"model":           "gpt-5.6-sol",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(metadata)},
+		"input":           []any{map[string]any{"type": "compaction_trigger"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := serveHTTPResponse(t, server, "session", "", string(body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	snapshot := server.stats.snapshot()
+	if len(snapshot.Threads) != 1 {
+		t.Fatalf("threads = %+v", snapshot.Threads)
+	}
+	thread := snapshot.Threads[0]
+	if thread.Metadata != metadata || thread.Compactions != 1 || thread.Latency <= 0 || thread.TTFB <= 0 {
+		t.Fatalf("compaction thread = %+v", thread)
+	}
+	if thread.LatestUsage.TotalTokens != 1_100 || thread.LatestUsage.OutputDetails.ReasoningTokens != 60 {
+		t.Fatalf("latest usage = %+v", thread.LatestUsage)
 	}
 }
 

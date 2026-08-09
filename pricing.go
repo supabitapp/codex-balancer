@@ -12,26 +12,40 @@ const longContextTokens = 272_000
 type responseUsage struct {
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
 	InputDetails struct {
 		CachedTokens     int64 `json:"cached_tokens"`
 		CacheWriteTokens int64 `json:"cache_write_tokens"`
 	} `json:"input_tokens_details"`
+	OutputDetails struct {
+		ReasoningTokens int64 `json:"reasoning_tokens"`
+	} `json:"output_tokens_details"`
 }
 
 func (u responseUsage) empty() bool {
-	return u.InputTokens == 0 && u.OutputTokens == 0 && u.InputDetails.CachedTokens == 0 && u.InputDetails.CacheWriteTokens == 0
+	return u.InputTokens == 0 && u.OutputTokens == 0 && u.TotalTokens == 0 && u.InputDetails.CachedTokens == 0 && u.InputDetails.CacheWriteTokens == 0 && u.OutputDetails.ReasoningTokens == 0
 }
 
 func (u *responseUsage) add(other responseUsage) {
 	u.InputTokens += other.InputTokens
 	u.OutputTokens += other.OutputTokens
+	u.TotalTokens += other.TotalTokens
 	u.InputDetails.CachedTokens += other.InputDetails.CachedTokens
 	u.InputDetails.CacheWriteTokens += other.InputDetails.CacheWriteTokens
+	u.OutputDetails.ReasoningTokens += other.OutputDetails.ReasoningTokens
+}
+
+func (u responseUsage) contextTokens() int64 {
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
+	}
+	return u.InputTokens + u.OutputTokens
 }
 
 type responsePayload struct {
 	ID          string        `json:"id"`
 	Model       string        `json:"model"`
+	Status      string        `json:"status"`
 	ServiceTier string        `json:"service_tier"`
 	Usage       responseUsage `json:"usage"`
 }

@@ -122,6 +122,81 @@ func (c *modelCatalog) entries() []modelEntry {
 	return entries
 }
 
+type modelContextLimits struct {
+	Window      int64
+	AutoCompact int64
+}
+
+func (c *modelCatalog) contextLimits(accountID, model string) modelContextLimits {
+	if c == nil {
+		return modelContextLimits{}
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	model = strings.ToLower(strings.TrimSpace(model))
+	entry := matchingModelEntry(c.accounts[accountID], model)
+	if entry == nil {
+		for _, entries := range c.accounts {
+			if entry = matchingModelEntry(entries, model); entry != nil {
+				break
+			}
+		}
+	}
+	if entry == nil {
+		return modelContextLimits{}
+	}
+	raw := modelInteger(entry, "context_window")
+	if raw == 0 {
+		raw = modelInteger(entry, "max_context_window")
+	}
+	percent := modelInteger(entry, "effective_context_window_percent")
+	if percent == 0 {
+		percent = 95
+	}
+	limits := modelContextLimits{Window: raw * percent / 100}
+	configured := modelInteger(entry, "auto_compact_token_limit")
+	if raw > 0 {
+		limits.AutoCompact = raw * 9 / 10
+		if configured > 0 {
+			limits.AutoCompact = min(configured, limits.AutoCompact)
+		}
+	} else {
+		limits.AutoCompact = configured
+	}
+	return limits
+}
+
+func matchingModelEntry(entries map[string]modelEntry, model string) modelEntry {
+	if entry := entries[model]; entry != nil {
+		return entry
+	}
+	var match modelEntry
+	matchLength := 0
+	for slug, entry := range entries {
+		if strings.HasPrefix(model, slug+"-") && len(slug) > matchLength {
+			match = entry
+			matchLength = len(slug)
+		}
+	}
+	return match
+}
+
+func modelInteger(entry modelEntry, key string) int64 {
+	switch value := entry[key].(type) {
+	case json.Number:
+		result, _ := value.Int64()
+		return result
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	case int:
+		return int64(value)
+	default:
+		return 0
+	}
+}
+
 func (c *modelCatalog) needsRefresh(active []string, clientVersion string, now time.Time) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

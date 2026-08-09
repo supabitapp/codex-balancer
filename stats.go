@@ -18,10 +18,11 @@ const (
 	activityLen        = 24
 	activitySpan       = 30 * time.Second
 
-	eventRateLimited      = "rate limited"
-	eventFailover         = "failover"
-	eventResponseAnswered = "response answered"
-	eventResponseUsage    = "response usage"
+	eventRateLimited       = "rate limited"
+	eventFailover          = "failover"
+	eventResponseAnswered  = "response answered"
+	eventResponseCompleted = "response completed"
+	eventResponseUsage     = "response usage"
 )
 
 type transport string
@@ -68,8 +69,13 @@ type threadStats struct {
 	model       string
 	effort      string
 	serviceTier string
+	metadata    turnMetadata
 	turns       int64
+	compactions int64
 	usage       responseUsage
+	latestUsage responseUsage
+	ttfb        time.Duration
+	latency     time.Duration
 	started     time.Time
 	last        time.Time
 	via         transport
@@ -138,15 +144,15 @@ func (s *Stats) failedOver(account, reason string) {
 	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
-func (s *Stats) routed(thread, clientID, account, model, effort, serviceTier string, via transport) {
+func (s *Stats) routed(thread, clientID, account, model, effort, serviceTier string, via transport, metadata turnMetadata) {
 	now := time.Now()
-	s.persistAttempt(storedAttempt{At: now, Thread: thread, ClientID: clientID, Account: account, Effort: effort, ServiceTier: serviceTier, Transport: via})
+	s.persistAttempt(storedAttempt{At: now, Thread: thread, ClientID: clientID, Account: account, Effort: effort, ServiceTier: serviceTier, Transport: via, Metadata: encodeTurnMetadata(metadata)})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applyRouted(now, thread, clientID, account, model, effort, serviceTier, via)
+	s.applyRouted(now, thread, clientID, account, model, effort, serviceTier, via, metadata)
 }
 
-func (s *Stats) applyRouted(now time.Time, thread, clientID, account, model, effort, serviceTier string, via transport) {
+func (s *Stats) applyRouted(now time.Time, thread, clientID, account, model, effort, serviceTier string, via transport, metadata turnMetadata) {
 	s.turns++
 	if via == transportWebSocket {
 		s.wsTurns++
@@ -170,6 +176,7 @@ func (s *Stats) applyRouted(now time.Time, thread, clientID, account, model, eff
 	t.model = model
 	t.effort = effort
 	t.serviceTier = serviceTier
+	t.metadata = metadata
 	t.turns++
 	t.last = now
 	t.via = via
@@ -198,12 +205,37 @@ func (s *Stats) pruneInactiveThreads(now time.Time) {
 	}
 }
 
-func (s *Stats) answered(ttfb time.Duration) {
-	s.persistEvent(storedEvent{At: time.Now(), Kind: eventResponseAnswered, Duration: ttfb})
+func (s *Stats) answered(thread string, ttfb time.Duration) {
+	now := time.Now()
+	s.persistEvent(storedEvent{At: now, Kind: eventResponseAnswered, Thread: thread, Duration: ttfb})
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.applyAnswered(now, thread, ttfb)
+}
+
+func (s *Stats) applyAnswered(at time.Time, thread string, ttfb time.Duration) {
 	s.ttfbSum += ttfb
 	s.ttfbN++
+	if current := s.threads[thread]; current != nil && !at.Before(current.started) {
+		current.ttfb = ttfb
+	}
+}
+
+func (s *Stats) completed(thread string, metadata turnMetadata, latency time.Duration) {
+	now := time.Now()
+	s.persistEvent(storedEvent{At: now, Kind: eventResponseCompleted, Thread: thread, Detail: metadata.RequestKind, Duration: latency})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.applyCompleted(now, thread, metadata.RequestKind, latency)
+}
+
+func (s *Stats) applyCompleted(at time.Time, thread, requestKind string, latency time.Duration) {
+	if current := s.threads[thread]; current != nil && !at.Before(current.started) {
+		current.latency = latency
+		if requestKind == "compaction" {
+			current.compactions++
+		}
+	}
 }
 
 func (s *Stats) recordUsage(thread, model, serviceTier string, usage responseUsage) {
@@ -221,6 +253,7 @@ func (s *Stats) applyUsageAt(at time.Time, thread, model, serviceTier string, us
 	if current := s.threads[thread]; current != nil && !at.Before(current.started) {
 		current.model = model
 		current.usage.add(usage)
+		current.latestUsage = usage
 	}
 	month := calendarMonth(at)
 	if month < s.usageMonth {
@@ -291,8 +324,13 @@ type ThreadSnapshot struct {
 	Model       string `json:"model"`
 	Effort      string `json:"reasoning_effort"`
 	ServiceTier string `json:"service_tier"`
-	Turns       int64  `json:"turns"`
+	Metadata    turnMetadata
+	Turns       int64 `json:"turns"`
+	Compactions int64 `json:"compactions"`
 	Usage       responseUsage
+	LatestUsage responseUsage
+	TTFB        time.Duration
+	Latency     time.Duration
 	Last        time.Time `json:"last"`
 	Via         transport `json:"via"`
 }
@@ -340,8 +378,13 @@ func (s *Stats) snapshot() Snapshot {
 			Model:       t.model,
 			Effort:      t.effort,
 			ServiceTier: t.serviceTier,
+			Metadata:    t.metadata,
 			Turns:       t.turns,
+			Compactions: t.compactions,
 			Usage:       t.usage,
+			LatestUsage: t.latestUsage,
+			TTFB:        t.ttfb,
+			Latency:     t.latency,
 			Last:        t.last,
 			Via:         t.via,
 		})

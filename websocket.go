@@ -38,6 +38,7 @@ type websocketTurn struct {
 	model        string
 	effort       string
 	serviceTier  string
+	metadata     turnMetadata
 	counted      bool
 	created      bool
 	visible      bool
@@ -49,17 +50,18 @@ type websocketTurn struct {
 }
 
 type websocketEnvelope struct {
-	Type        string                     `json:"type"`
-	ID          string                     `json:"id"`
-	ResponseID  string                     `json:"response_id"`
-	Generate    *bool                      `json:"generate"`
-	Model       string                     `json:"model"`
-	Reasoning   responseReasoning          `json:"reasoning"`
-	Status      int                        `json:"status"`
-	StatusCode  int                        `json:"status_code"`
-	ServiceTier string                     `json:"service_tier"`
-	Headers     map[string]json.RawMessage `json:"headers"`
-	Error       struct {
+	Type           string                     `json:"type"`
+	ID             string                     `json:"id"`
+	ResponseID     string                     `json:"response_id"`
+	Generate       *bool                      `json:"generate"`
+	Model          string                     `json:"model"`
+	Reasoning      responseReasoning          `json:"reasoning"`
+	Status         int                        `json:"status"`
+	StatusCode     int                        `json:"status_code"`
+	ServiceTier    string                     `json:"service_tier"`
+	ClientMetadata map[string]string          `json:"client_metadata"`
+	Headers        map[string]json.RawMessage `json:"headers"`
+	Error          struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
@@ -465,6 +467,7 @@ func (s *server) relayResponsesWebSocket(
 				model:       event.Model,
 				effort:      event.Reasoning.Effort,
 				serviceTier: event.ServiceTier,
+				metadata:    requestTurnMetadata("", event.ClientMetadata),
 				counted:     counted,
 				resolution:  resolution,
 				thread:      turnThread,
@@ -570,8 +573,8 @@ func (s *server) relayResponsesWebSocket(
 						}
 					}
 					if turns[index].counted {
-						s.stats.routed(turns[index].thread, requestClientID(r, s.clientIDKey), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket)
-						s.stats.answered(time.Since(turns[index].sent))
+						s.stats.routed(turns[index].thread, requestClientID(r, s.clientIDKey), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket, turns[index].metadata)
+						s.stats.answered(turns[index].thread, time.Since(turns[index].sent))
 					}
 					break
 				}
@@ -588,6 +591,9 @@ func (s *server) relayResponsesWebSocket(
 							serviceTier = turn.serviceTier
 						}
 						s.stats.recordUsage(turn.thread, model, serviceTier, event.Response.Usage)
+						if event.Type == "response.completed" {
+							s.stats.completed(turn.thread, turn.metadata, time.Since(turn.sent))
+						}
 					}
 					turns = turns[1:]
 				}

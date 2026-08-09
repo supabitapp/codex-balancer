@@ -71,6 +71,9 @@ var stateMigrations = []string{
 	ALTER TABLE bindings ADD COLUMN abandoned_at_ns INTEGER;`,
 	`ALTER TABLE events ADD COLUMN thread_key TEXT NOT NULL DEFAULT '';`,
 	`ALTER TABLE attempts ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT '';`,
+	`ALTER TABLE attempts ADD COLUMN turn_metadata TEXT NOT NULL DEFAULT '';
+	ALTER TABLE events ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE events ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0;`,
 }
 
 type StateStore struct {
@@ -86,6 +89,7 @@ type storedAttempt struct {
 	Effort      string
 	ServiceTier string
 	Transport   transport
+	Metadata    string
 }
 
 type storedEvent struct {
@@ -358,41 +362,42 @@ func decodeTime(value int64) time.Time {
 }
 
 func (s *StateStore) recordAttempt(attempt storedAttempt) error {
-	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, thread_key, client_id, account_id, reasoning_effort, service_tier, transport) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		attempt.At.UnixNano(), attempt.Thread, attempt.ClientID, attempt.Account, attempt.Effort, attempt.ServiceTier, attempt.Transport)
+	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, thread_key, client_id, account_id, reasoning_effort, service_tier, transport, turn_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		attempt.At.UnixNano(), attempt.Thread, attempt.ClientID, attempt.Account, attempt.Effort, attempt.ServiceTier, attempt.Transport, attempt.Metadata)
 	return err
 }
 
 func (s *StateStore) recordEvent(event storedEvent) error {
 	_, err := s.db.Exec(`INSERT INTO events (
 		at_ns, kind, account_id, thread_key, detail, duration_ns, model, service_tier,
-		input_tokens, cached_tokens, cache_write_tokens, output_tokens
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.At.UnixNano(), event.Kind, event.Account, event.Thread, event.Detail, event.Duration.Nanoseconds(), event.Model, event.ServiceTier,
-		event.Usage.InputTokens, event.Usage.InputDetails.CachedTokens, event.Usage.InputDetails.CacheWriteTokens, event.Usage.OutputTokens)
+		event.Usage.InputTokens, event.Usage.InputDetails.CachedTokens, event.Usage.InputDetails.CacheWriteTokens, event.Usage.OutputTokens,
+		event.Usage.TotalTokens, event.Usage.OutputDetails.ReasoningTokens)
 	return err
 }
 
 func (s *StateStore) restoreStats(stats *Stats) error {
-	attempts, err := s.db.Query(`SELECT at_ns, thread_key, client_id, account_id, reasoning_effort, service_tier, transport FROM attempts ORDER BY id`)
+	attempts, err := s.db.Query(`SELECT at_ns, thread_key, client_id, account_id, reasoning_effort, service_tier, transport, turn_metadata FROM attempts ORDER BY id`)
 	if err != nil {
 		return err
 	}
 	for attempts.Next() {
 		var at int64
-		var thread, clientID, account, effort, tier string
+		var thread, clientID, account, effort, tier, metadata string
 		var via transport
-		if err := attempts.Scan(&at, &thread, &clientID, &account, &effort, &tier, &via); err != nil {
+		if err := attempts.Scan(&at, &thread, &clientID, &account, &effort, &tier, &via, &metadata); err != nil {
 			attempts.Close()
 			return err
 		}
-		stats.applyRouted(time.Unix(0, at), thread, clientID, account, "", effort, tier, via)
+		stats.applyRouted(time.Unix(0, at), thread, clientID, account, "", effort, tier, via, decodeTurnMetadata(metadata))
 	}
 	if err := attempts.Close(); err != nil {
 		return err
 	}
 	events, err := s.db.Query(`SELECT at_ns, kind, account_id, thread_key, detail, duration_ns, model, service_tier,
-		input_tokens, cached_tokens, cache_write_tokens, output_tokens FROM events ORDER BY id`)
+		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens FROM events ORDER BY id`)
 	if err != nil {
 		return err
 	}
@@ -401,15 +406,18 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 		var event storedEvent
 		var at, duration int64
 		if err := events.Scan(&at, &event.Kind, &event.Account, &event.Thread, &event.Detail, &duration, &event.Model, &event.ServiceTier,
-			&event.Usage.InputTokens, &event.Usage.InputDetails.CachedTokens, &event.Usage.InputDetails.CacheWriteTokens, &event.Usage.OutputTokens); err != nil {
+			&event.Usage.InputTokens, &event.Usage.InputDetails.CachedTokens, &event.Usage.InputDetails.CacheWriteTokens, &event.Usage.OutputTokens,
+			&event.Usage.TotalTokens, &event.Usage.OutputDetails.ReasoningTokens); err != nil {
 			return err
 		}
 		event.At = time.Unix(0, at)
 		event.Duration = time.Duration(duration)
 		switch event.Kind {
 		case eventResponseAnswered:
-			stats.ttfbSum += event.Duration
-			stats.ttfbN++
+			stats.applyAnswered(event.At, event.Thread, event.Duration)
+			continue
+		case eventResponseCompleted:
+			stats.applyCompleted(event.At, event.Thread, event.Detail, event.Duration)
 			continue
 		case eventResponseUsage:
 			stats.applyUsageAt(event.At, event.Thread, event.Model, event.ServiceTier, event.Usage)

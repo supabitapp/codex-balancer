@@ -57,10 +57,13 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_id;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
+		ALTER TABLE attempts DROP COLUMN turn_metadata;
 		ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';
 		ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
 		ALTER TABLE events DROP COLUMN thread_key;
+		ALTER TABLE events DROP COLUMN total_tokens;
+		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		DROP TABLE client_identity;
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, client_ip)
 		VALUES (1, 'thread', 'account', '', 'http', '203.0.113.42');
@@ -101,7 +104,10 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
 		ALTER TABLE events DROP COLUMN thread_key;
+		ALTER TABLE events DROP COLUMN total_tokens;
+		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
+		ALTER TABLE attempts DROP COLUMN turn_metadata;
 		PRAGMA user_version = 5;`); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +144,10 @@ func TestStateStoreClearsStoredClientIDs(t *testing.T) {
 	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
 		ALTER TABLE events DROP COLUMN thread_key;
+		ALTER TABLE events DROP COLUMN total_tokens;
+		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
+		ALTER TABLE attempts DROP COLUMN turn_metadata;
 		PRAGMA user_version = 4;`); err != nil {
 		t.Fatal(err)
 	}
@@ -204,12 +213,15 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stats.routed("thread", "client-a", "account-a", "gpt-5.6-sol", "high", serviceTierFast, transportHTTP)
-	stats.routed("thread", "client-b", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, transportWebSocket)
+	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "codex-turn", SubagentKind: "compact"}
+	stats.routed("thread", "client-a", "account-a", "gpt-5.6-sol", "high", serviceTierFast, transportHTTP, metadata)
+	stats.routed("thread", "client-b", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, transportWebSocket, metadata)
 	stats.failedOver("account-a", "unreachable")
 	stats.rateLimited("account-a")
-	stats.answered(2 * time.Second)
-	usage := responseUsage{InputTokens: 10, OutputTokens: 20}
+	stats.answered("thread", 2*time.Second)
+	stats.completed("thread", metadata, 3*time.Second)
+	usage := responseUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30}
+	usage.OutputDetails.ReasoningTokens = 5
 	stats.recordUsage("thread", "gpt-5.6-sol", serviceTierFast, usage)
 	stats.note("account added", "account-a", "")
 	stats.websocketOpened("account-a")
@@ -239,7 +251,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if len(snapshot.Threads) != 1 || snapshot.Threads[0].ClientID != "client-b" || snapshot.Threads[0].Model != "gpt-5.6-sol" || snapshot.Threads[0].Effort != "xhigh" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
 		t.Fatalf("threads = %+v", snapshot.Threads)
 	}
-	if snapshot.Threads[0].Usage != usage {
+	if snapshot.Threads[0].Usage != usage || snapshot.Threads[0].LatestUsage != usage || snapshot.Threads[0].Metadata != metadata || snapshot.Threads[0].Compactions != 1 || snapshot.Threads[0].TTFB != 2*time.Second || snapshot.Threads[0].Latency != 3*time.Second {
 		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads[0].Usage, usage)
 	}
 	if len(snapshot.Events) != 3 {

@@ -84,7 +84,7 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStats()
-	stats.routed("019fe5c2private", "a1b2c3d4", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket)
+	stats.routed("019fe5c2private", "a1b2c3d4", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{})
 	stats.recordUsage("019fe5c2private", "gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
@@ -231,28 +231,45 @@ func TestDashboardMonthlyTotals(t *testing.T) {
 func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	now := time.Now()
 	stats := newStats()
-	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP)
-	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
+	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "019fe5c2private", TurnID: "019fe730private", SubagentKind: "compact"}
+	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, metadata)
+	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300, TotalTokens: 2_300}
 	usage.InputDetails.CachedTokens = 1_500
+	usage.OutputDetails.ReasoningTokens = 100
 	stats.applyUsageAt(now, "thread", "gpt-5.6-sol", "default", usage)
-	server := &server{pool: &Pool{}, stats: stats}
+	stats.applyAnswered(now, "thread", 500*time.Millisecond)
+	stats.applyCompleted(now, "thread", metadata.RequestKind, 2*time.Second)
+	catalog := newModelCatalog()
+	model := testModelEntry("gpt-5.6-sol")
+	model["context_window"] = 272_000
+	model["effective_context_window_percent"] = 95
+	catalog.replace([]string{"account"}, map[string][]modelEntry{"account": {model}}, "0.147.0")
+	server := &server{pool: &Pool{}, stats: stats, catalog: catalog}
 
 	view := server.currentDashboard(now)
 	if len(view.Threads) != 1 {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "gpt-5.6-sol" || thread.Thinking != "xhigh" || thread.Input != "2K" || thread.Cached != "1.5K" || thread.Output != "300" {
+	if thread.Model != "gpt-5.6-sol" || thread.Thinking != "xhigh" || thread.Input != "2K" || thread.Cached != "1.5K" || thread.CacheRate != "75%" || thread.Output != "300" || thread.Reasoning != "100" || thread.Context != "2.3K / 258.4K" || thread.Compactions != "1" || thread.Latency != "2s" {
 		t.Fatalf("routing row = %+v", thread)
+	}
+	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
+		t.Fatalf("routing details = %+v", thread)
 	}
 	payload, err := renderDashboard("dashboard", view)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Model</th>", "<th>Thinking</th>", "<th>Input</th>", "<th>Cached</th>", "<th>Output</th>"} {
+	for _, expected := range []string{"<th>Model</th>", "<th>Thinking</th>", "<th>Input</th>", "<th>Cached</th>", "<th>Cache %</th>", "<th>Output</th>", "<th>Reasoning</th>", "<th>Context</th>", "<th>Compacts</th>", "<th>Latency</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "First byte: 500ms"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
+		}
+	}
+	for _, private := range []string{"019fe5c2private", "019fe730private"} {
+		if strings.Contains(body, private) {
+			t.Fatalf("dashboard exposed %q", private)
 		}
 	}
 }

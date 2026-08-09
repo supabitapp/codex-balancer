@@ -70,18 +70,26 @@ type dashboardTotal struct {
 }
 
 type dashboardThreadView struct {
-	KeyPrefix string
-	ClientID  string
-	Account   string
-	Model     string
-	Thinking  string
-	Via       string
-	Fast      bool
-	Input     string
-	Cached    string
-	Output    string
-	Turns     string
-	Last      string
+	KeyPrefix   string
+	Info        string
+	ClientID    string
+	Account     string
+	Model       string
+	Thinking    string
+	Via         string
+	Fast        bool
+	Input       string
+	Cached      string
+	CacheRate   string
+	Output      string
+	Reasoning   string
+	Context     string
+	ContextInfo string
+	Compactions string
+	Latency     string
+	LatencyInfo string
+	Turns       string
+	Last        string
 }
 
 type dashboardEventView struct {
@@ -234,19 +242,28 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	})
 	threadViews := make([]dashboardThreadView, 0, len(threads))
 	for _, thread := range threads {
+		limits := s.catalog.contextLimits(thread.Account, thread.Model)
 		threadViews = append(threadViews, dashboardThreadView{
-			KeyPrefix: shortKey(thread.Key),
-			ClientID:  thread.ClientID,
-			Account:   names[thread.Account],
-			Model:     thread.Model,
-			Thinking:  thread.Effort,
-			Via:       strings.ToUpper(string(thread.Via)),
-			Fast:      isFastServiceTier(thread.ServiceTier),
-			Input:     formatTokenCount(thread.Usage.InputTokens),
-			Cached:    formatTokenCount(thread.Usage.InputDetails.CachedTokens),
-			Output:    formatTokenCount(thread.Usage.OutputTokens),
-			Turns:     plural(thread.Turns, "turn"),
-			Last:      agoAt(now, thread.Last),
+			KeyPrefix:   shortKey(thread.Key),
+			Info:        dashboardThreadInfo(thread.Metadata),
+			ClientID:    thread.ClientID,
+			Account:     names[thread.Account],
+			Model:       thread.Model,
+			Thinking:    thread.Effort,
+			Via:         strings.ToUpper(string(thread.Via)),
+			Fast:        isFastServiceTier(thread.ServiceTier),
+			Input:       formatTokenCount(thread.Usage.InputTokens),
+			Cached:      formatTokenCount(thread.Usage.InputDetails.CachedTokens),
+			CacheRate:   dashboardCacheRate(thread.Usage),
+			Output:      formatTokenCount(thread.Usage.OutputTokens),
+			Reasoning:   formatTokenCount(thread.Usage.OutputDetails.ReasoningTokens),
+			Context:     dashboardContext(thread.LatestUsage.contextTokens(), limits),
+			ContextInfo: dashboardContextInfo(thread.LatestUsage.contextTokens(), limits),
+			Compactions: strconv.FormatInt(thread.Compactions, 10),
+			Latency:     formatLatency(thread.Latency),
+			LatencyInfo: dashboardLatencyInfo(thread.TTFB, thread.Latency),
+			Turns:       plural(thread.Turns, "turn"),
+			Last:        agoAt(now, thread.Last),
 		})
 	}
 
@@ -284,6 +301,73 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		Threads: threadViews,
 		Events:  events,
 	}
+}
+
+func dashboardThreadInfo(metadata turnMetadata) string {
+	lines := make([]string, 0, 8)
+	for _, item := range []struct {
+		label string
+		value string
+	}{
+		{"Request", metadata.RequestKind},
+		{"Codex thread", shortKey(metadata.ThreadID)},
+		{"Turn", shortKey(metadata.TurnID)},
+		{"Window", shortKey(metadata.WindowID)},
+		{"Agent", metadata.SubagentKind},
+		{"Parent thread", shortKey(metadata.ParentThreadID)},
+		{"Parent turn", shortKey(metadata.ParentTurnID)},
+		{"Forked from", shortKey(metadata.ForkedFromThreadID)},
+	} {
+		if item.value != "" {
+			lines = append(lines, item.label+": "+item.value)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func dashboardCacheRate(usage responseUsage) string {
+	if usage.InputTokens == 0 {
+		return "--"
+	}
+	return formatPercent(float64(usage.InputDetails.CachedTokens) * 100 / float64(usage.InputTokens))
+}
+
+func dashboardContext(used int64, limits modelContextLimits) string {
+	if used == 0 && limits.Window == 0 {
+		return "--"
+	}
+	if limits.Window == 0 {
+		return formatTokenCount(used)
+	}
+	return formatTokenCount(used) + " / " + formatTokenCount(limits.Window)
+}
+
+func dashboardContextInfo(used int64, limits modelContextLimits) string {
+	lines := make([]string, 0, 2)
+	if limits.Window > 0 {
+		lines = append(lines, "Usable context: "+formatTokenCount(limits.Window))
+	}
+	if limits.AutoCompact > 0 {
+		lines = append(lines, "Auto compact at: "+formatTokenCount(limits.AutoCompact))
+	}
+	if used > 0 && limits.Window > 0 {
+		lines = append(lines, "Used: "+formatPercent(float64(used)*100/float64(limits.Window)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatLatency(value time.Duration) string {
+	if value <= 0 {
+		return "--"
+	}
+	return value.Round(time.Millisecond).String()
+}
+
+func dashboardLatencyInfo(ttfb, total time.Duration) string {
+	if ttfb <= 0 && total <= 0 {
+		return ""
+	}
+	return "First byte: " + formatLatency(ttfb) + "\nTotal: " + formatLatency(total)
 }
 
 func dashboardResetInfo(now time.Time, credits []resetCreditStatsResponse) string {

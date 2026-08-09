@@ -206,7 +206,8 @@ func TestWebSocketCompletedResponseTracksAPIEstimate(t *testing.T) {
 
 	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
 	defer conn.CloseNow()
-	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-5.6-sol", "service_tier": serviceTierFast, "input": []any{}})
+	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "codex-turn"}
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-5.6-sol", "service_tier": serviceTierFast, "client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(metadata)}, "input": []any{}})
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
 
@@ -217,6 +218,9 @@ func TestWebSocketCompletedResponseTracksAPIEstimate(t *testing.T) {
 	wantUsage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
 	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Usage != wantUsage {
 		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads, wantUsage)
+	}
+	if snapshot.Threads[0].Metadata != metadata || snapshot.Threads[0].Compactions != 1 || snapshot.Threads[0].Latency <= 0 || snapshot.Threads[0].TTFB <= 0 {
+		t.Fatalf("compaction thread = %+v", snapshot.Threads[0])
 	}
 }
 
