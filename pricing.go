@@ -42,6 +42,10 @@ func (u responseUsage) contextTokens() int64 {
 	return u.InputTokens + u.OutputTokens
 }
 
+func (u responseUsage) nonCachedInput() int64 {
+	return max(u.InputTokens-max(u.InputDetails.CachedTokens, 0), 0)
+}
+
 type responsePayload struct {
 	ID          string        `json:"id"`
 	Model       string        `json:"model"`

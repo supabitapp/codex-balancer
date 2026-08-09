@@ -50,6 +50,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		`hx-ext="ws"`,
 		`ws-connect="/dashboard/ws"`,
 		`id="dashboard"`,
+		`active segments`,
 		`nothing routed yet`,
 	} {
 		if !strings.Contains(body, expected) {
@@ -311,10 +312,10 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "gpt-5.6-sol (xhigh)" || thread.Input != "2K" || thread.CacheRate != "75" || thread.Output != "300" || thread.Context != "1% (1)" || thread.Latency != "2s" || thread.Turns != "1" {
+	if thread.Model != "gpt-5.6-sol (xhigh)" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextLeft != "100% (1)" || thread.Latency != "2s" || thread.Requests != "1" {
 		t.Fatalf("routing row = %+v", thread)
 	}
-	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Used: 2.3K (0.89%)") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
+	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Context window: 258.4K") || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Used: 2.3K") || !strings.Contains(thread.ContextInfo, "Left: 100%") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
 		t.Fatalf("routing details = %+v", thread)
 	}
 	payload, err := renderDashboard("dashboard", view)
@@ -322,7 +323,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Model (thinking mode)</th>", "<td>gpt-5.6-sol (xhigh)</td>", "<th>Input</th>", "<th>Cache %</th>", "<th>Output</th>", "<th>Context/Compaction</th>", "<th>Latency</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1", "First byte: 500ms"} {
+	for _, expected := range []string{"<th>Model (thinking mode)</th>", "<td>gpt-5.6-sol (xhigh)</td>", "<th>Uncached input</th>", "<th>Cache %</th>", "<th>Output</th>", "<th>Context left/Compactions</th>", "<th>Latency</th>", "<th>Requests</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1", "First byte: 500ms"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -346,14 +347,17 @@ func TestDashboardModelOmitsEmptyThinkingMode(t *testing.T) {
 }
 
 func TestDashboardContextShowsPercentAndCompactions(t *testing.T) {
-	limits := modelContextLimits{Window: 4_000, AutoCompact: 3_000}
-	if got := dashboardContext(2_000, limits, 0); got != "50%" {
-		t.Fatalf("context = %q, want 50%%", got)
+	limits := modelContextLimits{Window: 112_000, AutoCompact: 100_000}
+	if got := dashboardContext(12_000, limits, 0); got != "100%" {
+		t.Fatalf("context = %q, want 100%%", got)
 	}
-	if got := dashboardContext(1_333, limits, 7); got != "33% (7)" {
-		t.Fatalf("context = %q, want 33%% (7)", got)
+	if got := dashboardContext(62_000, limits, 7); got != "50% (7)" {
+		t.Fatalf("context = %q, want 50%% (7)", got)
 	}
-	if info := dashboardContextInfo(2_000, limits, 0); !strings.Contains(info, "Compactions: 0") {
+	if got := dashboardContext(120_000, limits, 0); got != "0%" {
+		t.Fatalf("context = %q, want 0%%", got)
+	}
+	if info := dashboardContextInfo(62_000, limits, 0); !strings.Contains(info, "Left: 50%\nCompactions: 0") {
 		t.Fatalf("context info = %q", info)
 	}
 }

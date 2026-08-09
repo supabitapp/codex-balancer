@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	dashboardFrame          = 500 * time.Millisecond
-	dashboardMaxConnections = 32
+	dashboardFrame           = 500 * time.Millisecond
+	dashboardMaxConnections  = 32
+	dashboardContextBaseline = 12_000
 )
 
 //go:embed web/dashboard.html web/dashboard.js web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
@@ -68,22 +69,22 @@ type dashboardTotal struct {
 }
 
 type dashboardThreadView struct {
-	KeyPrefix   string
-	Info        string
-	ClientID    string
-	Account     string
-	Model       string
-	Via         string
-	Fast        bool
-	Input       string
-	CacheRate   string
-	Output      string
-	Context     string
-	ContextInfo string
-	Latency     string
-	LatencyInfo string
-	Turns       string
-	Last        string
+	KeyPrefix     string
+	Info          string
+	ClientID      string
+	Account       string
+	Model         string
+	Via           string
+	Fast          bool
+	UncachedInput string
+	CacheRate     string
+	Output        string
+	ContextLeft   string
+	ContextInfo   string
+	Latency       string
+	LatencyInfo   string
+	Requests      string
+	Last          string
 }
 
 type dashboardEventView struct {
@@ -239,22 +240,22 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		limits := s.catalog.contextLimits(thread.Account, thread.Model)
 		used := thread.LatestUsage.contextTokens()
 		threadViews = append(threadViews, dashboardThreadView{
-			KeyPrefix:   shortKey(thread.Key),
-			Info:        dashboardThreadInfo(thread.Metadata),
-			ClientID:    thread.ClientID,
-			Account:     names[thread.Account],
-			Model:       dashboardModel(thread.Model, thread.Effort),
-			Via:         strings.ToUpper(string(thread.Via)),
-			Fast:        isFastServiceTier(thread.ServiceTier),
-			Input:       formatTokenCount(thread.Usage.InputTokens),
-			CacheRate:   dashboardCacheRate(thread.Usage),
-			Output:      formatTokenCount(thread.Usage.OutputTokens),
-			Context:     dashboardContext(used, limits, thread.Compactions),
-			ContextInfo: dashboardContextInfo(used, limits, thread.Compactions),
-			Latency:     formatLatency(thread.Latency),
-			LatencyInfo: dashboardLatencyInfo(thread.TTFB, thread.Latency),
-			Turns:       dashboardNumber(thread.Turns),
-			Last:        agoAt(now, thread.Last),
+			KeyPrefix:     shortKey(thread.Key),
+			Info:          dashboardThreadInfo(thread.Metadata),
+			ClientID:      thread.ClientID,
+			Account:       names[thread.Account],
+			Model:         dashboardModel(thread.Model, thread.Effort),
+			Via:           strings.ToUpper(string(thread.Via)),
+			Fast:          isFastServiceTier(thread.ServiceTier),
+			UncachedInput: formatTokenCount(thread.Usage.nonCachedInput()),
+			CacheRate:     dashboardCacheRate(thread.Usage),
+			Output:        formatTokenCount(thread.Usage.OutputTokens),
+			ContextLeft:   dashboardContext(used, limits, thread.Compactions),
+			ContextInfo:   dashboardContextInfo(used, limits, thread.Compactions),
+			Latency:       formatLatency(thread.Latency),
+			LatencyInfo:   dashboardLatencyInfo(thread.TTFB, thread.Latency),
+			Requests:      dashboardNumber(thread.Turns),
+			Last:          agoAt(now, thread.Last),
 		})
 	}
 
@@ -332,7 +333,7 @@ func dashboardCacheRate(usage responseUsage) string {
 func dashboardContext(used int64, limits modelContextLimits, compactions int64) string {
 	context := "--"
 	if limits.Window > 0 {
-		context = fmt.Sprintf("%.0f%%", float64(used)*100/float64(limits.Window))
+		context = fmt.Sprintf("%.0f%%", dashboardContextRemaining(used, limits.Window))
 	}
 	if compactions > 0 {
 		context += " (" + strconv.FormatInt(compactions, 10) + ")"
@@ -341,22 +342,30 @@ func dashboardContext(used int64, limits modelContextLimits, compactions int64) 
 }
 
 func dashboardContextInfo(used int64, limits modelContextLimits, compactions int64) string {
-	lines := make([]string, 0, 4)
+	lines := make([]string, 0, 5)
 	if limits.Window > 0 {
-		lines = append(lines, "Usable context: "+formatTokenCount(limits.Window))
+		lines = append(lines, "Context window: "+formatTokenCount(limits.Window))
 	}
 	if limits.AutoCompact > 0 {
 		lines = append(lines, "Auto compact at: "+formatTokenCount(limits.AutoCompact))
 	}
 	if used > 0 {
-		usedContext := "Used: " + formatTokenCount(used)
-		if limits.Window > 0 {
-			usedContext += " (" + formatPercent(float64(used)*100/float64(limits.Window)) + ")"
-		}
-		lines = append(lines, usedContext)
+		lines = append(lines, "Used: "+formatTokenCount(used))
+	}
+	if limits.Window > 0 {
+		lines = append(lines, "Left: "+formatPercent(dashboardContextRemaining(used, limits.Window)))
 	}
 	lines = append(lines, "Compactions: "+strconv.FormatInt(compactions, 10))
 	return strings.Join(lines, "\n")
+}
+
+func dashboardContextRemaining(used, window int64) float64 {
+	if window <= dashboardContextBaseline {
+		return 0
+	}
+	available := window - dashboardContextBaseline
+	consumed := max(used-dashboardContextBaseline, 0)
+	return float64(max(available-consumed, 0)) * 100 / float64(available)
 }
 
 func formatLatency(value time.Duration) string {
