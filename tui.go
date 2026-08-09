@@ -476,11 +476,11 @@ func (d dashboard) totals(width int) string {
 		{
 			stat("ws open", fmt.Sprintf("%d", s.WSOpen)),
 			stat("uptime", short(s.Uptime)),
-			stat("input tokens", fmt.Sprintf("%d", s.MonthlyUsage.InputTokens)),
+			stat("input tokens", formatTokenCount(s.MonthlyUsage.InputTokens)),
 		},
 		{
-			stat("cached input", fmt.Sprintf("%d", s.MonthlyUsage.InputDetails.CachedTokens)),
-			stat("output tokens", fmt.Sprintf("%d", s.MonthlyUsage.OutputTokens)),
+			stat("cached input", formatTokenCount(s.MonthlyUsage.InputDetails.CachedTokens)),
+			stat("output tokens", formatTokenCount(s.MonthlyUsage.OutputTokens)),
 			stat("api estimate", formatAPIPrice(s.APICostNanoDollars, s.UnpricedResponses)),
 		},
 	}

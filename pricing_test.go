@@ -29,3 +29,22 @@ func TestEstimateAPIPriceRejectsUnknownModels(t *testing.T) {
 		t.Fatal("unknown model has a price")
 	}
 }
+
+func TestFormatTokenCount(t *testing.T) {
+	tests := map[int64]string{
+		0:             "0",
+		999:           "999",
+		1_000:         "1K",
+		1_250:         "1.3K",
+		999_949:       "999.9K",
+		999_950:       "1M",
+		1_293_911:     "1.3M",
+		407_278_819:   "407.3M",
+		2_000_000_000: "2B",
+	}
+	for tokens, want := range tests {
+		if got := formatTokenCount(tokens); got != want {
+			t.Errorf("formatTokenCount(%d) = %q, want %q", tokens, got, want)
+		}
+	}
+}

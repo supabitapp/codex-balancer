@@ -262,9 +262,9 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			{Name: "ws turns", Value: strconv.FormatInt(snapshot.WSTurns, 10)},
 			{Name: "ws open", Value: strconv.FormatInt(snapshot.WSOpen, 10)},
 			{Name: "uptime", Value: short(snapshot.Uptime)},
-			{Name: "input tokens", Value: strconv.FormatInt(snapshot.MonthlyUsage.InputTokens, 10), Info: monthInfo},
-			{Name: "cached input", Value: strconv.FormatInt(snapshot.MonthlyUsage.InputDetails.CachedTokens, 10), Info: monthInfo},
-			{Name: "output tokens", Value: strconv.FormatInt(snapshot.MonthlyUsage.OutputTokens, 10), Info: monthInfo},
+			{Name: "input tokens", Value: formatTokenCount(snapshot.MonthlyUsage.InputTokens), Info: monthInfo},
+			{Name: "cached input", Value: formatTokenCount(snapshot.MonthlyUsage.InputDetails.CachedTokens), Info: monthInfo},
+			{Name: "output tokens", Value: formatTokenCount(snapshot.MonthlyUsage.OutputTokens), Info: monthInfo},
 			{
 				Name:  "API estimate",
 				Value: formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses),

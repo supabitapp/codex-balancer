@@ -195,8 +195,8 @@ func TestDashboardMonthlyTotals(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
 	wantValues := map[string]string{
-		"input tokens":  "2000",
-		"cached input":  "1500",
+		"input tokens":  "2K",
+		"cached input":  "1.5K",
 		"output tokens": "300",
 	}
 	wantInfo := "Calculated from 1 August 2026, 00:00 BST"

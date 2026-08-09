@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
@@ -114,4 +116,23 @@ func formatAPIPrice(nanoDollars int64, unpricedResponses int64) string {
 		return fmt.Sprintf("$%.3f", dollars)
 	}
 	return fmt.Sprintf("$%.2f", dollars)
+}
+
+func formatTokenCount(tokens int64) string {
+	units := [...]string{"", "K", "M", "B", "T"}
+	value := float64(tokens)
+	unit := 0
+	for unit < len(units)-1 && (value <= -1_000 || value >= 1_000) {
+		value /= 1_000
+		unit++
+	}
+	if unit == 0 {
+		return strconv.FormatInt(tokens, 10)
+	}
+	value = math.Round(value*10) / 10
+	if unit < len(units)-1 && (value <= -1_000 || value >= 1_000) {
+		value /= 1_000
+		unit++
+	}
+	return strings.TrimSuffix(strconv.FormatFloat(value, 'f', 1, 64), ".0") + units[unit]
 }
