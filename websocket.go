@@ -35,6 +35,7 @@ type websocketTurn struct {
 	kind        websocket.MessageType
 	data        []byte
 	sent        time.Time
+	model       string
 	serviceTier string
 	counted     bool
 	created     bool
@@ -46,6 +47,7 @@ type websocketTurn struct {
 type websocketEnvelope struct {
 	Type        string                     `json:"type"`
 	Generate    *bool                      `json:"generate"`
+	Model       string                     `json:"model"`
 	Status      int                        `json:"status"`
 	StatusCode  int                        `json:"status_code"`
 	ServiceTier string                     `json:"service_tier"`
@@ -54,7 +56,7 @@ type websocketEnvelope struct {
 		Code string `json:"code"`
 	} `json:"error"`
 	Response struct {
-		ID    string `json:"id"`
+		responsePayload
 		Error struct {
 			Code string `json:"code"`
 		} `json:"error"`
@@ -419,6 +421,7 @@ func (s *server) relayResponsesWebSocket(
 				kind:        message.kind,
 				data:        append([]byte(nil), message.data...),
 				sent:        time.Now(),
+				model:       event.Model,
 				serviceTier: event.ServiceTier,
 				counted:     counted,
 				resolution:  resolution,
@@ -493,6 +496,18 @@ func (s *server) relayResponsesWebSocket(
 				}
 			case "error", "response.completed", "response.failed", "response.incomplete":
 				if len(turns) > 0 {
+					turn := turns[0]
+					if turn.counted && event.Type != "error" {
+						model := event.Response.Model
+						if model == "" {
+							model = turn.model
+						}
+						serviceTier := event.Response.ServiceTier
+						if serviceTier == "" {
+							serviceTier = turn.serviceTier
+						}
+						s.stats.recordUsage(model, serviceTier, event.Response.Usage)
+					}
 					turns = turns[1:]
 				}
 			}

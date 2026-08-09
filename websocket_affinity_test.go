@@ -136,6 +136,43 @@ func TestWebSocketFollowUpsKeepStableSessionStats(t *testing.T) {
 	}
 }
 
+func TestWebSocketCompletedResponseTracksAPIEstimate(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp"},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type": "response.completed",
+			"response": map[string]any{
+				"model": "gpt-5.6-sol",
+				"usage": map[string]any{
+					"input_tokens":  1_000,
+					"output_tokens": 100,
+				},
+			},
+		})
+	})
+	defer upstream.Close()
+	account := testAccount("account", 0)
+	server, _, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{account}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	server.upstream = upstream.URL
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-5.6-sol", "service_tier": serviceTierFast, "input": []any{}})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+
+	snapshot := server.stats.snapshot()
+	if snapshot.APICostNanoDollars != 16_000_000 || snapshot.UnpricedResponses != 0 {
+		t.Fatalf("API estimate = %d with %d unpriced, want 16000000 with none", snapshot.APICostNanoDollars, snapshot.UnpricedResponses)
+	}
+}
+
 func TestWebSocketHardRateLimitDoesNotReplay(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{

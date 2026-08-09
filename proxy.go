@@ -116,7 +116,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
 		return
 	}
-	serviceTier := requestServiceTier(inspectionBody)
+	request := responseRequest(inspectionBody)
 	affinity, err := affinityFromRequest(r.Header, inspectionBody)
 	if err != nil {
 		status, message := affinityErrorStatus(err)
@@ -132,7 +132,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	key := affinity.statsKey(r.Header)
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
-	s.log.Debug("http turn received", "thread", key, "required_account", resolution.required, "preferred_account", resolution.preferred, "service_tier", serviceTier)
+	s.log.Debug("http turn received", "thread", key, "required_account", resolution.required, "preferred_account", resolution.preferred, "service_tier", request.ServiceTier)
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		account := s.pickAccount(key, resolution.required, resolution.preferred, skip, attempt, transportHTTP)
@@ -217,11 +217,11 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		if err := s.affinity.bindAll(resolution.bindings, id); err != nil {
 			s.log.Warn("affinity save failed", "thread", key, "account", id, "error", err)
 		}
-		s.stats.routed(key, id, serviceTier, transportHTTP)
+		s.stats.routed(key, id, request.ServiceTier, transportHTTP)
 		attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
 		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 		s.log.Debug("http turn routed", attrs...)
-		s.relay(w, resp, sent, id)
+		s.relay(w, resp, sent, id, request)
 		return
 	}
 	s.log.Warn("every account failed", "transport", transportHTTP, "thread", key, "attempts", maxAttempts)
@@ -243,12 +243,15 @@ func decodeRequestBody(headers http.Header, body []byte) ([]byte, error) {
 	return decoded, nil
 }
 
-func requestServiceTier(body []byte) string {
-	var request struct {
-		ServiceTier string `json:"service_tier"`
-	}
+type responseRequestData struct {
+	Model       string `json:"model"`
+	ServiceTier string `json:"service_tier"`
+}
+
+func responseRequest(body []byte) responseRequestData {
+	var request responseRequestData
 	json.Unmarshal(body, &request)
-	return request.ServiceTier
+	return request
 }
 
 func (s *server) refreshed(account *Account, id string) bool {
@@ -304,13 +307,20 @@ func (s *server) forward(r *http.Request, body []byte, account *Account) (*http.
 	return s.client.Do(req)
 }
 
-func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, account string) {
+func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, account string, request responseRequestData) {
 	defer resp.Body.Close()
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
 	control := http.NewResponseController(w)
-	inspector := responseOwnerInspector{store: s.affinity, account: account, log: s.log}
+	inspector := responseOwnerInspector{
+		store:       s.affinity,
+		stats:       s.stats,
+		account:     account,
+		model:       request.Model,
+		serviceTier: request.ServiceTier,
+		log:         s.log,
+	}
 	first := true
 	buf := make([]byte, 32<<10)
 	for {
@@ -337,10 +347,14 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Tim
 }
 
 type responseOwnerInspector struct {
-	store   *AffinityStore
-	account string
-	buffer  []byte
-	log     *slog.Logger
+	store         *AffinityStore
+	stats         *Stats
+	account       string
+	model         string
+	serviceTier   string
+	buffer        []byte
+	usageRecorded bool
+	log           *slog.Logger
 }
 
 func (i *responseOwnerInspector) write(data []byte) {
@@ -367,25 +381,34 @@ func (i *responseOwnerInspector) inspect(line []byte) {
 		return
 	}
 	var event struct {
-		ID       string `json:"id"`
-		Object   string `json:"object"`
-		Type     string `json:"type"`
-		Response struct {
-			ID string `json:"id"`
-		} `json:"response"`
+		responsePayload
+		Object   string          `json:"object"`
+		Type     string          `json:"type"`
+		Response responsePayload `json:"response"`
 	}
 	if json.Unmarshal(line, &event) != nil {
 		return
 	}
-	id := event.Response.ID
-	if id == "" && event.Object == "response" {
-		id = event.ID
+	payload := event.Response
+	if event.Object == "response" {
+		payload = event.responsePayload
 	}
-	if id == "" || (event.Type != "" && event.Type != "response.created") {
-		return
+	if !i.usageRecorded && !payload.Usage.empty() && (event.Object == "response" || event.Type == "response.completed" || event.Type == "response.failed" || event.Type == "response.incomplete") {
+		model := payload.Model
+		if model == "" {
+			model = i.model
+		}
+		serviceTier := payload.ServiceTier
+		if serviceTier == "" {
+			serviceTier = i.serviceTier
+		}
+		i.stats.recordUsage(model, serviceTier, payload.Usage)
+		i.usageRecorded = true
 	}
-	if err := i.store.bind(affinityRef{kind: affinityResponse, value: id}, i.account); err != nil {
-		i.log.Warn("response affinity save failed", "response", id, "account", i.account, "error", err)
+	if payload.ID != "" && (event.Type == "" || event.Type == "response.created") {
+		if err := i.store.bind(affinityRef{kind: affinityResponse, value: payload.ID}, i.account); err != nil {
+			i.log.Warn("response affinity save failed", "response", payload.ID, "account", i.account, "error", err)
+		}
 	}
 }
 

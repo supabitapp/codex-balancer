@@ -75,6 +75,7 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStats()
 	stats.routed("019fe5c2private", "unused", serviceTierFast, transportWebSocket)
+	stats.recordUsage("gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
 	account := accountFromState(accountState{IDToken: "x." + tokenPayload + ".x"})
@@ -103,6 +104,8 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
 		`FAST`,
+		`API estimate`,
+		`$30.00`,
 		`failover`,
 		`&lt;script&gt;upstream unavailable&lt;/script&gt;`,
 	} {

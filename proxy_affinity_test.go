@@ -386,6 +386,24 @@ func TestHTTPJSONResponseRegistersHardOwner(t *testing.T) {
 	}
 }
 
+func TestHTTPCompletedResponseTracksAPIEstimate(t *testing.T) {
+	account := testAccount("account-a", 0)
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{account}, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"type":"response.completed","response":{"usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":800},"output_tokens":100}}}`+"\n\n")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-5.6-sol","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	snapshot := server.stats.snapshot()
+	if snapshot.APICostNanoDollars != 4_400_000 || snapshot.UnpricedResponses != 0 {
+		t.Fatalf("API estimate = %d with %d unpriced, want 4400000 with none", snapshot.APICostNanoDollars, snapshot.UnpricedResponses)
+	}
+}
+
 func TestHTTPMissingPreviousResponseFailsBeforeUpstream(t *testing.T) {
 	a := testAccount("account-a", 0)
 	calls := 0

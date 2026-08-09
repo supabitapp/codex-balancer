@@ -223,7 +223,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			KeyPrefix: shortKey(thread.Key),
 			Account:   names[thread.Account],
 			Via:       strings.ToUpper(string(thread.Via)),
-			Fast:      thread.ServiceTier == serviceTierFast,
+			Fast:      isFastServiceTier(thread.ServiceTier),
 			Turns:     plural(thread.Turns, "turn"),
 			Last:      agoAt(now, thread.Last),
 		})
@@ -260,6 +260,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			{Name: "rate limits", Value: strconv.FormatInt(snapshot.Limited, 10)},
 			{Name: "ttfb", Value: short(snapshot.TTFB)},
 			{Name: "uptime", Value: short(snapshot.Uptime)},
+			{Name: "API estimate", Value: formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses)},
 		},
 		Threads: threadViews,
 		Events:  events,

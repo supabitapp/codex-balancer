@@ -423,7 +423,7 @@ func (d dashboard) threads(width, height int) string {
 	rows := []string{}
 	for _, t := range threads {
 		tier := strings.Repeat(" ", 5)
-		if t.ServiceTier == serviceTierFast {
+		if isFastServiceTier(t.ServiceTier) {
 			tier = sHot.Render("FAST ")
 		}
 		rows = append(rows, fmt.Sprintf("%s %s %s %s %s %s %s",
@@ -483,6 +483,7 @@ func (d dashboard) totals(width int) string {
 		{
 			stat("ttfb", short(s.TTFB)),
 			stat("uptime", short(s.Uptime)),
+			stat("api estimate", formatAPIPrice(s.APICostNanoDollars, s.UnpricedResponses)),
 		},
 	}
 	cellWidth := (width - 3*columnGap) / 4

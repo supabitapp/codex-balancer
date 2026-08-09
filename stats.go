@@ -23,18 +23,20 @@ const (
 )
 
 type Stats struct {
-	mu       sync.Mutex
-	started  time.Time
-	turns    int64
-	failures int64
-	limited  int64
-	ttfbSum  time.Duration
-	ttfbN    int64
-	wsTurns  int64
-	wsOpen   int64
-	accounts map[string]*accountStats
-	threads  map[string]*threadStats
-	events   []Event
+	mu                 sync.Mutex
+	started            time.Time
+	turns              int64
+	failures           int64
+	limited            int64
+	ttfbSum            time.Duration
+	ttfbN              int64
+	wsTurns            int64
+	wsOpen             int64
+	apiCostNanoDollars int64
+	unpricedResponses  int64
+	accounts           map[string]*accountStats
+	threads            map[string]*threadStats
+	events             []Event
 }
 
 type accountStats struct {
@@ -172,17 +174,33 @@ func (s *Stats) answered(ttfb time.Duration) {
 	s.ttfbN++
 }
 
+func (s *Stats) recordUsage(model, serviceTier string, usage responseUsage) {
+	if usage.empty() {
+		return
+	}
+	cost, known := estimateAPIPrice(model, serviceTier, usage)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !known {
+		s.unpricedResponses++
+		return
+	}
+	s.apiCostNanoDollars += cost
+}
+
 type Snapshot struct {
-	Uptime   time.Duration
-	Turns    int64
-	Failures int64
-	Limited  int64
-	TTFB     time.Duration
-	WSTurns  int64
-	WSOpen   int64
-	Accounts map[string]AccountSnapshot
-	Threads  []ThreadSnapshot
-	Events   []Event
+	Uptime             time.Duration
+	Turns              int64
+	Failures           int64
+	Limited            int64
+	TTFB               time.Duration
+	WSTurns            int64
+	WSOpen             int64
+	APICostNanoDollars int64
+	UnpricedResponses  int64
+	Accounts           map[string]AccountSnapshot
+	Threads            []ThreadSnapshot
+	Events             []Event
 }
 
 type AccountSnapshot struct {
@@ -206,15 +224,17 @@ func (s *Stats) snapshot() Snapshot {
 	defer s.mu.Unlock()
 
 	out := Snapshot{
-		Uptime:   time.Since(s.started),
-		Turns:    s.turns,
-		Failures: s.failures,
-		Limited:  s.limited,
-		WSTurns:  s.wsTurns,
-		WSOpen:   s.wsOpen,
-		Accounts: make(map[string]AccountSnapshot, len(s.accounts)),
-		Threads:  make([]ThreadSnapshot, 0, len(s.threads)),
-		Events:   append([]Event{}, s.events...),
+		Uptime:             time.Since(s.started),
+		Turns:              s.turns,
+		Failures:           s.failures,
+		Limited:            s.limited,
+		WSTurns:            s.wsTurns,
+		WSOpen:             s.wsOpen,
+		APICostNanoDollars: s.apiCostNanoDollars,
+		UnpricedResponses:  s.unpricedResponses,
+		Accounts:           make(map[string]AccountSnapshot, len(s.accounts)),
+		Threads:            make([]ThreadSnapshot, 0, len(s.threads)),
+		Events:             append([]Event{}, s.events...),
 	}
 	if s.ttfbN > 0 {
 		out.TTFB = s.ttfbSum / time.Duration(s.ttfbN)
