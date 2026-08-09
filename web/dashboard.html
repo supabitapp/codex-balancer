@@ -47,7 +47,7 @@ th { font-size: .75rem; font-weight: 500 }
 .spark { font-family: ui-monospace, monospace; letter-spacing: .08em }
 .fast-icon { display: block; width: 1rem; height: 1rem; fill: currentColor }
 .empty { padding: .5rem 0 }
-.totals { display: flex; flex-wrap: wrap; gap: .375rem 1.5rem; margin: 0 }
+.totals { display: grid; grid-template-columns: repeat(6, max-content); gap: .375rem 2rem; margin: 0 }
 .totals div { display: flex; align-items: baseline; gap: .375rem; min-width: max-content }
 dt { font-size: .75rem }
 dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
@@ -61,11 +61,15 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
     --gray-12: #eeeeee;
   }
 }
+@media (max-width: 1100px) {
+  .totals { grid-template-columns: repeat(4, max-content) }
+}
 @media (max-width: 760px) {
   main { width: min(calc(100% - 1.25rem), 100rem) }
   header { align-items: flex-start; flex-direction: column }
   header > div { align-items: flex-start; flex-direction: column; gap: .25rem }
   #meta { font-size: .8rem }
+  .totals { grid-template-columns: repeat(2, max-content); column-gap: 1.5rem }
 }
 </style>
 </head>
@@ -85,6 +89,10 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </div>
 <p id="meta">{{.Meta}}</p>
 </header>
+<section>
+<h2>Totals</h2>
+<dl id="totals" class="totals">{{range .Totals}}<div><dt>{{.Name}}</dt><dd>{{.Value}}</dd></div>{{end}}</dl>
+</section>
 <section>
 <h2>Accounts</h2>
 <div id="accounts" class="scroll">
@@ -117,10 +125,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </tr>{{end}}</tbody>
 </table>{{else}}<div class="empty">(none)</div>{{end}}
 </div>
-</section>
-<section>
-<h2>Totals</h2>
-<dl id="totals" class="totals">{{range .Totals}}<div><dt>{{.Name}}</dt><dd>{{.Value}}</dd></div>{{end}}</dl>
 </section>
 <section>
 <h2>Threads&nbsp; {{len .Threads}}</h2>

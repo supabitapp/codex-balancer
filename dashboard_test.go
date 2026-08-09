@@ -44,6 +44,11 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
 	}
+	totals := strings.Index(body, `<h2>Totals</h2>`)
+	accounts := strings.Index(body, `<h2>Accounts</h2>`)
+	if totals < 0 || accounts < 0 || totals > accounts {
+		t.Fatalf("dashboard section order: totals = %d, accounts = %d", totals, accounts)
+	}
 }
 
 func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
