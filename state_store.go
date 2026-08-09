@@ -70,6 +70,7 @@ var stateMigrations = []string{
 	UPDATE bindings SET last_used_at_ns = created_at_ns;
 	ALTER TABLE bindings ADD COLUMN abandoned_at_ns INTEGER;`,
 	`ALTER TABLE events ADD COLUMN thread_key TEXT NOT NULL DEFAULT '';`,
+	`ALTER TABLE attempts ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT '';`,
 }
 
 type StateStore struct {
@@ -82,6 +83,7 @@ type storedAttempt struct {
 	Thread      string
 	ClientID    string
 	Account     string
+	Effort      string
 	ServiceTier string
 	Transport   transport
 }
@@ -356,8 +358,8 @@ func decodeTime(value int64) time.Time {
 }
 
 func (s *StateStore) recordAttempt(attempt storedAttempt) error {
-	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, thread_key, client_id, account_id, service_tier, transport) VALUES (?, ?, ?, ?, ?, ?)`,
-		attempt.At.UnixNano(), attempt.Thread, attempt.ClientID, attempt.Account, attempt.ServiceTier, attempt.Transport)
+	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, thread_key, client_id, account_id, reasoning_effort, service_tier, transport) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		attempt.At.UnixNano(), attempt.Thread, attempt.ClientID, attempt.Account, attempt.Effort, attempt.ServiceTier, attempt.Transport)
 	return err
 }
 
@@ -372,19 +374,19 @@ func (s *StateStore) recordEvent(event storedEvent) error {
 }
 
 func (s *StateStore) restoreStats(stats *Stats) error {
-	attempts, err := s.db.Query(`SELECT at_ns, thread_key, client_id, account_id, service_tier, transport FROM attempts ORDER BY id`)
+	attempts, err := s.db.Query(`SELECT at_ns, thread_key, client_id, account_id, reasoning_effort, service_tier, transport FROM attempts ORDER BY id`)
 	if err != nil {
 		return err
 	}
 	for attempts.Next() {
 		var at int64
-		var thread, clientID, account, tier string
+		var thread, clientID, account, effort, tier string
 		var via transport
-		if err := attempts.Scan(&at, &thread, &clientID, &account, &tier, &via); err != nil {
+		if err := attempts.Scan(&at, &thread, &clientID, &account, &effort, &tier, &via); err != nil {
 			attempts.Close()
 			return err
 		}
-		stats.applyRouted(time.Unix(0, at), thread, clientID, account, "", tier, via)
+		stats.applyRouted(time.Unix(0, at), thread, clientID, account, "", effort, tier, via)
 	}
 	if err := attempts.Close(); err != nil {
 		return err

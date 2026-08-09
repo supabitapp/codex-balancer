@@ -10,9 +10,9 @@ import (
 func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
-	stats.applyRouted(now.Add(-threadActiveWindow-time.Second), "inactive", "", "account", "", "", transportHTTP)
+	stats.applyRouted(now.Add(-threadActiveWindow-time.Second), "inactive", "", "account", "", "", "", transportHTTP)
 	for i := range 150 {
-		stats.applyRouted(now, fmt.Sprintf("active-%d", i), "", "account", "", "", transportHTTP)
+		stats.applyRouted(now, fmt.Sprintf("active-%d", i), "", "account", "", "", "", transportHTTP)
 	}
 
 	snapshot := stats.snapshot()
@@ -30,11 +30,11 @@ func TestThreadUsageFollowsActiveRoutingWindow(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
 	old := now.Add(-threadActiveWindow - time.Second)
-	stats.applyRouted(old, "thread", "", "account", "old", "", transportHTTP)
+	stats.applyRouted(old, "thread", "", "account", "old", "medium", "", transportHTTP)
 	stats.applyUsageAt(old, "thread", "unknown", "default", responseUsage{InputTokens: 100})
-	stats.applyRouted(now, "thread", "", "account", "gpt-5.6-sol", "", transportHTTP)
+	stats.applyRouted(now, "thread", "", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP)
 	routed := stats.snapshot()
-	if len(routed.Threads) != 1 || routed.Threads[0].Model != "gpt-5.6-sol" {
+	if len(routed.Threads) != 1 || routed.Threads[0].Model != "gpt-5.6-sol" || routed.Threads[0].Effort != "xhigh" {
 		t.Fatalf("routed thread = %+v", routed.Threads)
 	}
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}

@@ -36,6 +36,7 @@ type websocketTurn struct {
 	data         []byte
 	sent         time.Time
 	model        string
+	effort       string
 	serviceTier  string
 	counted      bool
 	created      bool
@@ -53,6 +54,7 @@ type websocketEnvelope struct {
 	ResponseID  string                     `json:"response_id"`
 	Generate    *bool                      `json:"generate"`
 	Model       string                     `json:"model"`
+	Reasoning   responseReasoning          `json:"reasoning"`
 	Status      int                        `json:"status"`
 	StatusCode  int                        `json:"status_code"`
 	ServiceTier string                     `json:"service_tier"`
@@ -461,6 +463,7 @@ func (s *server) relayResponsesWebSocket(
 				data:        append([]byte(nil), message.data...),
 				sent:        time.Now(),
 				model:       event.Model,
+				effort:      event.Reasoning.Effort,
 				serviceTier: event.ServiceTier,
 				counted:     counted,
 				resolution:  resolution,
@@ -567,7 +570,7 @@ func (s *server) relayResponsesWebSocket(
 						}
 					}
 					if turns[index].counted {
-						s.stats.routed(turns[index].thread, requestClientID(r, s.clientIDKey), current.account.id(), turns[index].model, turns[index].serviceTier, transportWebSocket)
+						s.stats.routed(turns[index].thread, requestClientID(r, s.clientIDKey), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket)
 						s.stats.answered(time.Since(turns[index].sent))
 					}
 					break

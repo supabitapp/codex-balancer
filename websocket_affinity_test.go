@@ -153,11 +153,13 @@ func TestWebSocketFollowUpsKeepStableSessionStats(t *testing.T) {
 
 	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
 	defer conn.CloseNow()
-	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-5.6-sol", "reasoning": map[string]any{"effort": "medium"}, "input": []any{}})
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":                 "response.create",
+		"model":                "gpt-5.6-terra",
+		"reasoning":            map[string]any{"effort": "xhigh"},
 		"previous_response_id": "resp_1",
 		"input":                []any{},
 	})
@@ -172,7 +174,7 @@ func TestWebSocketFollowUpsKeepStableSessionStats(t *testing.T) {
 		t.Fatalf("threads = %+v, want one session", snapshot.Threads)
 	}
 	thread := snapshot.Threads[0]
-	if thread.Key != "session" || thread.Turns != 2 || thread.Via != transportWebSocket {
+	if thread.Key != "session" || thread.Model != "gpt-5.6-terra" || thread.Effort != "xhigh" || thread.Turns != 2 || thread.Via != transportWebSocket {
 		t.Fatalf("thread = %+v, want session with two WebSocket turns", thread)
 	}
 }

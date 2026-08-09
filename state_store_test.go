@@ -56,6 +56,7 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_id;
+		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';
 		ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
@@ -100,6 +101,7 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
 		ALTER TABLE events DROP COLUMN thread_key;
+		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		PRAGMA user_version = 5;`); err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +138,7 @@ func TestStateStoreClearsStoredClientIDs(t *testing.T) {
 	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
 		ALTER TABLE events DROP COLUMN thread_key;
+		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		PRAGMA user_version = 4;`); err != nil {
 		t.Fatal(err)
 	}
@@ -201,8 +204,8 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stats.routed("thread", "client-a", "account-a", "gpt-5.6-sol", serviceTierFast, transportHTTP)
-	stats.routed("thread", "client-b", "account-a", "gpt-5.6-sol", serviceTierFast, transportWebSocket)
+	stats.routed("thread", "client-a", "account-a", "gpt-5.6-sol", "high", serviceTierFast, transportHTTP)
+	stats.routed("thread", "client-b", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, transportWebSocket)
 	stats.failedOver("account-a", "unreachable")
 	stats.rateLimited("account-a")
 	stats.answered(2 * time.Second)
@@ -233,7 +236,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if snapshot.WSOpen != 0 || snapshot.Accounts["account-a"].WSOpen != 0 {
 		t.Fatalf("live sockets survived restart: %+v", snapshot)
 	}
-	if len(snapshot.Threads) != 1 || snapshot.Threads[0].ClientID != "client-b" || snapshot.Threads[0].Model != "gpt-5.6-sol" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
+	if len(snapshot.Threads) != 1 || snapshot.Threads[0].ClientID != "client-b" || snapshot.Threads[0].Model != "gpt-5.6-sol" || snapshot.Threads[0].Effort != "xhigh" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
 		t.Fatalf("threads = %+v", snapshot.Threads)
 	}
 	if snapshot.Threads[0].Usage != usage {

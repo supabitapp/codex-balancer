@@ -637,11 +637,11 @@ func TestHTTPFollowUpsKeepStableSessionStats(t *testing.T) {
 	})
 	defer closeServer()
 
-	first := serveHTTPResponse(t, server, "session", "", `{"input":[]}`)
+	first := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-5.6-sol","reasoning":{"effort":"medium"},"input":[]}`)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first status = %d, body = %s", first.Code, first.Body.String())
 	}
-	second := serveHTTPResponse(t, server, "session", "", `{"previous_response_id":"resp_1","input":[]}`)
+	second := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-5.6-terra","reasoning":{"effort":"xhigh"},"previous_response_id":"resp_1","input":[]}`)
 	if second.Code != http.StatusOK {
 		t.Fatalf("second status = %d, body = %s", second.Code, second.Body.String())
 	}
@@ -654,7 +654,7 @@ func TestHTTPFollowUpsKeepStableSessionStats(t *testing.T) {
 		t.Fatalf("threads = %+v, want one session", snapshot.Threads)
 	}
 	thread := snapshot.Threads[0]
-	if thread.Key != "session" || thread.Turns != 2 || thread.Via != transportHTTP {
+	if thread.Key != "session" || thread.Model != "gpt-5.6-terra" || thread.Effort != "xhigh" || thread.Turns != 2 || thread.Via != transportHTTP {
 		t.Fatalf("thread = %+v, want session with two HTTP turns", thread)
 	}
 }

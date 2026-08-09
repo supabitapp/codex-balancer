@@ -74,6 +74,7 @@ type dashboardThreadView struct {
 	ClientID  string
 	Account   string
 	Model     string
+	Thinking  string
 	Via       string
 	Fast      bool
 	Input     string
@@ -238,6 +239,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			ClientID:  thread.ClientID,
 			Account:   names[thread.Account],
 			Model:     thread.Model,
+			Thinking:  thread.Effort,
 			Via:       strings.ToUpper(string(thread.Via)),
 			Fast:      isFastServiceTier(thread.ServiceTier),
 			Input:     formatTokenCount(thread.Usage.InputTokens),
