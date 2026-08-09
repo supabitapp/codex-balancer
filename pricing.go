@@ -154,10 +154,20 @@ func formatTokenCount(tokens int64) string {
 	if unit == 0 {
 		return strconv.FormatInt(tokens, 10)
 	}
-	value = math.Round(value*10) / 10
+	precision := 1
+	if units[unit] == "B" {
+		precision = 2
+	}
+	scale := math.Pow10(precision)
+	value = math.Round(value*scale) / scale
 	if unit < len(units)-1 && (value <= -1_000 || value >= 1_000) {
 		value /= 1_000
 		unit++
+		precision = 1
+		if units[unit] == "B" {
+			precision = 2
+		}
 	}
-	return strings.TrimSuffix(strconv.FormatFloat(value, 'f', 1, 64), ".0") + units[unit]
+	formatted := strings.TrimRight(strconv.FormatFloat(value, 'f', precision, 64), "0")
+	return strings.TrimSuffix(formatted, ".") + units[unit]
 }

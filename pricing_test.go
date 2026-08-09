@@ -41,6 +41,8 @@ func TestFormatTokenCount(t *testing.T) {
 		1_293_911:     "1.3M",
 		407_278_819:   "407.3M",
 		2_000_000_000: "2B",
+		3_140_000_000: "3.14B",
+		3_100_000_000: "3.1B",
 	}
 	for tokens, want := range tests {
 		if got := formatTokenCount(tokens); got != want {
