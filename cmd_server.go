@@ -84,11 +84,7 @@ func serverCmd(args []string) error {
 	if logFile != nil {
 		defer logFile.Close()
 	}
-	compactionRotation, err := newCompactionRotation(store, log)
-	if err != nil {
-		return fmt.Errorf("load settings: %w", err)
-	}
-	log.Info("compaction rotation configured", "enabled", compactionRotation.isEnabled())
+	compactionRotation := newCompactionRotation(log)
 	stats, err := newPersistentStats(store, func(err error) {
 		log.Error("state write failed", "error", err)
 	})
@@ -172,7 +168,7 @@ func serverCmd(args []string) error {
 	log.Info("listening", "addr", listener.Addr().String(), "accounts", pool.count(), "upstream", *upstream, "log_file", *logPath)
 
 	if !*plain {
-		board := dashboard{pool: pool, stats: stats, compactionRotation: compactionRotation, addr: listener.Addr().String()}
+		board := dashboard{pool: pool, stats: stats, addr: listener.Addr().String()}
 		if _, err := tea.NewProgram(board, tea.WithContext(signalCtx)).Run(); err != nil &&
 			!errors.Is(err, context.Canceled) {
 			return err

@@ -36,7 +36,7 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	want := []string{"accounts", "attempts", "bindings", "client_identity", "events", "settings"}
+	want := []string{"accounts", "attempts", "bindings", "client_identity", "events"}
 	if !slices.Equal(tables, want) {
 		t.Fatalf("tables = %v, want %v", tables, want)
 	}
@@ -46,6 +46,38 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 	}
 	if len(key) != 32 {
 		t.Fatalf("client ID key length = %d, want 32", len(key))
+	}
+}
+
+func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`CREATE TABLE settings (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		rotate_after_compaction INTEGER NOT NULL CHECK (rotate_after_compaction IN (0, 1))
+	) STRICT;
+	INSERT INTO settings (id, rotate_after_compaction) VALUES (1, 0);
+	PRAGMA user_version = 10;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var settings int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'settings'`).Scan(&settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings != 0 {
+		t.Fatal("settings table remains")
 	}
 }
 
@@ -65,7 +97,6 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 		ALTER TABLE events DROP COLUMN total_tokens;
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		DROP TABLE client_identity;
-		DROP TABLE settings;
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, client_ip)
 		VALUES (1, 'thread', 'account', '', 'http', '203.0.113.42');
 		PRAGMA user_version = 2;`); err != nil {
@@ -109,7 +140,6 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN turn_metadata;
-		DROP TABLE settings;
 		PRAGMA user_version = 5;`); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +180,6 @@ func TestStateStoreClearsStoredClientIDs(t *testing.T) {
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN turn_metadata;
-		DROP TABLE settings;
 		PRAGMA user_version = 4;`); err != nil {
 		t.Fatal(err)
 	}

@@ -74,11 +74,8 @@ var stateMigrations = []string{
 	`ALTER TABLE attempts ADD COLUMN turn_metadata TEXT NOT NULL DEFAULT '';
 	ALTER TABLE events ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE events ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0;`,
-	`CREATE TABLE settings (
-		id INTEGER PRIMARY KEY CHECK (id = 1),
-		rotate_after_compaction INTEGER NOT NULL CHECK (rotate_after_compaction IN (0, 1))
-	) STRICT;
-	INSERT INTO settings (id, rotate_after_compaction) VALUES (1, 0);`,
+	`SELECT 1;`,
+	`DROP TABLE IF EXISTS settings;`,
 }
 
 type StateStore struct {
@@ -119,23 +116,6 @@ func (s *StateStore) clientIDKey() ([]byte, error) {
 		return nil, err
 	}
 	return key, nil
-}
-
-func (s *StateStore) rotateAfterCompaction() (bool, error) {
-	var enabled int
-	if err := s.db.QueryRow(`SELECT rotate_after_compaction FROM settings WHERE id = 1`).Scan(&enabled); err != nil {
-		return false, err
-	}
-	return enabled != 0, nil
-}
-
-func (s *StateStore) setRotateAfterCompaction(enabled bool) error {
-	value := 0
-	if enabled {
-		value = 1
-	}
-	_, err := s.db.Exec(`UPDATE settings SET rotate_after_compaction = ? WHERE id = 1`, value)
-	return err
 }
 
 func openStateStore(path string) (*StateStore, error) {

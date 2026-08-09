@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -62,55 +61,10 @@ func requireLogRecord(t *testing.T, records []map[string]any, message string, fi
 	t.Fatalf("missing log %q with fields %v in %v", message, fields, records)
 }
 
-func TestCompactionRotationDefaultsOffAndPersists(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.db")
-	store, err := openStateStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rotation, err := newCompactionRotation(store, slog.New(slog.DiscardHandler))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rotation.isEnabled() {
-		t.Fatal("rotation enabled by default")
-	}
-	if enabled, err := rotation.toggle(); err != nil || !enabled {
-		t.Fatalf("toggle = %t, %v", enabled, err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	reopened, err := openStateStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	reloaded, err := newCompactionRotation(reopened, slog.New(slog.DiscardHandler))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reloaded.isEnabled() {
-		t.Fatal("rotation setting was not persisted")
-	}
-}
-
 func TestCompactionRotationWaitsForNewUnanchoredTurn(t *testing.T) {
-	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
 	logs := &testLogBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	rotation, err := newCompactionRotation(store, log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rotation.toggle(); err != nil {
-		t.Fatal(err)
-	}
+	rotation := newCompactionRotation(log)
 	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
 	rotation.arm("session", "account-a", compaction)
 	if rotation.shouldReconnect("session", "account-a", turnMetadata{RequestKind: "memory"}, false, 0, "account-b") {
@@ -174,20 +128,9 @@ func TestCompactionRotationWaitsForNewUnanchoredTurn(t *testing.T) {
 }
 
 func TestCompactionRotationKeepsFreshRouteSource(t *testing.T) {
-	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
 	logs := &testLogBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	rotation, err := newCompactionRotation(store, log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rotation.toggle(); err != nil {
-		t.Fatal(err)
-	}
+	rotation := newCompactionRotation(log)
 	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
 	rotation.arm("session", "account-a", compaction)
 	next := turnMetadata{RequestKind: "turn", ThreadID: "logical-thread", TurnID: "turn-b"}

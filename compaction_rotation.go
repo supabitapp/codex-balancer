@@ -15,51 +15,16 @@ type pendingCompactionRotation struct {
 }
 
 type compactionRotation struct {
-	store   *StateStore
 	log     *slog.Logger
 	mu      sync.Mutex
-	enabled bool
 	pending map[string]pendingCompactionRotation
 }
 
-func newCompactionRotation(store *StateStore, log *slog.Logger) (*compactionRotation, error) {
-	enabled, err := store.rotateAfterCompaction()
-	if err != nil {
-		return nil, err
-	}
+func newCompactionRotation(log *slog.Logger) *compactionRotation {
 	return &compactionRotation{
-		store:   store,
 		log:     log,
-		enabled: enabled,
 		pending: map[string]pendingCompactionRotation{},
-	}, nil
-}
-
-func (r *compactionRotation) isEnabled() bool {
-	if r == nil {
-		return false
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.enabled
-}
-
-func (r *compactionRotation) toggle() (bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	enabled := !r.enabled
-	if err := r.store.setRotateAfterCompaction(enabled); err != nil {
-		r.log.Warn("compaction rotation toggle failed", "enabled", enabled, "error", err)
-		return r.enabled, err
-	}
-	cleared := 0
-	r.enabled = enabled
-	if !enabled {
-		cleared = len(r.pending)
-		clear(r.pending)
-	}
-	r.log.Info("compaction rotation toggled", "enabled", enabled, "cleared_pending", cleared)
-	return enabled, nil
 }
 
 func (r *compactionRotation) arm(session, account string, metadata turnMetadata) {
@@ -78,16 +43,6 @@ func (r *compactionRotation) arm(session, account string, metadata turnMetadata)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.enabled {
-		r.log.Debug("compaction rotation not armed",
-			"reason", "disabled",
-			"session", session,
-			"thread", metadata.ThreadID,
-			"account", account,
-			"compaction_turn", metadata.TurnID,
-		)
-		return
-	}
 	previous, replaced := r.pending[metadata.ThreadID]
 	r.pending[metadata.ThreadID] = pendingCompactionRotation{
 		session: session,
@@ -113,7 +68,7 @@ func (r *compactionRotation) shouldReconnect(session, account string, metadata t
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	pending, ok := r.pending[metadata.ThreadID]
-	if !r.enabled || !ok {
+	if !ok {
 		return false
 	}
 	decision := "restart"
@@ -177,7 +132,7 @@ func (r *compactionRotation) handshakeSkip(session string, hard bool) (map[strin
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	pending, ok := r.reconnectingForSession(session)
-	if !r.enabled || !ok {
+	if !ok {
 		return nil, pendingCompactionRotation{}, false
 	}
 	decision := "exclude_source"
@@ -205,7 +160,7 @@ func (r *compactionRotation) routeSource(session, account string, metadata turnM
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	pending, ok := r.pending[metadata.ThreadID]
-	if !r.enabled || !ok || pending.session != session || !pending.reconnecting || sameCompactionTurn(pending, metadata) {
+	if !ok || pending.session != session || !pending.reconnecting || sameCompactionTurn(pending, metadata) {
 		return ""
 	}
 	r.log.Info("compaction rotation request routed",

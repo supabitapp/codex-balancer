@@ -241,13 +241,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	b := testAccount("account-b", 20)
 	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
 	closeUnusedUpstream()
-	rotation, err := newCompactionRotation(store.store, server.log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rotation.toggle(); err != nil {
-		t.Fatal(err)
-	}
+	rotation := newCompactionRotation(server.log)
 	server.compactionRotation = rotation
 	server.upstream = upstream.URL
 	proxy := httptest.NewServer(server.routes())
@@ -362,13 +356,7 @@ func TestWebSocketCompactionRotationKeepsFreshRouteSource(t *testing.T) {
 	closeUnusedUpstream()
 	logs := &testLogBuffer{}
 	server.log = slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	rotation, err := newCompactionRotation(store.store, server.log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rotation.toggle(); err != nil {
-		t.Fatal(err)
-	}
+	rotation := newCompactionRotation(server.log)
 	server.compactionRotation = rotation
 	server.upstream = upstream.URL
 	proxy := httptest.NewServer(server.routes())
@@ -440,13 +428,7 @@ func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testin
 	closeUnusedUpstream()
 	logs := &testLogBuffer{}
 	server.log = slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	rotation, err := newCompactionRotation(store.store, server.log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rotation.toggle(); err != nil {
-		t.Fatal(err)
-	}
+	rotation := newCompactionRotation(server.log)
 	server.compactionRotation = rotation
 	server.upstream = upstream.URL
 	proxy := httptest.NewServer(server.routes())
