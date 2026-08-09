@@ -311,10 +311,10 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "gpt-5.6-sol (xhigh)" || thread.Input != "2K" || thread.CacheRate != "75" || thread.Output != "300" || thread.Context != "2.3K / 258.4K (1)" || thread.Latency != "2s" || thread.Turns != "1" {
+	if thread.Model != "gpt-5.6-sol (xhigh)" || thread.Input != "2K" || thread.CacheRate != "75" || thread.Output != "300" || thread.Context != "1% (1)" || thread.Latency != "2s" || thread.Turns != "1" {
 		t.Fatalf("routing row = %+v", thread)
 	}
-	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
+	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Used: 2.3K (0.89%)") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
 		t.Fatalf("routing details = %+v", thread)
 	}
 	payload, err := renderDashboard("dashboard", view)
@@ -345,10 +345,13 @@ func TestDashboardModelOmitsEmptyThinkingMode(t *testing.T) {
 	}
 }
 
-func TestDashboardContextOmitsZeroCompactions(t *testing.T) {
+func TestDashboardContextShowsPercentAndCompactions(t *testing.T) {
 	limits := modelContextLimits{Window: 4_000, AutoCompact: 3_000}
-	if got := dashboardContext(2_000, limits, 0); got != "2K / 4K" {
-		t.Fatalf("context = %q, want 2K / 4K", got)
+	if got := dashboardContext(2_000, limits, 0); got != "50%" {
+		t.Fatalf("context = %q, want 50%%", got)
+	}
+	if got := dashboardContext(1_333, limits, 7); got != "33% (7)" {
+		t.Fatalf("context = %q, want 33%% (7)", got)
 	}
 	if info := dashboardContextInfo(2_000, limits, 0); !strings.Contains(info, "Compactions: 0") {
 		t.Fatalf("context info = %q", info)

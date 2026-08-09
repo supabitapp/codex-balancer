@@ -338,9 +338,7 @@ func dashboardCacheRate(usage responseUsage) string {
 func dashboardContext(used int64, limits modelContextLimits, compactions int64) string {
 	context := "--"
 	if limits.Window > 0 {
-		context = formatTokenCount(used) + " / " + formatTokenCount(limits.Window)
-	} else if used > 0 {
-		context = formatTokenCount(used)
+		context = fmt.Sprintf("%.0f%%", float64(used)*100/float64(limits.Window))
 	}
 	if compactions > 0 {
 		context += " (" + strconv.FormatInt(compactions, 10) + ")"
@@ -356,8 +354,12 @@ func dashboardContextInfo(used int64, limits modelContextLimits, compactions int
 	if limits.AutoCompact > 0 {
 		lines = append(lines, "Auto compact at: "+formatTokenCount(limits.AutoCompact))
 	}
-	if used > 0 && limits.Window > 0 {
-		lines = append(lines, "Used: "+formatPercent(float64(used)*100/float64(limits.Window)))
+	if used > 0 {
+		usedContext := "Used: " + formatTokenCount(used)
+		if limits.Window > 0 {
+			usedContext += " (" + formatPercent(float64(used)*100/float64(limits.Window)) + ")"
+		}
+		lines = append(lines, usedContext)
 	}
 	lines = append(lines, "Compactions: "+strconv.FormatInt(compactions, 10))
 	return strings.Join(lines, "\n")
