@@ -65,6 +65,7 @@ var stateMigrations = []string{
 		key BLOB NOT NULL CHECK (length(key) = 32)
 	) STRICT;
 	INSERT INTO client_identity (id, key) VALUES (1, randomblob(32));`,
+	`UPDATE attempts SET client_id = ';`,
 }
 
 type StateStore struct {

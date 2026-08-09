@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -85,6 +86,38 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 	}
 	if oldColumns != 0 {
 		t.Fatal("client_ip column remains")
+	}
+}
+
+func TestStateStoreClearsStoredClientIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO attempts (
+		at_ns, thread_key, account_id, service_tier, transport, client_id
+	) VALUES (1, 'thread', 'account', '', 'http', 'legacy')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(stateMigrations)-1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var clientID string
+	if err := reopened.db.QueryRow(`SELECT client_id FROM attempts WHERE thread_key = 'thread'`).Scan(&clientID); err != nil {
+		t.Fatal(err)
+	}
+	if clientID != "" {
+		t.Fatalf("client ID = %q, want empty", clientID)
 	}
 }
 
