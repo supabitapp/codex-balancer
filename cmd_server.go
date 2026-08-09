@@ -68,6 +68,10 @@ func serverCmd(args []string) error {
 		return err
 	}
 	defer store.Close()
+	clientIDKey, err := store.clientIDKey()
+	if err != nil {
+		return fmt.Errorf("load client ID key: %w", err)
+	}
 	pool, err := loadPool(store)
 	if err != nil {
 		return err
@@ -92,16 +96,17 @@ func serverCmd(args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv := &server{
-		ctx:       ctx,
-		pool:      pool,
-		catalog:   newModelCatalog(),
-		affinity:  affinity,
-		stats:     stats,
-		upstream:  *upstream,
-		key:       *key,
-		client:    newProxyClient(),
-		log:       log,
-		admission: newAdmissionGate(maxActiveProxyRequests),
+		ctx:         ctx,
+		pool:        pool,
+		catalog:     newModelCatalog(),
+		affinity:    affinity,
+		stats:       stats,
+		upstream:    *upstream,
+		key:         *key,
+		clientIDKey: clientIDKey,
+		client:      newProxyClient(),
+		log:         log,
+		admission:   newAdmissionGate(maxActiveProxyRequests),
 	}
 	pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)

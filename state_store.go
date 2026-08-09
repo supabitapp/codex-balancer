@@ -60,6 +60,11 @@ var stateMigrations = []string{
 	`ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';`,
 	`ALTER TABLE attempts DROP COLUMN client_ip;
 	ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';`,
+	`CREATE TABLE client_identity (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		key BLOB NOT NULL CHECK (length(key) = 32)
+	) STRICT;
+	INSERT INTO client_identity (id, key) VALUES (1, randomblob(32));`,
 }
 
 type StateStore struct {
@@ -89,6 +94,14 @@ type storedEvent struct {
 
 func defaultStatePath() string {
 	return filepath.Join(homeDir(), ".codex-balancer", "state.db")
+}
+
+func (s *StateStore) clientIDKey() ([]byte, error) {
+	var key []byte
+	if err := s.db.QueryRow(`SELECT key FROM client_identity WHERE id = 1`).Scan(&key); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
 func openStateStore(path string) (*StateStore, error) {
