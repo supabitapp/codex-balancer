@@ -9,19 +9,19 @@
 <script src="/dashboard/assets/ws-2.0.4.min.js" defer></script>
 <style>
 :root {
-  color-scheme: only light;
+  color-scheme: light dark;
   font-family: system-ui, sans-serif;
-  --neutral-1: #ffffff;
-  --neutral-2: #f4f4f4;
-  --neutral-3: #e8e8e8;
-  --neutral-7: #d4d4d4;
-  --neutral-11: #717171;
-  --neutral-12: #181818;
-  background: var(--neutral-1);
-  color: var(--neutral-12);
+  --gray-1: #fcfcfc;
+  --gray-2: #f9f9f9;
+  --gray-3: #f0f0f0;
+  --gray-7: #cecece;
+  --gray-11: #646464;
+  --gray-12: #202020;
+  background: var(--gray-1);
+  color: var(--gray-12);
 }
 * { box-sizing: border-box }
-body { min-height: 100vh; margin: 0; background: var(--neutral-1); color: var(--neutral-12) }
+body { min-height: 100vh; margin: 0; background: var(--gray-1); color: var(--gray-12) }
 main { width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding: 1rem 0 3rem }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding-bottom: .5rem }
 header > div { display: flex; align-items: baseline; gap: .75rem; min-width: 0 }
@@ -29,18 +29,18 @@ h1 { margin: 0; font-size: 1.125rem }
 h2 { margin: 0 0 .5rem; font-size: .75rem; letter-spacing: .08em; text-transform: uppercase }
 section { margin-top: 1.5rem }
 p { margin: 0 }
-#summary, #meta, .dim, .empty, th, dt { color: var(--neutral-11) }
+#summary, #meta, .dim, .empty, th, dt { color: var(--gray-11) }
 #summary { white-space: nowrap }
-.dot { margin: 0 .35rem; color: var(--neutral-7) }
+.dot { margin: 0 .35rem; color: var(--gray-7) }
 .status { font-weight: 600 }
 .banked-info { cursor: help; text-decoration: underline dotted; text-underline-offset: .2em }
-#banked-tooltip { position: fixed; z-index: 1; width: max-content; max-width: min(28rem, calc(100vw - 1rem)); padding: .5rem .75rem; border-radius: .5rem; background: var(--neutral-12); box-shadow: 0 .25rem 1rem rgb(0 0 0 / 20%); color: var(--neutral-1); font-size: .8125rem; line-height: 1.4; pointer-events: none; white-space: pre-line }
+#banked-tooltip { position: fixed; z-index: 1; width: max-content; max-width: min(28rem, calc(100vw - 1rem)); padding: .5rem .75rem; border-radius: .5rem; background: var(--gray-12); box-shadow: 0 .25rem 1rem rgb(0 0 0 / 20%); color: var(--gray-1); font-size: .8125rem; line-height: 1.4; pointer-events: none; white-space: pre-line }
 .scroll { overflow-x: auto }
 #threads { --row-height: 2.25rem; max-height: calc(10 * var(--row-height)); overflow: auto }
 #threads tr { height: var(--row-height) }
 table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums }
-tbody tr:nth-child(even) { background: var(--neutral-2) }
-tbody tr:hover { background: var(--neutral-3) }
+tbody tr:nth-child(even) { background: var(--gray-2) }
+tbody tr:hover { background: var(--gray-3) }
 th, td { padding: .5rem .75rem .5rem 0; text-align: left }
 th:last-child, td:last-child { padding-right: 0 }
 th { font-size: .75rem; font-weight: 500 }
@@ -50,6 +50,16 @@ th { font-size: .75rem; font-weight: 500 }
 .totals div { display: flex; align-items: baseline; gap: .375rem; min-width: max-content }
 dt { font-size: .75rem }
 dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --gray-1: #111111;
+    --gray-2: #191919;
+    --gray-3: #222222;
+    --gray-7: #484848;
+    --gray-11: #b4b4b4;
+    --gray-12: #eeeeee;
+  }
+}
 @media (max-width: 760px) {
   main { width: min(calc(100% - 1.25rem), 100rem) }
   header { align-items: flex-start; flex-direction: column }
