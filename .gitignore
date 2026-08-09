@@ -1,5 +1,6 @@
 .DS_Store
-/codex-balancer
 /dist/
-*.test
-*.out
+.dev.vars
+.wrangler/
+node_modules/
+worker-configuration.d.ts

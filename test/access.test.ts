@@ -44,6 +44,7 @@ const signAssertion = async (
   overrides: {
     audience?: string;
     expiresAt?: number;
+    issuedAt?: number;
     issuer?: string;
     subject?: string;
   } = {},
@@ -53,7 +54,7 @@ const signAssertion = async (
     .setIssuer(overrides.issuer ?? "https://team.cloudflareaccess.com")
     .setAudience(overrides.audience ?? "access-audience")
     .setSubject(overrides.subject ?? "user-123")
-    .setIssuedAt()
+    .setIssuedAt(overrides.issuedAt)
     .setExpirationTime(overrides.expiresAt ?? "5m")
     .sign(privateKey);
 
@@ -78,13 +79,7 @@ describe("Cloudflare Access authentication", () => {
 
     await expect(
       authenticateAccess(assertionRequest(assertion), config),
-    ).resolves.toEqual({
-      identity: {
-        email: "friend@example.com",
-        subject: "user-123",
-      },
-      ok: true,
-    });
+    ).resolves.toEqual({ ok: true });
     await expect(
       authenticateAccess(assertionRequest(assertion), config),
     ).resolves.toMatchObject({ ok: true });
@@ -101,6 +96,10 @@ describe("Cloudflare Access authentication", () => {
     {
       ACCESS_AUD: "access-audience",
       ACCESS_TEAM_DOMAIN: "team.cloudflareaccess.com/path",
+    },
+    {
+      ACCESS_AUD: "access-audience",
+      ACCESS_TEAM_DOMAIN: "access.example.com",
     },
   ])("fails closed for invalid configuration %#", async (invalidConfig) => {
     await expect(
@@ -129,6 +128,7 @@ describe("Cloudflare Access authentication", () => {
     { audience: "wrong-audience" },
     { issuer: "https://other.cloudflareaccess.com" },
     { expiresAt: 1 },
+    { issuedAt: Math.floor(Date.now() / 1000) + 60 },
     { subject: "" },
   ])("rejects invalid verified claims %#", async (overrides) => {
     mockCertificates();

@@ -1,79 +1,130 @@
 # codex-balancer
 
-<img width="2984" height="1796" alt="CleanShot 2026-08-09 at 17 55 30@2x" src="https://github.com/user-attachments/assets/e39dcef1-1de3-4e4e-8cc3-af94769c2054" />
+Spread Codex turns across several ChatGPT accounts from one Cloudflare Worker.
 
+## Architecture
 
-Spread Codex turns across several ChatGPT accounts. 
+- A regular Worker handles routes, auth, HTTP and WebSocket proxying.
+- One `BalancerState` Durable Object, named `global`, owns all state in its SQLite store.
+- Cloudflare serves the dashboard, admin, and account setup files from `public/` through the `ASSETS` binding.
 
-Dead simple, one proxied endpoint, 1 SQLite database.
+| Route                                 | Methods                       | Auth                                                               |
+| ------------------------------------- | ----------------------------- | ------------------------------------------------------------------ |
+| `/healthz`                            | `GET`                         | None                                                               |
+| `/v1/models`                          | `GET`                         | `Bearer BALANCER_KEY`                                              |
+| `/v1/responses`                       | `POST`, WebSocket `GET`       | `Bearer BALANCER_KEY`                                              |
+| `/dashboard`                          | `GET`, `HEAD`                 | None                                                               |
+| `/stats`                              | `GET`                         | None                                                               |
+| `/dashboard/ws`                       | WebSocket `GET`               | None                                                               |
+| `/accounts?invite=TOKEN`              | `GET`                         | Valid invite; sets an HttpOnly cookie and redirects to `/accounts` |
+| `/accounts`                           | `GET`, `HEAD`                 | None                                                               |
+| `/accounts/status`                    | `GET`                         | Invite cookie                                                      |
+| `/accounts/device`                    | `POST`                        | Invite cookie                                                      |
+| `/admin`, `/admin.js`, `/admin/state` | `GET`, plus `HEAD` for assets | Cloudflare Access                                                  |
+| `/admin/invites`                      | `POST`                        | Cloudflare Access                                                  |
+| `/admin/accounts/:id`                 | `PATCH`, `DELETE`             | Cloudflare Access                                                  |
 
-## Install
+`/` redirects to `/dashboard`. Unknown routes return `404`.
+
+The dashboard routes are public. They expose account aliases, plans, quota status, and aggregate traffic only. They never expose emails, account IDs, tokens, thread IDs, session IDs, or raw errors.
+
+## Local development
+
+Use Node 26.
 
 ```sh
-go install github.com/supabitapp/codex-balancer@latest
+npm ci
+cp .dev.vars.example .dev.vars
+$EDITOR .dev.vars
+npm test
+npm run dev
 ```
+
+`.dev.vars` must set:
+
+- `BALANCER_KEY`: bearer key used by Codex.
+- `TOKEN_ENCRYPTION_KEY`: base64 or base64url encoding of exactly 32 random bytes.
+
+Generate new values with:
+
+```sh
+openssl rand -hex 32
+openssl rand -base64 32 | tr -d '\n'
+```
+
+Run the full local gate with `npm run check`. `/admin*` fails closed unless the request carries a valid Cloudflare Access assertion.
+
+## Deploy
+
+Use a Workers Paid plan. The Worker reserves up to five minutes of CPU for bounded decompression and relay work.
+
+Choose a custom hostname. `codex-balancer.supabit.app` is an example only; it is not the chosen domain in this guide. Refer to your choice as `HOST` below.
+
+Set these GitHub repository secrets:
+
+| Secret                  | Value                                             |
+| ----------------------- | ------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`  | Cloudflare API token allowed to deploy the Worker |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID                             |
+| `BALANCER_KEY`          | New random bearer key                             |
+| `TOKEN_ENCRYPTION_KEY`  | Base64-encoded 32-byte key                        |
+
+Generate and store the Worker secrets without printing them:
+
+```sh
+openssl rand -hex 32 | gh secret set BALANCER_KEY
+openssl rand -base64 32 | tr -d '\n' | gh secret set TOKEN_ENCRYPTION_KEY
+```
+
+Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` with `gh secret set NAME`. Keep `TOKEN_ENCRYPTION_KEY` stable or stored account tokens become unreadable.
+
+In Cloudflare:
+
+1. Add `HOST` as the Worker's custom domain.
+2. Create a self-hosted Access application for `https://HOST/admin*`.
+3. Add the required allow policy.
+4. Copy its audience tag and your team domain.
+
+Set the values as GitHub repository variables:
+
+```sh
+gh variable set ACCESS_AUD --body '<application-audience-tag>'
+gh variable set ACCESS_TEAM_DOMAIN --body '<team>.cloudflareaccess.com'
+```
+
+Do not include a scheme or path in `ACCESS_TEAM_DOMAIN`. The Worker verifies the Access assertion as well as relying on the edge policy.
+
+Pull requests run `npm run check`. Each push to `main` runs the same gate, deploys, then calls the deployment URL at `/healthz`. The smoke test passes only when the body matches:
+
+```json
+{
+  "status": "ok",
+  "sha": "<exact GitHub commit SHA>",
+  "storage": "ok"
+}
+```
+
+The workflow checks `.status == "ok"`, `.sha == github.sha`, and `.storage == "ok"`.
+
+This starts a new Cloudflare state store. Add accounts through `/admin`; no local SQLite data is imported.
 
 ## Add accounts
 
-```sh
-codex-balancer accounts add                 # sign in through a local browser
-codex-balancer accounts list
-```
+Open `https://HOST/admin` through Cloudflare Access. Create an invite and send its single-use URL to your friend. They open it, press **Start sign-in**, and finish the device sign-in. A link preview does not consume the invite or start sign-in.
 
-Or open `/accounts` in a browser to do it on the web.
+## Configure Codex
 
-State lives in `~/.codex-balancer/state.db`.
-
-SQLite stores credentials, affinity owners, routed turns, and events. The
-server fetches current limits, reset credits, auth state, and model lists. It
-derives status, totals, activity, response time, and current-month cost from
-those facts.
-
-## Serve
-
-```sh
-export CODEX_BALANCER_KEY=$(openssl rand -hex 16)
-codex-balancer server           # serve the proxy
-```
-
-The usage poll redeems the earliest available rate-limit reset credit once it
-is within five minutes of expiry.
-
-`GET /stats` returns the same live account status as public JSON. Account emails
-hide their domain and all but the first and last local-part characters, such as
-`k***i@***.com`. The dashboard stores and shows only a short ID keyed by a
-server-only secret; source IPs never enter saved state.
-
-Open `/dashboard` and enter the server key for the live web dashboard. It
-streams the TUI account, total, thread, and event data over WebSocket.
-
-```sh
-curl http://127.0.0.1:8317/stats
-```
-
-## Point Codex at it
-
-In `~/.codex/config.toml`:
+Set the same `BALANCER_KEY` in `CODEX_BALANCER_KEY`, then add this to `~/.codex/config.toml`:
 
 ```toml
 model_provider = "balancer"
 
 [model_providers.balancer]
 name = "OpenAI"
-base_url = "http://127.0.0.1:8317/v1"
+base_url = "https://HOST/v1"
 requires_openai_auth = true
 env_key = "CODEX_BALANCER_KEY"
 supports_websockets = true
 ```
 
-`name` must be exactly `OpenAI`: Codex compares it verbatim to decide whether a
-provider supports remote compaction and whether to keep encrypted tool
-arguments intact.
-
-`env_key` reads the key from the environment, so every shell running `codex`
-must export it. To bake the key into `~/.codex/auth.json` instead, drop the line
-and log in once:
-
-```sh
-printenv CODEX_BALANCER_KEY | codex login --with-api-key
-```
+`name` must be exactly `OpenAI`. Replace `HOST` with the custom hostname.

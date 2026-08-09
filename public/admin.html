@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Admin · Codex Balancer</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/admin.js" type="module"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/dashboard" aria-label="Codex Balancer dashboard">
+        <span class="brand-mark" aria-hidden="true">CB</span>
+        <span>Codex Balancer</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="/dashboard">Dashboard</a>
+        <a aria-current="page" href="/admin">Admin</a>
+      </nav>
+    </header>
+
+    <main class="shell stack-large">
+      <section class="page-heading" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">Restricted</p>
+          <h1 id="page-title">Admin</h1>
+          <p class="lede">Manage invites and account availability.</p>
+        </div>
+        <button
+          class="button button-secondary"
+          id="refresh-state"
+          type="button"
+        >
+          Refresh
+        </button>
+      </section>
+
+      <p class="notice notice-error" id="admin-error" role="alert" hidden></p>
+      <p
+        class="notice notice-success"
+        id="admin-notice"
+        role="status"
+        aria-live="polite"
+        hidden
+      ></p>
+
+      <section class="panel" aria-labelledby="invite-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Access</p>
+            <h2 id="invite-title">Create invite</h2>
+          </div>
+        </div>
+        <form class="inline-form" id="invite-form">
+          <label>
+            <span>Expires after</span>
+            <select id="invite-expiry" name="expiry">
+              <option value="">Server default</option>
+              <option value="900">15 minutes</option>
+              <option value="3600">1 hour</option>
+              <option value="86400">1 day</option>
+              <option value="604800">7 days</option>
+            </select>
+          </label>
+          <button
+            class="button button-primary"
+            id="create-invite"
+            type="submit"
+          >
+            Create invite
+          </button>
+        </form>
+        <div class="invite-result" id="invite-result" hidden>
+          <div>
+            <strong>Invite created</strong>
+            <p>Share this URL once. It will not appear again after refresh.</p>
+          </div>
+          <code id="invite-url"></code>
+          <div class="button-row compact-row">
+            <button
+              class="button button-secondary"
+              id="copy-invite"
+              type="button"
+            >
+              Copy URL
+            </button>
+            <span class="expiry" id="invite-result-expiry"></span>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="accounts-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Routing pool</p>
+            <h2 id="accounts-title">Accounts</h2>
+          </div>
+        </div>
+        <div class="table-frame">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Account</th>
+                <th scope="col">Plan</th>
+                <th scope="col">Status</th>
+                <th scope="col">Weekly remaining</th>
+                <th scope="col">Resets</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="admin-accounts-body">
+              <tr>
+                <td class="empty-cell" colspan="6">Loading accounts…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="invites-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">History</p>
+            <h2 id="invites-title">Invites</h2>
+          </div>
+        </div>
+        <div class="table-frame">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Invite</th>
+                <th scope="col">Status</th>
+                <th scope="col">Expires</th>
+                <th scope="col">Used</th>
+              </tr>
+            </thead>
+            <tbody id="invites-body">
+              <tr>
+                <td class="empty-cell" colspan="4">Loading invites…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

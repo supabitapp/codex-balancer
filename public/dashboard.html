@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Codex Balancer</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/dashboard.js" type="module"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/dashboard" aria-label="Codex Balancer dashboard">
+        <span class="brand-mark" aria-hidden="true">CB</span>
+        <span>Codex Balancer</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a aria-current="page" href="/dashboard">Dashboard</a>
+        <a href="/accounts">Add account</a>
+      </nav>
+    </header>
+
+    <main class="shell stack-large">
+      <section class="page-heading" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">Live routing state</p>
+          <h1 id="page-title">Dashboard</h1>
+          <p class="lede">
+            Account health and routing outcomes without private account data.
+          </p>
+        </div>
+        <div
+          class="live-state"
+          id="connection-state"
+          data-state="connecting"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="live-dot" aria-hidden="true"></span>
+          <span id="connection-label">Connecting</span>
+        </div>
+      </section>
+
+      <p
+        class="notice notice-error"
+        id="dashboard-error"
+        role="alert"
+        hidden
+      ></p>
+
+      <section aria-labelledby="totals-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Aggregate</p>
+            <h2 id="totals-title">Traffic</h2>
+          </div>
+          <time class="updated-at" id="updated-at"></time>
+        </div>
+        <dl class="metric-grid">
+          <div class="metric-card">
+            <dt>Live accounts</dt>
+            <dd id="total-live-accounts">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>Turns</dt>
+            <dd id="total-turns">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>WebSocket turns</dt>
+            <dd id="total-websocket-turns">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>Failovers</dt>
+            <dd id="total-failovers">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>Rate limits</dt>
+            <dd id="total-rate-limits">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>Open WebSockets</dt>
+            <dd id="total-open-websockets">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>Input tokens</dt>
+            <dd id="total-input-tokens">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>Cached input</dt>
+            <dd id="total-cached-input-tokens">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>Cache write input</dt>
+            <dd id="total-cache-write-input-tokens">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>Output tokens</dt>
+            <dd id="total-output-tokens">—</dd>
+          </div>
+          <div class="metric-card">
+            <dt>Average first byte</dt>
+            <dd id="average-first-byte">—</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="accounts-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Pool</p>
+            <h2 id="accounts-title">Accounts</h2>
+          </div>
+        </div>
+        <div class="table-frame">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Alias</th>
+                <th scope="col">Plan</th>
+                <th scope="col">Status</th>
+                <th scope="col">Weekly remaining</th>
+                <th scope="col">Resets</th>
+                <th scope="col">Turns</th>
+                <th scope="col">Rate limits</th>
+                <th scope="col">Open WebSockets</th>
+              </tr>
+            </thead>
+            <tbody id="accounts-body">
+              <tr>
+                <td class="empty-cell" colspan="8">Loading accounts…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="events-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Redacted</p>
+            <h2 id="events-title">Events</h2>
+          </div>
+        </div>
+        <div class="table-frame">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Time</th>
+                <th scope="col">Event</th>
+                <th scope="col">Account</th>
+                <th scope="col">Detail</th>
+              </tr>
+            </thead>
+            <tbody id="events-body">
+              <tr>
+                <td class="empty-cell" colspan="4">Loading events…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

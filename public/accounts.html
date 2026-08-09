@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Add account · Codex Balancer</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/accounts.js" type="module"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/dashboard" aria-label="Codex Balancer dashboard">
+        <span class="brand-mark" aria-hidden="true">CB</span>
+        <span>Codex Balancer</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="/dashboard">Dashboard</a>
+        <a aria-current="page" href="/accounts">Add account</a>
+      </nav>
+    </header>
+
+    <main class="narrow-shell">
+      <section class="flow-card" aria-labelledby="page-title">
+        <p class="eyebrow">Account access</p>
+        <h1 id="page-title">Add an account</h1>
+        <p class="lede" id="account-intro">Checking this invite and session.</p>
+
+        <div
+          class="flow-status"
+          id="flow-status"
+          data-state="loading"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="flow-status-mark" aria-hidden="true"></span>
+          <div>
+            <strong id="flow-title">Checking access</strong>
+            <p id="flow-detail">This should take a moment.</p>
+          </div>
+        </div>
+
+        <div class="device-code" id="device-code" hidden>
+          <span>One-time code</span>
+          <code id="user-code"></code>
+        </div>
+
+        <div class="button-row">
+          <button
+            class="button button-primary"
+            id="start-device"
+            type="button"
+            disabled
+          >
+            Start sign-in
+          </button>
+          <a
+            class="button button-secondary"
+            id="open-verification"
+            target="_blank"
+            rel="noreferrer"
+            hidden
+            >Open sign-in page</a
+          >
+        </div>
+
+        <p class="expiry" id="login-expiry" hidden></p>
+        <p
+          class="notice notice-error"
+          id="account-error"
+          role="alert"
+          hidden
+        ></p>
+      </section>
+    </main>
+  </body>
+</html>

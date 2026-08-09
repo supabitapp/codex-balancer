@@ -9,7 +9,7 @@ export interface AuthenticationFailure {
   readonly status: 401 | 500;
 }
 
-export type BearerAuthResult = AuthenticationFailure | { readonly ok: true };
+type BearerAuthResult = AuthenticationFailure | { readonly ok: true };
 
 export const parseBearerAuthorization = (
   value: string | null,

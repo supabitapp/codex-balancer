@@ -8,14 +8,7 @@ const keySets = new Map<string, RemoteJWKSet>();
 
 export type AccessConfig = Pick<Env, "ACCESS_AUD" | "ACCESS_TEAM_DOMAIN">;
 
-export interface AccessIdentity {
-  readonly email?: string;
-  readonly subject: string;
-}
-
-export type AccessAuthResult =
-  | AuthenticationFailure
-  | { readonly identity: AccessIdentity; readonly ok: true };
+type AccessAuthResult = AuthenticationFailure | { readonly ok: true };
 
 interface AccessSettings {
   audience: string;
@@ -26,7 +19,11 @@ interface AccessSettings {
 const accessSettings = (config: AccessConfig): AccessSettings | undefined => {
   const audience = config.ACCESS_AUD.trim();
   const domain = config.ACCESS_TEAM_DOMAIN.trim().toLowerCase();
-  if (audience === "" || domain === "" || domain.includes(":")) {
+  if (
+    audience === "" ||
+    !domain.endsWith(".cloudflareaccess.com") ||
+    domain.includes(":")
+  ) {
     return undefined;
   }
 
@@ -107,17 +104,16 @@ export const authenticateAccess = async (
       issuer: settings.issuer,
       requiredClaims: ["exp", "iat", "sub"],
     });
-    if (typeof payload.sub !== "string" || payload.sub === "") {
-      throw new Error("Access assertion has no subject");
+    if (
+      typeof payload.sub !== "string" ||
+      payload.sub === "" ||
+      typeof payload.iat !== "number" ||
+      !Number.isSafeInteger(payload.iat) ||
+      payload.iat > Math.floor(Date.now() / 1000) + 5
+    ) {
+      throw new Error("invalid Access claims");
     }
-    const identity: AccessIdentity = { subject: payload.sub };
-    if (typeof payload.email === "string" && payload.email !== "") {
-      return {
-        identity: { ...identity, email: payload.email },
-        ok: true,
-      };
-    }
-    return { identity, ok: true };
+    return { ok: true };
   } catch {
     return {
       message: "missing or invalid Cloudflare Access assertion",

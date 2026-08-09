@@ -1,0 +1,74 @@
+name: Deploy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  deploy:
+    name: Deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - name: Verify deployment revision
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$GITHUB_SHA"
+      - name: Deploy
+        id: deploy
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
+        env:
+          ACCESS_AUD: ${{ vars.ACCESS_AUD }}
+          ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
+          BALANCER_KEY: ${{ secrets.BALANCER_KEY }}
+          GIT_SHA: ${{ github.sha }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+          secrets: |
+            BALANCER_KEY
+            TOKEN_ENCRYPTION_KEY
+          vars: |
+            ACCESS_AUD
+            ACCESS_TEAM_DOMAIN
+            GIT_SHA
+      - name: Smoke test
+        env:
+          CLOUDFLARE_WORKER_URL: ${{ steps.deploy.outputs.deployment-url }}
+          EXPECTED_GIT_SHA: ${{ github.sha }}
+        run: |
+          test -n "$CLOUDFLARE_WORKER_URL"
+          health="$(curl --fail --silent --show-error --retry 10 --retry-delay 3 --retry-all-errors "${CLOUDFLARE_WORKER_URL%/}/healthz")"
+          printf '%s' "$health" | jq --exit-status --arg sha "$EXPECTED_GIT_SHA" '.status == "ok" and .sha == $sha and .storage == "ok"' >/dev/null

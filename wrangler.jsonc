@@ -1,0 +1,49 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "codex-balancer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-08",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": true,
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BALANCER_STATE",
+        "class_name": "BalancerState",
+      },
+    ],
+  },
+  "exports": {
+    "BalancerState": {
+      "type": "durable-object",
+      "storage": "sqlite",
+    },
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+    },
+  },
+  "limits": {
+    "cpu_ms": 300000,
+  },
+  "vars": {
+    "ACCESS_AUD": "",
+    "ACCESS_TEAM_DOMAIN": "",
+    "AUTH_BASE_URL": "https://auth.openai.com",
+    "GIT_SHA": "dev",
+    "UPSTREAM_BASE_URL": "https://chatgpt.com/backend-api/codex",
+    "USAGE_BASE_URL": "https://chatgpt.com/backend-api/wham",
+  },
+  "secrets": {
+    "required": ["BALANCER_KEY", "TOKEN_ENCRYPTION_KEY"],
+  },
+}
