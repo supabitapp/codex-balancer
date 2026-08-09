@@ -35,6 +35,9 @@ codex-balancer server           # serve the proxy
 hide their domain and all but the first and last local-part characters, such as
 `k***i@***.com`.
 
+Open `/dashboard` and enter the server key for the live web dashboard. It
+streams the TUI account, total, thread, and event data over WebSocket.
+
 ```sh
 curl http://127.0.0.1:8317/stats
 ```

@@ -55,10 +55,10 @@ type threadStats struct {
 }
 
 type Event struct {
-	At      time.Time
-	Kind    string
-	Account string
-	Detail  string
+	At      time.Time `json:"at"`
+	Kind    string    `json:"kind"`
+	Account string    `json:"account"`
+	Detail  string    `json:"detail"`
 }
 
 func newStats() *Stats {
@@ -193,12 +193,12 @@ type AccountSnapshot struct {
 }
 
 type ThreadSnapshot struct {
-	Key         string
-	Account     string
-	ServiceTier string
-	Turns       int64
-	Last        time.Time
-	Via         transport
+	Key         string    `json:"key"`
+	Account     string    `json:"account"`
+	ServiceTier string    `json:"service_tier"`
+	Turns       int64     `json:"turns"`
+	Last        time.Time `json:"last"`
+	Via         transport `json:"via"`
 }
 
 func (s *Stats) snapshot() Snapshot {
@@ -214,7 +214,7 @@ func (s *Stats) snapshot() Snapshot {
 		WSOpen:   s.wsOpen,
 		Accounts: make(map[string]AccountSnapshot, len(s.accounts)),
 		Threads:  make([]ThreadSnapshot, 0, len(s.threads)),
-		Events:   append([]Event(nil), s.events...),
+		Events:   append([]Event{}, s.events...),
 	}
 	if s.ttfbN > 0 {
 		out.TTFB = s.ttfbSum / time.Duration(s.ttfbN)
@@ -263,6 +263,7 @@ type accountStatsResponse struct {
 	Turns                  int64         `json:"turns"`
 	OpenWebSockets         int64         `json:"open_websockets"`
 	RateLimits             int64         `json:"rate_limits"`
+	Activity               []int64       `json:"activity"`
 }
 
 func (s *server) statsJSON(w http.ResponseWriter, _ *http.Request) {
@@ -270,7 +271,10 @@ func (s *server) statsJSON(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) currentStats(now time.Time) statsResponse {
-	snapshot := s.stats.snapshot()
+	return s.statsResponseAt(now, s.stats.snapshot())
+}
+
+func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse {
 	out := statsResponse{
 		UptimeSeconds:           snapshot.Uptime.Seconds(),
 		Turns:                   snapshot.Turns,
@@ -310,6 +314,7 @@ func (s *server) currentStats(now time.Time) statsResponse {
 			Turns:                  traffic.Turns,
 			OpenWebSockets:         traffic.WSOpen,
 			RateLimits:             traffic.Limited,
+			Activity:               traffic.Activity,
 		})
 	}
 	return out

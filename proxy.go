@@ -66,6 +66,8 @@ var websocketHopByHop = map[string]bool{
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /accounts", s.accountsPage)
+	mux.HandleFunc("GET /dashboard", s.dashboardPage)
+	mux.HandleFunc("GET /dashboard/ws", s.dashboardWebSocket)
 	mux.HandleFunc("GET /stats", s.statsJSON)
 	mux.HandleFunc("POST /v1/responses", s.responses)
 	mux.HandleFunc("GET /v1/responses", s.responsesWebSocket)
@@ -277,6 +279,10 @@ func (s *server) authorized(r *http.Request) bool {
 		return true
 	}
 	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return s.validKey(presented)
+}
+
+func (s *server) validKey(presented string) bool {
 	return subtle.ConstantTimeCompare([]byte(presented), []byte(s.key)) == 1
 }
 
