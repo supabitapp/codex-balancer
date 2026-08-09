@@ -23,8 +23,7 @@
 * { box-sizing: border-box }
 body { min-height: 100vh; margin: 0; background: var(--gray-1); color: var(--gray-12) }
 main { width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding: 1rem 0 3rem }
-header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding-bottom: .5rem }
-h1 { margin: 0; font-size: 1.125rem; font-weight: 600 }
+header { display: flex; justify-content: flex-end; padding-bottom: .5rem }
 h2 { margin: 0 0 .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase }
 section { margin-top: 1.5rem }
 p { margin: 0 }
@@ -65,7 +64,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 }
 @media (max-width: 760px) {
   main { width: min(calc(100% - 1.25rem), 100rem) }
-  header { align-items: flex-start; flex-direction: column }
   #meta { font-size: .8rem }
 }
 </style>
@@ -80,7 +78,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 
 {{define "dashboard"}}<main id="dashboard">
 <header>
-<h1>Codex Balancer</h1>
 <p id="meta">{{.Meta}}</p>
 </header>
 <section>
