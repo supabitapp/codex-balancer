@@ -1,25 +1,59 @@
 package main
 
 import (
-	"context"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
 
-const dashboardFrame = 500 * time.Millisecond
-const dashboardAuthTimeout = 10 * time.Second
-
-type dashboardAuth struct {
-	Password string `json:"password"`
-}
+const (
+	dashboardFrame          = 500 * time.Millisecond
+	dashboardMaxConnections = 32
+)
 
 type dashboardResponse struct {
-	Stats   statsResponse    `json:"stats"`
-	Threads []ThreadSnapshot `json:"threads"`
-	Events  []Event          `json:"events"`
+	UptimeSeconds           float64            `json:"uptime_seconds"`
+	Turns                   int64              `json:"turns"`
+	WebSocketTurns          int64              `json:"websocket_turns"`
+	OpenWebSockets          int64              `json:"open_websockets"`
+	Failovers               int64              `json:"failovers"`
+	RateLimits              int64              `json:"rate_limits"`
+	AverageTTFBMilliseconds float64            `json:"average_ttfb_ms"`
+	Accounts                []dashboardAccount `json:"accounts"`
+	Threads                 []dashboardThread  `json:"threads"`
+	Events                  []dashboardEvent   `json:"events"`
+}
+
+type dashboardAccount struct {
+	Name                   string        `json:"name"`
+	Plan                   string        `json:"plan"`
+	Status                 accountStatus `json:"status"`
+	WeeklyRemainingPercent *float64      `json:"weekly_remaining_percent"`
+	BankedResets           *int64        `json:"banked_resets"`
+	ResetAt                *time.Time    `json:"reset_at"`
+	Turns                  int64         `json:"turns"`
+	OpenWebSockets         int64         `json:"open_websockets"`
+	RateLimits             int64         `json:"rate_limits"`
+	Activity               []int64       `json:"activity"`
+}
+
+type dashboardThread struct {
+	KeyPrefix   string    `json:"key_prefix"`
+	Account     string    `json:"account"`
+	ServiceTier string    `json:"service_tier"`
+	Turns       int64     `json:"turns"`
+	Last        time.Time `json:"last"`
+	Via         transport `json:"via"`
+}
+
+type dashboardEvent struct {
+	At      time.Time `json:"at"`
+	Kind    string    `json:"kind"`
+	Account string    `json:"account"`
+	Detail  string    `json:"detail"`
 }
 
 func (s *server) dashboardPage(w http.ResponseWriter, _ *http.Request) {
@@ -32,20 +66,18 @@ func (s *server) dashboardPage(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
+	if s.dashboardConnections.Add(1) > dashboardMaxConnections {
+		s.dashboardConnections.Add(-1)
+		http.Error(w, "dashboard is busy", http.StatusServiceUnavailable)
+		return
+	}
+	defer s.dashboardConnections.Add(-1)
+
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return
 	}
 	defer conn.CloseNow()
-	conn.SetReadLimit(1024)
-
-	authContext, cancel := context.WithTimeout(r.Context(), dashboardAuthTimeout)
-	defer cancel()
-	var auth dashboardAuth
-	if err := wsjson.Read(authContext, conn, &auth); err != nil || s.key == "" || !s.validKey(auth.Password) {
-		conn.Close(websocket.StatusPolicyViolation, "invalid admin password")
-		return
-	}
 
 	ticker := time.NewTicker(dashboardFrame)
 	defer ticker.Stop()
@@ -63,10 +95,59 @@ func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) currentDashboard(now time.Time) dashboardResponse {
 	snapshot := s.stats.snapshot()
+	stats := s.statsResponseAt(now, snapshot)
+	publicAccounts := make([]dashboardAccount, 0, len(stats.Accounts))
+	names := make(map[string]string, len(stats.Accounts))
+	for i, account := range stats.Accounts {
+		name := account.Email
+		if name == "" {
+			name = "account " + strconv.Itoa(i+1)
+		}
+		names[account.ID] = name
+		publicAccounts = append(publicAccounts, dashboardAccount{
+			Name:                   name,
+			Plan:                   account.Plan,
+			Status:                 account.Status,
+			WeeklyRemainingPercent: account.WeeklyRemainingPercent,
+			BankedResets:           account.BankedResets,
+			ResetAt:                account.ResetAt,
+			Turns:                  account.Turns,
+			OpenWebSockets:         account.OpenWebSockets,
+			RateLimits:             account.RateLimits,
+			Activity:               account.Activity,
+		})
+	}
+	threads := make([]dashboardThread, 0, len(snapshot.Threads))
+	for _, thread := range snapshot.Threads {
+		threads = append(threads, dashboardThread{
+			KeyPrefix:   shortKey(thread.Key),
+			Account:     names[thread.Account],
+			ServiceTier: thread.ServiceTier,
+			Turns:       thread.Turns,
+			Last:        thread.Last,
+			Via:         thread.Via,
+		})
+	}
+	events := make([]dashboardEvent, 0, len(snapshot.Events))
+	for _, event := range snapshot.Events {
+		events = append(events, dashboardEvent{
+			At:      event.At,
+			Kind:    event.Kind,
+			Account: names[event.Account],
+			Detail:  event.Detail,
+		})
+	}
 	return dashboardResponse{
-		Stats:   s.statsResponseAt(now, snapshot),
-		Threads: snapshot.Threads,
-		Events:  snapshot.Events,
+		UptimeSeconds:           stats.UptimeSeconds,
+		Turns:                   stats.Turns,
+		WebSocketTurns:          stats.WebSocketTurns,
+		OpenWebSockets:          stats.OpenWebSockets,
+		Failovers:               stats.Failovers,
+		RateLimits:              stats.RateLimits,
+		AverageTTFBMilliseconds: stats.AverageTTFBMilliseconds,
+		Accounts:                publicAccounts,
+		Threads:                 threads,
+		Events:                  events,
 	}
 }
 
@@ -80,18 +161,6 @@ const dashboardHTML = `<!doctype html>
 :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: #11111b; color: #cdd6f4 }
 * { box-sizing: border-box }
 body { min-height: 100vh; margin: 0; background: #11111b }
-[hidden] { display: none !important }
-button, input { font: inherit }
-.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 1.5rem }
-.login { width: min(28rem, 100%); padding: 2rem; border: 1px solid #45475a; border-radius: 1rem; background: #181825 }
-.login h1 { margin: 0 0 .65rem; color: #89b4fa; font-size: 1.45rem }
-.login p { margin: 0 0 1.4rem; color: #6c7086; line-height: 1.5 }
-.login label { display: block; margin-bottom: .5rem; color: #a6adc8 }
-.login input { width: 100%; border: 1px solid #45475a; border-radius: .5rem; padding: .75rem; outline: none; background: #11111b; color: #cdd6f4 }
-.login input:focus { border-color: #89b4fa }
-.login button { width: 100%; margin-top: .85rem; border: 0; border-radius: .5rem; padding: .75rem; background: #89b4fa; color: #11111b; font-weight: 700; cursor: pointer }
-.login button:disabled { opacity: .55; cursor: wait }
-.login-status { min-height: 1.25rem; margin-top: .8rem; color: #f38ba8 }
 .dashboard { width: min(112rem, 100%); margin: 0 auto; padding: 1rem }
 .panel { border: 1px solid #45475a; border-radius: .75rem; background: #181825 }
 .top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 1.1rem }
@@ -118,11 +187,11 @@ tbody tr:last-child td { border-bottom: 0 }
 .accent { color: #89b4fa }
 .dim { color: #6c7086 }
 .spark { color: #89b4fa; letter-spacing: .08em }
+.empty { padding: 1rem; color: #6c7086 }
 .totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #181825 }
 .total { min-width: 0; padding: .8rem 1rem; border-right: 1px solid #313244; border-bottom: 1px solid #313244; background: #181825 }
 .total span { display: block; color: #6c7086; font-size: .72rem; text-transform: uppercase }
 .total strong { display: block; margin-top: .3rem; overflow: hidden; color: #cdd6f4; font-size: 1.05rem; text-overflow: ellipsis }
-.empty { padding: 1rem; color: #6c7086 }
 @media (max-width: 760px) {
   .dashboard { padding: .6rem }
   .top { align-items: flex-start; flex-direction: column }
@@ -134,20 +203,10 @@ tbody tr:last-child td { border-bottom: 0 }
 </style>
 </head>
 <body>
-<section id="login-shell" class="login-shell">
-<form id="login" class="login">
-<h1>CODEX BALANCER</h1>
-<p>Enter the server key to open the live dashboard.</p>
-<label for="password">Admin password</label>
-<input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
-<button id="connect" type="submit">Connect</button>
-<div id="login-status" class="login-status" role="status"></div>
-</form>
-</section>
-<main id="dashboard" class="dashboard" hidden>
+<main class="dashboard">
 <header class="top panel">
 <div><span class="brand">CODEX BALANCER</span><span id="summary" class="summary"></span></div>
-<div id="meta" class="meta"></div>
+<div id="meta" class="meta">connecting…</div>
 </header>
 <section class="section panel">
 <h2>ACCOUNTS</h2>
@@ -167,61 +226,32 @@ tbody tr:last-child td { border-bottom: 0 }
 </section>
 </main>
 <script>
-const loginShell = document.getElementById('login-shell')
-const login = document.getElementById('login')
-const passwordInput = document.getElementById('password')
-const connectButton = document.getElementById('connect')
-const loginStatus = document.getElementById('login-status')
-const dashboard = document.getElementById('dashboard')
 const blocks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
-let password = ''
 let reconnectTimer
-
-login.addEventListener('submit', event => {
-  event.preventDefault()
-  password = passwordInput.value
-  connect()
-})
 
 function connect() {
   clearTimeout(reconnectTimer)
-  connectButton.disabled = true
-  loginStatus.textContent = 'Connecting…'
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const socket = new WebSocket(scheme + '//' + location.host + '/dashboard/ws')
-  socket.addEventListener('open', () => socket.send(JSON.stringify({password})))
-  socket.addEventListener('message', event => {
-    render(JSON.parse(event.data))
-    loginShell.hidden = true
-    dashboard.hidden = false
-    connectButton.disabled = false
-    loginStatus.textContent = ''
-  })
-  socket.addEventListener('close', event => {
-    if (event.code === 1008) {
-      password = ''
-      passwordInput.value = ''
-      loginShell.hidden = false
-      dashboard.hidden = true
-      connectButton.disabled = false
-      loginStatus.textContent = 'Invalid admin password'
-      passwordInput.focus()
-      return
-    }
-    if (password) reconnectTimer = setTimeout(connect, 1000)
+  socket.addEventListener('message', event => render(JSON.parse(event.data)))
+  socket.addEventListener('close', () => {
+    document.getElementById('meta').textContent = 'reconnecting…'
+    reconnectTimer = setTimeout(connect, 1000)
   })
   socket.addEventListener('error', () => {
-    loginStatus.textContent = 'Connection failed'
+    document.getElementById('meta').textContent = 'connection failed'
   })
 }
 
-function render(payload) {
-  const stats = payload.stats
-  const accountNames = Object.fromEntries(stats.accounts.map(account => [account.id, shortName(account)]))
+function render(stats) {
   const counts = stats.accounts.reduce((all, account) => {
     all[account.status] = (all[account.status] || 0) + 1
     return all
   }, {})
+  const activity = stats.accounts.reduce((total, account) => {
+    account.activity.forEach((turns, index) => total[index] = (total[index] || 0) + turns)
+    return total
+  }, [])
   const summary = []
   addCount(summary, counts.live, 'live', 'live')
   addCount(summary, counts.checking, 'checking', 'checking')
@@ -229,28 +259,28 @@ function render(payload) {
   addCount(summary, counts.paused, 'paused', 'paused')
   addCount(summary, counts.needs_reauth, 'need reauth', 'reauth')
   document.getElementById('summary').innerHTML = summary.join('<span class="dot">·</span>')
-  document.getElementById('meta').textContent = rate(stats.accounts) + ' · up ' + short(stats.uptime_seconds * 1000)
-  renderAccounts(stats)
+  document.getElementById('meta').textContent = rate(activity) + ' · up ' + short(stats.uptime_seconds * 1000)
+  renderAccounts(stats.accounts, stats.turns)
   renderTotals(stats)
-  renderThreads(payload.threads, accountNames)
-  renderEvents(payload.events, accountNames)
+  renderThreads(stats.threads)
+  renderEvents(stats.events)
 }
 
 function addCount(parts, count, label, kind) {
   if (count) parts.push('<span class="' + kind + '">' + count + ' ' + h(label) + '</span>')
 }
 
-function renderAccounts(stats) {
-  if (!stats.accounts.length) {
+function renderAccounts(accounts, turns) {
+  if (!accounts.length) {
     document.getElementById('accounts').innerHTML = '<div class="empty">(none)</div>'
     return
   }
-  const rows = stats.accounts.map(account => {
+  const rows = accounts.map(account => {
     const remaining = account.weekly_remaining_percent
     const remainingClass = remaining === null ? 'dim' : remaining <= 10 ? 'bad' : remaining <= 30 ? 'warn' : 'good'
-    const traffic = stats.turns ? Math.floor(account.turns * 100 / stats.turns) + '%' : ''
+    const traffic = turns ? Math.floor(account.turns * 100 / turns) + '%' : ''
     return '<tr>' +
-      cell(account.email || account.id, 'number') +
+      cell(account.name, 'number') +
       cell(account.plan, 'dim') +
       cell(status(account.status), statusClass(account.status)) +
       cell(remaining === null ? '--' : percent(remaining), remainingClass) +
@@ -274,7 +304,7 @@ function renderTotals(stats) {
     ['http', stats.turns - stats.websocket_turns],
     ['ws turns', stats.websocket_turns],
     ['ws open', stats.open_websockets],
-    ['threads', stats.threads],
+    ['threads', stats.threads.length],
     ['accounts', stats.accounts.length],
     ['failovers', stats.failovers],
     ['rate limits', stats.rate_limits],
@@ -286,7 +316,7 @@ function renderTotals(stats) {
   ).join('')
 }
 
-function renderThreads(threads, names) {
+function renderThreads(threads) {
   const sorted = [...threads].sort((left, right) => new Date(right.last) - new Date(left.last))
   document.getElementById('threads-title').textContent = 'THREADS  ' + sorted.length
   if (!sorted.length) {
@@ -294,9 +324,9 @@ function renderThreads(threads, names) {
     return
   }
   const rows = sorted.map(thread => '<tr>' +
-    cell(thread.key.slice(0, 8), 'number') +
+    cell(thread.key_prefix, 'number') +
     cell('→', 'dim') +
-    cell(names[thread.account] || '', 'accent') +
+    cell(thread.account, 'accent') +
     cell(String(thread.via).toUpperCase(), 'good') +
     cell(thread.service_tier === 'priority' ? 'FAST' : '', 'fast') +
     cell(plural(thread.turns, 'turn'), 'dim') +
@@ -305,7 +335,7 @@ function renderThreads(threads, names) {
   document.getElementById('threads').innerHTML = '<table><tbody>' + rows + '</tbody></table>'
 }
 
-function renderEvents(events, names) {
+function renderEvents(events) {
   const sorted = [...events].reverse()
   if (!sorted.length) {
     document.getElementById('events').innerHTML = '<div class="empty">quiet</div>'
@@ -314,7 +344,7 @@ function renderEvents(events, names) {
   const rows = sorted.map(event => '<tr>' +
     cell(clock(event.at), 'dim') +
     cell(event.kind, event.kind === 'failover' ? 'bad' : event.kind === 'rate limited' ? 'fast' : 'dim') +
-    cell(names[event.account] || '', 'number') +
+    cell(event.account, 'number') +
     cell(event.detail, 'dim') +
     '</tr>').join('')
   document.getElementById('events').innerHTML = '<table><tbody>' + rows + '</tbody></table>'
@@ -326,10 +356,6 @@ function headers(values) {
 
 function cell(value, className) {
   return '<td class="' + className + '">' + h(value) + '</td>'
-}
-
-function shortName(account) {
-  return (account.email || account.id).split('@')[0]
 }
 
 function status(value) {
@@ -352,8 +378,8 @@ function spark(activity) {
   return [...activity].reverse().map(value => blocks[Math.floor(value * (blocks.length - 1) / peak)]).join('')
 }
 
-function rate(accounts) {
-  const turns = accounts.flatMap(account => account.activity).reduce((total, value) => total + value, 0)
+function rate(activity) {
+  const turns = activity.reduce((total, value) => total + value, 0)
   return (turns / 12).toFixed(1) + ' turns/min'
 }
 
@@ -387,6 +413,8 @@ function percent(value) {
 function h(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, character => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[character]))
 }
+
+connect()
 </script>
 </body>
 </html>`

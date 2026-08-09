@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,16 +27,17 @@ func newProxyClient() *http.Client {
 }
 
 type server struct {
-	ctx        context.Context
-	pool       *Pool
-	affinity   *AffinityStore
-	stats      *Stats
-	logins     accountLoginStore
-	upstream   string
-	authIssuer string
-	key        string
-	client     *http.Client
-	log        *slog.Logger
+	ctx                  context.Context
+	pool                 *Pool
+	affinity             *AffinityStore
+	stats                *Stats
+	logins               accountLoginStore
+	upstream             string
+	authIssuer           string
+	key                  string
+	client               *http.Client
+	log                  *slog.Logger
+	dashboardConnections atomic.Int64
 }
 
 var hopByHop = map[string]bool{
