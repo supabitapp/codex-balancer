@@ -24,6 +24,8 @@ const (
 	eventResponseAnswered  = "response answered"
 	eventResponseCompleted = "response completed"
 	eventResponseUsage     = "response usage"
+	eventRotationReconnect = "rotation reconnect"
+	eventRotated           = "rotated"
 )
 
 type transport string
@@ -124,6 +126,13 @@ func (s *Stats) note(kind, account, detail string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.appendEvent(Event{At: now, Kind: kind, Account: account, Detail: detail})
+}
+
+func publicEventDetail(event Event) string {
+	if event.Kind == eventRotationReconnect {
+		return shortKey(event.Detail)
+	}
+	return event.Detail
 }
 
 func (s *Stats) rateLimited(account string) {

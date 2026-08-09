@@ -265,7 +265,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			At:      event.At.UTC().Format("15:04:05") + " UTC",
 			Kind:    event.Kind,
 			Account: names[event.Account],
-			Detail:  event.Detail,
+			Detail:  publicEventDetail(event),
 		})
 	}
 

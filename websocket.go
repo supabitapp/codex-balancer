@@ -122,7 +122,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 		if failed != nil && failed.Body != nil {
 			failed.Body.Close()
 		}
-		s.compactionRotation.finish(thread, "handshake_failed", "")
+		s.compactionRotation.finish(pendingRotation.thread, "handshake_failed", "")
 		rotating = false
 		dial, failed, err = s.dialResponsesWebSocket(r, thread, resolution, nil, "", "")
 	}
@@ -530,7 +530,7 @@ func (s *server) relayResponsesWebSocket(
 			allowed := s.allowedAccounts(event.Model, event.ServiceTier)
 			alternate := s.pool.pick("", "", map[string]bool{current.account.id(): true}, allowed) != nil
 			if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, resolution.hard, len(turns), alternate) {
-				s.stats.note("rotation reconnect", current.account.id(), turnThread)
+				s.stats.note(eventRotationReconnect, current.account.id(), shortKey(metadata.ThreadID))
 				if err := downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction"); err != nil {
 					s.log.Warn("compaction rotation downstream restart failed",
 						"thread", turnThread,
@@ -548,11 +548,13 @@ func (s *server) relayResponsesWebSocket(
 				return
 			}
 			rotationFrom := ""
+			var rotationSkip map[string]bool
 			if rotationFrom = s.compactionRotation.routeSource(turnThread, current.account.id(), metadata, resolution.hard); rotationFrom != "" {
 				resolution.required = ""
-				resolution.preferred = current.account.id()
+				resolution.preferred = ""
+				rotationSkip = map[string]bool{rotationFrom: true}
 			}
-			target := s.pool.pick(resolution.required, resolution.preferred, nil, allowed)
+			target := s.pool.pick(resolution.required, resolution.preferred, rotationSkip, allowed)
 			if target == nil {
 				s.log.Warn("websocket turn has no account",
 					"thread", turnThread,
@@ -577,7 +579,7 @@ func (s *server) relayResponsesWebSocket(
 					writeWebSocketAffinityError(ctx, downstream, errAffinityOwnerUnavailable)
 					continue
 				}
-				next, failed, err := s.dialResponsesWebSocket(r, turnThread, resolution, nil, event.Model, event.ServiceTier)
+				next, failed, err := s.dialResponsesWebSocket(r, turnThread, resolution, rotationSkip, event.Model, event.ServiceTier)
 				if err != nil || failed != nil {
 					status := 0
 					if failed != nil {
@@ -794,10 +796,10 @@ func (s *server) relayResponsesWebSocket(
 					if turns[index].rotationFrom != "" {
 						outcome := "source_fallback"
 						if current.account.id() != turns[index].rotationFrom {
-							s.stats.note("rotated", current.account.id(), "after compaction")
+							s.stats.note(eventRotated, current.account.id(), "after compaction")
 							outcome = "rotated"
 						}
-						s.compactionRotation.finish(turns[index].thread, outcome, current.account.id())
+						s.compactionRotation.finish(turns[index].metadata.ThreadID, outcome, current.account.id())
 					}
 					break
 				}
@@ -843,7 +845,7 @@ func (s *server) relayResponsesWebSocket(
 						}
 					}
 					if turn.rotationFrom != "" {
-						s.compactionRotation.finish(turn.thread, "terminal_before_acceptance", current.account.id())
+						s.compactionRotation.finish(turn.metadata.ThreadID, "terminal_before_acceptance", current.account.id())
 					}
 					turns = turns[1:]
 				}

@@ -476,7 +476,7 @@ func (d dashboard) events(width, height int) string {
 			sDim.Render(e.At.Format("15:04:05")),
 			style.Render(pad(e.Kind, 13)),
 			sText.Render(pad(names[e.Account], 14)),
-			sDim.Render(e.Detail)))
+			sDim.Render(publicEventDetail(e))))
 	}
 	if len(rows) == 0 {
 		rows = []string{sDim.Render("quiet")}

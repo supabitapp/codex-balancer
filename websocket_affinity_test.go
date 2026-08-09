@@ -253,7 +253,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	proxy := httptest.NewServer(server.routes())
 	defer proxy.Close()
 
-	compaction := turnMetadata{RequestKind: "compaction", TurnID: "turn-a"}
+	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
 	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
@@ -263,7 +263,24 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
 
-	continuation := turnMetadata{RequestKind: "normal", TurnID: "turn-a"}
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(turnMetadata{RequestKind: "memory"})},
+		"input":           []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+
+	spawn := turnMetadata{RequestKind: "turn", ThreadID: "child-thread", TurnID: "child-turn", SubagentKind: "thread_spawn"}
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(spawn)},
+		"input":           []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+
+	continuation := turnMetadata{RequestKind: "normal", ThreadID: "logical-thread", TurnID: "turn-a"}
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
 		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(continuation)},
@@ -272,7 +289,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
 
-	next := turnMetadata{RequestKind: "normal", TurnID: "turn-b"}
+	next := turnMetadata{RequestKind: "normal", ThreadID: "logical-thread", TurnID: "turn-b"}
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
 		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
@@ -284,7 +301,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 		t.Fatalf("close error = %v, want service restart", err)
 	}
 	conn.CloseNow()
-	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a]" {
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a account-a account-a]" {
 		t.Fatalf("requests before reconnect = %s", got)
 	}
 
@@ -292,12 +309,23 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	defer conn.CloseNow()
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(turnMetadata{RequestKind: "memory"})},
+		"input":           []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a account-a account-a account-a]" {
+		t.Fatalf("requests after background reconnect = %s", got)
+	}
+
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
 		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
 		"input":           []any{},
 	})
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
-	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a account-b]" {
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a account-a account-a account-a account-b]" {
 		t.Fatalf("request accounts = %s", got)
 	}
 	if owner := store.lookup(affinityRef{kind: affinitySession, value: "session"}); owner != "account-b" {
@@ -344,7 +372,7 @@ func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testin
 	proxy := httptest.NewServer(server.routes())
 	defer proxy.Close()
 
-	compaction := turnMetadata{RequestKind: "compaction", TurnID: "turn-a"}
+	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
 	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
@@ -354,7 +382,7 @@ func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testin
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
 
-	next := turnMetadata{RequestKind: "normal", TurnID: "turn-b"}
+	next := turnMetadata{RequestKind: "normal", ThreadID: "logical-thread", TurnID: "turn-b"}
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
 		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
@@ -400,7 +428,7 @@ func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testin
 	})
 	requireLogRecord(t, records, "compaction rotation finished", map[string]any{
 		"outcome":        "source_fallback",
-		"thread":         "session",
+		"thread":         "logical-thread",
 		"source_account": "account-a",
 		"account":        "account-a",
 	})

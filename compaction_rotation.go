@@ -7,6 +7,8 @@ import (
 )
 
 type pendingCompactionRotation struct {
+	session      string
+	thread       string
 	account      string
 	turn         string
 	reconnecting bool
@@ -60,14 +62,15 @@ func (r *compactionRotation) toggle() (bool, error) {
 	return enabled, nil
 }
 
-func (r *compactionRotation) arm(thread, account string, metadata turnMetadata) {
+func (r *compactionRotation) arm(session, account string, metadata turnMetadata) {
 	if r == nil || metadata.RequestKind != "compaction" {
 		return
 	}
-	if thread == "" || account == "" {
+	if session == "" || metadata.ThreadID == "" || account == "" {
 		r.log.Warn("compaction rotation not armed",
 			"reason", "missing identity",
-			"thread", thread,
+			"session", session,
+			"thread", metadata.ThreadID,
 			"account", account,
 			"compaction_turn", metadata.TurnID,
 		)
@@ -78,16 +81,23 @@ func (r *compactionRotation) arm(thread, account string, metadata turnMetadata) 
 	if !r.enabled {
 		r.log.Debug("compaction rotation not armed",
 			"reason", "disabled",
-			"thread", thread,
+			"session", session,
+			"thread", metadata.ThreadID,
 			"account", account,
 			"compaction_turn", metadata.TurnID,
 		)
 		return
 	}
-	previous, replaced := r.pending[thread]
-	r.pending[thread] = pendingCompactionRotation{account: account, turn: metadata.TurnID}
+	previous, replaced := r.pending[metadata.ThreadID]
+	r.pending[metadata.ThreadID] = pendingCompactionRotation{
+		session: session,
+		thread:  metadata.ThreadID,
+		account: account,
+		turn:    metadata.TurnID,
+	}
 	r.log.Info("compaction rotation armed",
-		"thread", thread,
+		"session", session,
+		"thread", metadata.ThreadID,
 		"source_account", account,
 		"compaction_turn", metadata.TurnID,
 		"replaced", replaced,
@@ -96,19 +106,25 @@ func (r *compactionRotation) arm(thread, account string, metadata turnMetadata) 
 	)
 }
 
-func (r *compactionRotation) shouldReconnect(thread, account string, metadata turnMetadata, hard bool, activeTurns int, alternate bool) bool {
-	if r == nil {
+func (r *compactionRotation) shouldReconnect(session, account string, metadata turnMetadata, hard bool, activeTurns int, alternate bool) bool {
+	if r == nil || metadata.ThreadID == "" {
 		return false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	pending, ok := r.pending[thread]
+	pending, ok := r.pending[metadata.ThreadID]
 	if !r.enabled || !ok {
 		return false
 	}
 	decision := "restart"
 	level := slog.LevelInfo
 	switch {
+	case pending.session != session:
+		decision = "wait_session"
+		level = slog.LevelDebug
+	case r.otherReconnectingThread(session, metadata.ThreadID) != "":
+		decision = "wait_session_reconnecting"
+		level = slog.LevelDebug
 	case pending.reconnecting:
 		decision = "wait_reconnecting"
 		level = slog.LevelDebug
@@ -130,7 +146,8 @@ func (r *compactionRotation) shouldReconnect(thread, account string, metadata tu
 	}
 	r.log.Log(context.Background(), level, "compaction rotation decision",
 		"decision", decision,
-		"thread", thread,
+		"session", session,
+		"thread", metadata.ThreadID,
 		"source_account", pending.account,
 		"current_account", account,
 		"compaction_turn", pending.turn,
@@ -142,23 +159,23 @@ func (r *compactionRotation) shouldReconnect(thread, account string, metadata tu
 	)
 	if decision != "restart" {
 		if decision == "cancel_no_alternate" {
-			delete(r.pending, thread)
+			delete(r.pending, metadata.ThreadID)
 		}
 		return false
 	}
 	pending.reconnecting = true
-	r.pending[thread] = pending
+	r.pending[metadata.ThreadID] = pending
 	return true
 }
 
-func (r *compactionRotation) handshakeSkip(thread string, hard bool) (map[string]bool, pendingCompactionRotation, bool) {
+func (r *compactionRotation) handshakeSkip(session string, hard bool) (map[string]bool, pendingCompactionRotation, bool) {
 	if r == nil {
 		return nil, pendingCompactionRotation{}, false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	pending, ok := r.pending[thread]
-	if !r.enabled || !ok || !pending.reconnecting {
+	pending, ok := r.reconnectingForSession(session)
+	if !r.enabled || !ok {
 		return nil, pendingCompactionRotation{}, false
 	}
 	decision := "exclude_source"
@@ -167,7 +184,8 @@ func (r *compactionRotation) handshakeSkip(thread string, hard bool) (map[string
 	}
 	r.log.Debug("compaction rotation handshake",
 		"decision", decision,
-		"thread", thread,
+		"session", session,
+		"thread", pending.thread,
 		"source_account", pending.account,
 		"compaction_turn", pending.turn,
 		"hard_affinity", hard,
@@ -178,20 +196,21 @@ func (r *compactionRotation) handshakeSkip(thread string, hard bool) (map[string
 	return map[string]bool{pending.account: true}, pending, true
 }
 
-func (r *compactionRotation) routeSource(thread, account string, metadata turnMetadata, hard bool) string {
-	if r == nil || hard {
+func (r *compactionRotation) routeSource(session, account string, metadata turnMetadata, hard bool) string {
+	if r == nil || hard || metadata.ThreadID == "" {
 		return ""
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	pending, ok := r.pending[thread]
-	if !r.enabled || !ok || !pending.reconnecting || pending.account == account || sameCompactionTurn(pending, metadata) {
+	pending, ok := r.pending[metadata.ThreadID]
+	if !r.enabled || !ok || pending.session != session || !pending.reconnecting || sameCompactionTurn(pending, metadata) {
 		return ""
 	}
 	r.log.Info("compaction rotation request routed",
-		"thread", thread,
+		"session", session,
+		"thread", metadata.ThreadID,
 		"source_account", pending.account,
-		"target_account", account,
+		"current_account", account,
 		"compaction_turn", pending.turn,
 		"request_turn", metadata.TurnID,
 		"request_kind", metadata.RequestKind,
@@ -200,7 +219,7 @@ func (r *compactionRotation) routeSource(thread, account string, metadata turnMe
 }
 
 func (r *compactionRotation) finish(thread, outcome, account string) {
-	if r == nil {
+	if r == nil || thread == "" {
 		return
 	}
 	r.mu.Lock()
@@ -212,12 +231,31 @@ func (r *compactionRotation) finish(thread, outcome, account string) {
 	delete(r.pending, thread)
 	r.log.Info("compaction rotation finished",
 		"outcome", outcome,
+		"session", pending.session,
 		"thread", thread,
 		"source_account", pending.account,
 		"account", account,
 		"compaction_turn", pending.turn,
 		"reconnecting", pending.reconnecting,
 	)
+}
+
+func (r *compactionRotation) reconnectingForSession(session string) (pendingCompactionRotation, bool) {
+	for _, pending := range r.pending {
+		if pending.session == session && pending.reconnecting {
+			return pending, true
+		}
+	}
+	return pendingCompactionRotation{}, false
+}
+
+func (r *compactionRotation) otherReconnectingThread(session, thread string) string {
+	for _, pending := range r.pending {
+		if pending.session == session && pending.thread != thread && pending.reconnecting {
+			return pending.thread
+		}
+	}
+	return ""
 }
 
 func sameCompactionTurn(pending pendingCompactionRotation, metadata turnMetadata) bool {
