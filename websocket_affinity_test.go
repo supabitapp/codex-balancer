@@ -978,7 +978,7 @@ func TestWebSocketMissingPreviousResponseFailsBeforeSend(t *testing.T) {
 }
 
 func TestWebSocketSoftHandshakeRateLimitUsesAnotherAccount(t *testing.T) {
-	upstream := newAffinityWebSocketHandshakeUpstream(t, "account-a")
+	upstream := newAffinityWebSocketHandshakeUpstream(t, "account-a", http.StatusTooManyRequests)
 	defer upstream.Close()
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
@@ -1004,7 +1004,7 @@ func TestWebSocketSoftHandshakeRateLimitUsesAnotherAccount(t *testing.T) {
 }
 
 func TestWebSocketHardHandshakeRateLimitFailsClosed(t *testing.T) {
-	upstream := newAffinityWebSocketHandshakeUpstream(t, "account-a")
+	upstream := newAffinityWebSocketHandshakeUpstream(t, "account-a", http.StatusTooManyRequests)
 	defer upstream.Close()
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
@@ -1027,6 +1027,29 @@ func TestWebSocketHardHandshakeRateLimitFailsClosed(t *testing.T) {
 	}
 	if fmt.Sprint(upstream.ConnectionAccounts()) != "[account-a]" {
 		t.Fatalf("connection accounts = %v", upstream.ConnectionAccounts())
+	}
+}
+
+func TestWebSocketHandshakeServerFailureRetriesThenUsesAnotherAccount(t *testing.T) {
+	upstream := newAffinityWebSocketHandshakeUpstream(t, "account-a", http.StatusServiceUnavailable)
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	proxy, _, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" {
+		t.Fatalf("event = %+v", event)
+	}
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-a account-a account-a account-b]" {
+		t.Fatalf("connection accounts = %s", got)
+	}
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b]" {
+		t.Fatalf("request accounts = %s", got)
 	}
 }
 
@@ -1076,7 +1099,7 @@ func newAffinityWebSocketUpstream(
 	return upstream
 }
 
-func newAffinityWebSocketHandshakeUpstream(t *testing.T, rejected string) *affinityWebSocketUpstream {
+func newAffinityWebSocketHandshakeUpstream(t *testing.T, rejected string, status int) *affinityWebSocketUpstream {
 	t.Helper()
 	upstream := &affinityWebSocketUpstream{}
 	upstream.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1085,8 +1108,7 @@ func newAffinityWebSocketHandshakeUpstream(t *testing.T, rejected string) *affin
 		upstream.connections = append(upstream.connections, account)
 		upstream.mu.Unlock()
 		if account == rejected {
-			w.Header().Set("Retry-After", "60")
-			w.WriteHeader(http.StatusTooManyRequests)
+			w.WriteHeader(status)
 			return
 		}
 		conn, err := websocket.Accept(w, r, nil)

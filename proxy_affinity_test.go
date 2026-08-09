@@ -100,8 +100,33 @@ func TestHTTPSoftSessionRetriesServerFailureOnAnotherAccount(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if fmt.Sprint(calls) != "[account-a account-b]" {
+	if fmt.Sprint(calls) != "[account-a account-a account-a account-a account-b]" {
 		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestHTTPServerFailureRetriesSameAccount(t *testing.T) {
+	a := testAccount("account-a", 0)
+	calls := 0
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a}, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		writeResponseCreated(w, "resp_a")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "session", "", `{"input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+	if events := server.stats.snapshot().Events; len(events) != 0 {
+		t.Fatalf("events = %+v, want none", events)
 	}
 }
 
@@ -491,7 +516,7 @@ func TestHTTPOpaqueFileCanFailOver(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if fmt.Sprint(calls) != "[account-a account-b]" {
+	if fmt.Sprint(calls) != "[account-a account-a account-a account-a account-b]" {
 		t.Fatalf("calls = %v", calls)
 	}
 	if got := store.lookup(affinityRef{kind: affinityFile, value: "file_unknown"}); got != "" {
@@ -821,14 +846,15 @@ func newAffinityHTTPServer(
 	store := &AffinityStore{store: state}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	server := &server{
-		ctx:      context.Background(),
-		pool:     pool,
-		catalog:  newModelCatalog(),
-		affinity: store,
-		stats:    newStats(),
-		upstream: upstream.URL,
-		client:   newProxyClient(),
-		log:      log,
+		ctx:          context.Background(),
+		pool:         pool,
+		catalog:      newModelCatalog(),
+		affinity:     store,
+		stats:        newStats(),
+		upstream:     upstream.URL,
+		client:       newProxyClient(),
+		log:          log,
+		retryBackoff: func(int) time.Duration { return 0 },
 	}
 	return server, store, upstream.Close
 }

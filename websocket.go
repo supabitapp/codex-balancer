@@ -190,12 +190,28 @@ func (s *server) dialResponsesWebSocket(
 			}
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), upstreamWait)
-		conn, resp, err := websocket.Dial(ctx, upstream, &websocket.DialOptions{
-			HTTPClient: s.client,
-			HTTPHeader: responsesWebSocketHeaders(r.Header, account),
-		})
-		cancel()
+		var conn *websocket.Conn
+		var resp *http.Response
+		var err error
+		upstreamRetries := 0
+		for {
+			ctx, cancel := context.WithTimeout(r.Context(), upstreamWait)
+			conn, resp, err = websocket.Dial(ctx, upstream, &websocket.DialOptions{
+				HTTPClient: s.client,
+				HTTPHeader: responsesWebSocketHeaders(r.Header, account),
+			})
+			cancel()
+			if err == nil || resp == nil || resp.StatusCode < 500 || upstreamRetries == maxUpstreamRetries {
+				break
+			}
+			status := resp.StatusCode
+			resp.Body.Close()
+			upstreamRetries++
+			s.log.Info("retrying upstream websocket server failure", "thread", thread, "account", id, "attempt", attempt+1, "retry", upstreamRetries, "status", status)
+			if !s.waitForUpstreamRetry(r.Context(), upstreamRetries) {
+				return nil, nil, context.Cause(r.Context())
+			}
+		}
 		if err == nil {
 			if resp != nil {
 				account.observe(resp.Header)

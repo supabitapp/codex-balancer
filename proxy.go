@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -23,6 +24,8 @@ const (
 	maxResponseEventLine = 1 << 20
 	maxUpstreamErrorBody = 64 << 10
 	maxAttempts          = 3
+	maxUpstreamRetries   = 3
+	retryBaseDelay       = 200 * time.Millisecond
 	refreshTimeout       = 30 * time.Second
 	upstreamWait         = 90 * time.Second
 )
@@ -61,7 +64,28 @@ type server struct {
 	client               *http.Client
 	log                  *slog.Logger
 	admission            *admissionGate
+	retryBackoff         func(int) time.Duration
 	dashboardConnections atomic.Int64
+}
+
+func upstreamRetryDelay(retry int) time.Duration {
+	delay := retryBaseDelay * time.Duration(1<<(retry-1))
+	return time.Duration(float64(delay) * (0.9 + rand.Float64()*0.2))
+}
+
+func (s *server) waitForUpstreamRetry(ctx context.Context, retry int) bool {
+	delay := upstreamRetryDelay(retry)
+	if s.retryBackoff != nil {
+		delay = s.retryBackoff(retry)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 var hopByHop = map[string]bool{
@@ -198,8 +222,35 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			resolution.required = id
 		}
 
-		sent := time.Now()
-		resp, err := s.forward(r, body, account)
+		var sent time.Time
+		var resp *http.Response
+		var err error
+		upstreamRetries := 0
+		for {
+			sent = time.Now()
+			resp, err = s.forward(r, body, account)
+			if err != nil {
+				break
+			}
+			s.log.Debug("upstream responded",
+				"transport", transportHTTP,
+				"thread", key,
+				"account", id,
+				"attempt", attempt+1,
+				"retry", upstreamRetries,
+				"status", resp.StatusCode,
+				"header_latency", time.Since(sent),
+			)
+			if resp.StatusCode < 500 || upstreamRetries == maxUpstreamRetries {
+				break
+			}
+			resp.Body.Close()
+			upstreamRetries++
+			s.log.Info("retrying upstream server failure", "transport", transportHTTP, "thread", key, "account", id, "attempt", attempt+1, "retry", upstreamRetries, "status", resp.StatusCode)
+			if !s.waitForUpstreamRetry(r.Context(), upstreamRetries) {
+				return
+			}
+		}
 		if err != nil {
 			s.log.Warn("upstream unreachable", "transport", transportHTTP, "thread", key, "account", id, "attempt", attempt+1, "error", err)
 			s.stats.failedOver(id, "unreachable")
@@ -207,15 +258,6 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			skip[id] = true
 			continue
 		}
-		s.log.Debug("upstream responded",
-			"transport", transportHTTP,
-			"thread", key,
-			"account", id,
-			"attempt", attempt+1,
-			"status", resp.StatusCode,
-			"header_latency", time.Since(sent),
-		)
-
 		if resp.StatusCode == http.StatusUnauthorized && !reauthed[id] {
 			resp.Body.Close()
 			reauthed[id] = true
