@@ -25,7 +25,7 @@ const (
 	maxUpstreamErrorBody = 64 << 10
 	maxAttempts          = 3
 	maxUpstreamRetries   = 3
-	retryBaseDelay       = 200 * time.Millisecond
+	upstreamRetryBudget  = 5 * time.Second
 	refreshTimeout       = 30 * time.Second
 	upstreamWait         = 90 * time.Second
 )
@@ -68,9 +68,12 @@ type server struct {
 	dashboardConnections atomic.Int64
 }
 
+func upstreamRetryBackoff(retry int) time.Duration {
+	return upstreamRetryBudget * time.Duration(1<<(retry-1)) / time.Duration((1<<maxUpstreamRetries)-1)
+}
+
 func upstreamRetryDelay(retry int) time.Duration {
-	delay := retryBaseDelay * time.Duration(1<<(retry-1))
-	return time.Duration(float64(delay) * (0.9 + rand.Float64()*0.2))
+	return time.Duration(float64(upstreamRetryBackoff(retry)) * (0.9 + rand.Float64()*0.2))
 }
 
 func (s *server) waitForUpstreamRetry(ctx context.Context, retry int) bool {
