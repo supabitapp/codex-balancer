@@ -132,8 +132,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
 		`a1b2c3d4`,
-		`<td>gpt-5.6-sol</td>`,
-		`<td>high</td>`,
+		`<td>gpt-5.6-sol (high)</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<span>1 checking</span>`,
 		`<td>WS</td>`,
@@ -312,7 +311,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "gpt-5.6-sol" || thread.Thinking != "xhigh" || thread.Input != "2K" || thread.CacheRate != "75" || thread.Output != "300" || thread.Context != "2.3K / 258.4K (1)" || thread.Latency != "2s" || thread.Turns != "1" {
+	if thread.Model != "gpt-5.6-sol (xhigh)" || thread.Input != "2K" || thread.CacheRate != "75" || thread.Output != "300" || thread.Context != "2.3K / 258.4K (1)" || thread.Latency != "2s" || thread.Turns != "1" {
 		t.Fatalf("routing row = %+v", thread)
 	}
 	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
@@ -323,7 +322,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Model</th>", "<th>Thinking</th>", "<th>Input</th>", "<th>Cache %</th>", "<th>Output</th>", "<th>Context/Compaction</th>", "<th>Latency</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1", "First byte: 500ms"} {
+	for _, expected := range []string{"<th>Model (thinking mode)</th>", "<td>gpt-5.6-sol (xhigh)</td>", "<th>Input</th>", "<th>Cache %</th>", "<th>Output</th>", "<th>Context/Compaction</th>", "<th>Latency</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1", "First byte: 500ms"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -337,6 +336,12 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard exposed %q", private)
 		}
+	}
+}
+
+func TestDashboardModelOmitsEmptyThinkingMode(t *testing.T) {
+	if got := dashboardModel("gpt-5.6-sol", ""); got != "gpt-5.6-sol" {
+		t.Fatalf("model = %q", got)
 	}
 }
 
