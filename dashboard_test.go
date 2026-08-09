@@ -17,7 +17,7 @@ import (
 func TestDashboardWebSocketStreamsPublicSnapshot(t *testing.T) {
 	stats := newStats()
 	stats.routed("019fe5c2", "account", serviceTierFast, transportWebSocket)
-	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"a@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
+	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
 	account := accountFromState(accountState{IDToken: "x." + tokenPayload + ".x"})
 	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: stats, key: "secret"}
 	httpServer := httptest.NewServer(server.routes())
@@ -39,16 +39,16 @@ func TestDashboardWebSocketStreamsPublicSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := map[string]bool{
-		"uptime_seconds":   true,
-		"turns":            true,
-		"websocket_turns":  true,
-		"open_websockets":  true,
-		"threads":          true,
-		"failovers":        true,
-		"rate_limits":      true,
-		"average_ttfb_ms":  true,
-		"account_statuses": true,
-		"activity":         true,
+		"uptime_seconds":  true,
+		"turns":           true,
+		"websocket_turns": true,
+		"open_websockets": true,
+		"threads":         true,
+		"failovers":       true,
+		"rate_limits":     true,
+		"average_ttfb_ms": true,
+		"accounts":        true,
+		"activity":        true,
 	}
 	for field := range fields {
 		if !expected[field] {
@@ -60,11 +60,18 @@ func TestDashboardWebSocketStreamsPublicSnapshot(t *testing.T) {
 			t.Fatalf("missing public field %q", field)
 		}
 	}
+	var accounts []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["accounts"], &accounts); err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || len(accounts[0]) != 2 || accounts[0]["email"] == nil || accounts[0]["status"] == nil {
+		t.Fatalf("unexpected public accounts: %+v", accounts)
+	}
 	var response dashboardResponse
 	if err := json.Unmarshal(payload, &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Turns != 1 || response.WebSocketTurns != 1 || response.Threads != 1 || response.AccountStatuses[accountChecking] != 1 || response.Activity[0] != 1 {
+	if response.Turns != 1 || response.WebSocketTurns != 1 || response.Threads != 1 || len(response.Accounts) != 1 || response.Accounts[0].Email != "a***e@***.com" || response.Accounts[0].Status != accountChecking || response.Activity[0] != 1 {
 		t.Fatalf("unexpected dashboard response: %+v", response)
 	}
 }
