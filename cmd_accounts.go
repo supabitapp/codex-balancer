@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"text/tabwriter"
 	"time"
 )
@@ -48,7 +47,7 @@ func accountsCmd(args []string) error {
 		return err
 	}
 
-	store, err := openConfiguredState(*path)
+	store, err := openStateStore(*path)
 	if err != nil {
 		return err
 	}
@@ -161,10 +160,6 @@ func tokenStatus(a *Account) string {
 	default:
 		return "valid for " + time.Until(expiry).Round(time.Minute).String()
 	}
-}
-
-func defaultLegacyAccountsPath() string {
-	return filepath.Join(homeDir(), ".codex-balancer", "accounts.json")
 }
 
 func homeDir() string {

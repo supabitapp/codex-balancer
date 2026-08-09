@@ -9,7 +9,7 @@ import (
 )
 
 func newAffinityStore(path string) (*AffinityStore, error) {
-	store, err := openStateStore(path, "", "")
+	store, err := openStateStore(path)
 	if err != nil {
 		return nil, err
 	}

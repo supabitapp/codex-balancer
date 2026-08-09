@@ -22,9 +22,7 @@ codex-balancer accounts list
 
 Or open `/accounts` in a browser to do it on the web.
 
-State lives in `~/.codex-balancer/state.db`. On first use, codex-balancer moves
-existing account and affinity JSON into SQLite and keeps copies in
-`~/.codex-balancer/legacy-backup`.
+State lives in `~/.codex-balancer/state.db`.
 
 SQLite stores credentials, affinity owners, routed turns, and events. The
 server fetches current limits, reset credits, auth state, and model lists. It

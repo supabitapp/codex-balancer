@@ -1,9 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
-	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -11,7 +8,7 @@ import (
 )
 
 func TestStateStoreCreatesCurrentSchema(t *testing.T) {
-	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"), "", "")
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +44,7 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 
 func TestStateStoreRejectsNewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
-	store, err := openStateStore(path, "", "")
+	store, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,14 +54,14 @@ func TestStateStoreRejectsNewerSchema(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openStateStore(path, "", ""); err == nil {
+	if _, err := openStateStore(path); err == nil {
 		t.Fatal("newer schema opened")
 	}
 }
 
 func TestStateStoreRejectsAnotherApplication(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
-	store, err := openStateStore(path, "", "")
+	store, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,89 +71,14 @@ func TestStateStoreRejectsAnotherApplication(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openStateStore(path, "", ""); err == nil {
+	if _, err := openStateStore(path); err == nil {
 		t.Fatal("unrelated database opened")
-	}
-}
-
-func TestStateStoreImportsLegacyJSONOnce(t *testing.T) {
-	dir := t.TempDir()
-	accountsPath := filepath.Join(dir, "accounts.json")
-	affinityPath := filepath.Join(dir, "affinity.json")
-	account := testAccount("account-a", 10)
-	account.Paused = true
-	writeTestJSON(t, accountsPath, []*Account{account})
-	soft := affinityRef{kind: affinitySession, value: "session"}
-	hard := affinityRef{kind: affinityResponse, value: "response"}
-	writeTestJSON(t, affinityPath, legacyAffinityState{
-		Soft: map[string]legacySoftBinding{
-			soft.storageKey(): {Account: "account-a", Seen: time.Now()},
-		},
-		Hard:      map[string]string{hard.storageKey(): "account-a"},
-		HardOrder: []string{hard.storageKey()},
-	})
-	path := filepath.Join(dir, "state.db")
-	store, err := openStateStore(path, accountsPath, affinityPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	accounts, err := store.readAccounts()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(accounts) != 1 || accounts[0].id() != "account-a" || !accounts[0].paused() {
-		t.Fatalf("accounts = %+v", accounts)
-	}
-	affinity := &AffinityStore{store: store}
-	if affinity.lookup(soft) != "account-a" || affinity.lookup(hard) != "account-a" {
-		t.Fatal("bindings were not imported")
-	}
-	for _, legacy := range []string{accountsPath, affinityPath} {
-		if _, err := os.Stat(legacy); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("legacy file remains: %s", legacy)
-		}
-	}
-	for _, backup := range []string{"accounts.json", "affinity.json"} {
-		if _, err := os.Stat(filepath.Join(dir, "legacy-backup", backup)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	writeTestJSON(t, accountsPath, []*Account{testAccount("account-b", 20)})
-	reopened, err := openStateStore(path, accountsPath, affinityPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	accounts, err = reopened.readAccounts()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(accounts) != 1 || accounts[0].id() != "account-a" {
-		t.Fatalf("legacy data imported twice: %+v", accounts)
-	}
-}
-
-func TestStateStoreRemovesNewDatabaseAfterFailedImport(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
-	legacy := filepath.Join(dir, "accounts.json")
-	if err := os.WriteFile(legacy, []byte("{"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := openStateStore(path, legacy, ""); err == nil {
-		t.Fatal("invalid import succeeded")
-	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("failed database remains: %v", err)
 	}
 }
 
 func TestStatsRestoreFromRawFacts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
-	store, err := openStateStore(path, "", "")
+	store, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +99,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := openStateStore(path, "", "")
+	reopened, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +128,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 
 func TestPoolDerivesLastUsedFromAttempts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
-	store, err := openStateStore(path, "", "")
+	store, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +146,7 @@ func TestPoolDerivesLastUsedFromAttempts(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := openStateStore(path, "", "")
+	reopened, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +166,7 @@ func TestPoolDerivesLastUsedFromAttempts(t *testing.T) {
 
 func TestPoolReloadsExternalChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
-	serverStore, err := openStateStore(path, "", "")
+	serverStore, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +175,7 @@ func TestPoolReloadsExternalChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commandStore, err := openStateStore(path, "", "")
+	commandStore, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,16 +203,5 @@ func TestPoolReloadsExternalChanges(t *testing.T) {
 	}
 	if change.updated != 1 || !serverPool.find("account-a").paused() {
 		t.Fatalf("pause change = %+v", change)
-	}
-}
-
-func writeTestJSON(t *testing.T, path string, value any) {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
 	}
 }

@@ -23,11 +23,11 @@ const (
 var oauthEndpoint = authBaseURL + "/oauth/token"
 
 type accountState struct {
-	IDToken      string    `json:"id_token"`
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	Paused       bool      `json:"paused,omitempty"`
-	LastRefresh  time.Time `json:"last_refresh"`
+	IDToken      string
+	AccessToken  string
+	RefreshToken string
+	Paused       bool
+	LastRefresh  time.Time
 }
 
 type Account struct {
@@ -108,16 +108,6 @@ func (a *Account) bankedResets() (int64, []resetCredit, bool) {
 		return 0, nil, false
 	}
 	return a.resetCredits.count, append([]resetCredit(nil), a.resetCredits.details...), true
-}
-
-func (a *Account) MarshalJSON() ([]byte, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return json.Marshal(a.accountState)
-}
-
-func (a *Account) UnmarshalJSON(data []byte) error {
-	return json.Unmarshal(data, &a.accountState)
 }
 
 func (a *Account) persisted() accountState {

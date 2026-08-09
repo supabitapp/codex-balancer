@@ -136,7 +136,7 @@ func TestServerRefreshPersistsRotatedTokenForRestart(t *testing.T) {
 	useOAuthRefreshServer(t)
 	account := testAccount("account-a", 10)
 	path := filepath.Join(t.TempDir(), "state.db")
-	store, err := openStateStore(path, "", "")
+	store, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestServerRefreshPersistsRotatedTokenForRestart(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := openStateStore(path, "", "")
+	reopened, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestServerRefreshFailsWhenRotatedTokenCannotPersist(t *testing.T) {
 	useOAuthRefreshServer(t)
 	account := testAccount("account-a", 10)
 	original := account.persisted()
-	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"), "", "")
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

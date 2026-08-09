@@ -63,7 +63,7 @@ func serverCmd(args []string) error {
 		*key = ""
 	}
 
-	store, err := openConfiguredState(*path)
+	store, err := openStateStore(*path)
 	if err != nil {
 		return err
 	}

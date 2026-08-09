@@ -3,14 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -91,18 +87,7 @@ func defaultStatePath() string {
 	return filepath.Join(homeDir(), ".codex-balancer", "state.db")
 }
 
-func defaultLegacyAffinityPath() string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("codex-balancer-%d", os.Getuid()), "affinity.json")
-}
-
-func openConfiguredState(path string) (*StateStore, error) {
-	if filepath.Clean(path) == filepath.Clean(defaultStatePath()) {
-		return openStateStore(path, defaultLegacyAccountsPath(), defaultLegacyAffinityPath())
-	}
-	return openStateStore(path, "", "")
-}
-
-func openStateStore(path, legacyAccounts, legacyAffinity string) (*StateStore, error) {
+func openStateStore(path string) (*StateStore, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -113,7 +98,7 @@ func openStateStore(path, legacyAccounts, legacyAffinity string) (*StateStore, e
 		}
 	}
 	_, statErr := os.Stat(path)
-	created := errors.Is(statErr, fs.ErrNotExist)
+	created := errors.Is(statErr, os.ErrNotExist)
 	if statErr != nil && !created {
 		return nil, statErr
 	}
@@ -143,11 +128,6 @@ func openStateStore(path, legacyAccounts, legacyAffinity string) (*StateStore, e
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		return nil, err
-	}
-	if created {
-		if err := store.importLegacy(legacyAccounts, legacyAffinity); err != nil {
-			return nil, err
-		}
 	}
 	failed = false
 	return store, nil
@@ -418,171 +398,4 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 		stats.appendEvent(Event{At: event.At, Kind: event.Kind, Account: event.Account, Detail: event.Detail})
 	}
 	return events.Err()
-}
-
-func (s *StateStore) importLegacy(accountsPath, affinityPath string) error {
-	accounts, accountsData, err := readLegacyAccounts(accountsPath)
-	if err != nil {
-		return err
-	}
-	affinity, affinityData, err := readLegacyAffinity(affinityPath)
-	if err != nil {
-		return err
-	}
-	if len(accountsData) == 0 && len(affinityData) == 0 {
-		return nil
-	}
-	backupDir := filepath.Join(filepath.Dir(s.path), "legacy-backup")
-	if err := os.MkdirAll(backupDir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(backupDir, 0o700); err != nil {
-		return err
-	}
-	if len(accountsData) > 0 {
-		if err := writeSecureFile(filepath.Join(backupDir, "accounts.json"), accountsData); err != nil {
-			return err
-		}
-	}
-	if len(affinityData) > 0 {
-		if err := writeSecureFile(filepath.Join(backupDir, "affinity.json"), affinityData); err != nil {
-			return err
-		}
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, account := range accounts {
-		if err := insertAccount(tx, account); err != nil {
-			return err
-		}
-	}
-	for _, binding := range affinity {
-		if _, err := tx.Exec(`INSERT INTO bindings (kind, value, account_id, created_at_ns) VALUES (?, ?, ?, ?)`,
-			binding.Kind, binding.Value, binding.Account, encodeTime(binding.CreatedAt)); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if len(accountsData) > 0 {
-		os.Remove(accountsPath)
-	}
-	if len(affinityData) > 0 {
-		os.Remove(affinityPath)
-	}
-	return nil
-}
-
-func writeSecureFile(path string, data []byte) error {
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
-}
-
-func readLegacyAccounts(path string) ([]*Account, []byte, error) {
-	if path == "" {
-		return nil, nil, nil
-	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, nil
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	var accounts []*Account
-	if err := json.Unmarshal(data, &accounts); err != nil {
-		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	seen := make(map[string]bool, len(accounts))
-	for _, account := range accounts {
-		id := account.id()
-		if id == "" {
-			return nil, nil, fmt.Errorf("parse %s: credentials carry no chatgpt_account_id", path)
-		}
-		if seen[id] {
-			return nil, nil, fmt.Errorf("parse %s: duplicate account %q", path, id)
-		}
-		seen[id] = true
-	}
-	return accounts, data, nil
-}
-
-type legacySoftBinding struct {
-	Account string    `json:"account"`
-	Seen    time.Time `json:"seen"`
-}
-
-type legacyAffinityState struct {
-	Soft      map[string]legacySoftBinding `json:"soft"`
-	Hard      map[string]string            `json:"hard"`
-	HardOrder []string                     `json:"hard_order"`
-}
-
-type legacyBinding struct {
-	Kind      string
-	Value     string
-	Account   string
-	CreatedAt time.Time
-}
-
-func readLegacyAffinity(path string) ([]legacyBinding, []byte, error) {
-	if path == "" {
-		return nil, nil, nil
-	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, nil
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	var state legacyAffinityState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	var bindings []legacyBinding
-	softKeys := make([]string, 0, len(state.Soft))
-	for key := range state.Soft {
-		softKeys = append(softKeys, key)
-	}
-	slices.Sort(softKeys)
-	for _, key := range softKeys {
-		binding := state.Soft[key]
-		kind, value, ok := strings.Cut(key, "\n")
-		if !ok || kind == "" || value == "" || binding.Account == "" {
-			continue
-		}
-		bindings = append(bindings, legacyBinding{Kind: kind, Value: value, Account: binding.Account, CreatedAt: binding.Seen})
-	}
-	ordered := make(map[string]bool, len(state.HardOrder))
-	hardKeys := make([]string, 0, len(state.Hard))
-	for _, key := range state.HardOrder {
-		if !ordered[key] && state.Hard[key] != "" {
-			ordered[key] = true
-			hardKeys = append(hardKeys, key)
-		}
-	}
-	var missing []string
-	for key := range state.Hard {
-		if !ordered[key] {
-			missing = append(missing, key)
-		}
-	}
-	slices.Sort(missing)
-	hardKeys = append(hardKeys, missing...)
-	for _, key := range hardKeys {
-		kind, value, ok := strings.Cut(key, "\n")
-		account := state.Hard[key]
-		if !ok || kind == "" || value == "" || account == "" {
-			continue
-		}
-		bindings = append(bindings, legacyBinding{Kind: kind, Value: value, Account: account})
-	}
-	return bindings, data, nil
 }

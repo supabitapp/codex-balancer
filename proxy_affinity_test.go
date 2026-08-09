@@ -760,7 +760,7 @@ func newAffinityHTTPServer(
 ) (*server, *AffinityStore, func()) {
 	t.Helper()
 	upstream := httptest.NewServer(handler)
-	state, err := openStateStore(filepath.Join(t.TempDir(), "state.db"), "", "")
+	state, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		upstream.Close()
 		t.Fatal(err)
