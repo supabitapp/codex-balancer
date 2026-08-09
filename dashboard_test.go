@@ -84,7 +84,7 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStats()
-	stats.routed("019fe5c2private", "a1b2c3d4", "unused", serviceTierFast, transportWebSocket)
+	stats.routed("019fe5c2private", "a1b2c3d4", "unused", "gpt-5.6-sol", serviceTierFast, transportWebSocket)
 	stats.recordUsage("019fe5c2private", "gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
@@ -114,6 +114,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
 		`a1b2c3d4`,
+		`<td>gpt-5.6-sol</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<td>WS</td>`,
 		`class="fast-icon"`,
@@ -229,7 +230,7 @@ func TestDashboardMonthlyTotals(t *testing.T) {
 func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	now := time.Now()
 	stats := newStats()
-	stats.applyRouted(now, "thread", "client", "account", "", transportHTTP)
+	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "", transportHTTP)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
 	stats.applyUsageAt(now, "thread", "gpt-5.6-sol", "default", usage)
@@ -240,15 +241,15 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Input != "2K" || thread.Cached != "1.5K" || thread.Output != "300" {
-		t.Fatalf("routing tokens = input %q, cached %q, output %q", thread.Input, thread.Cached, thread.Output)
+	if thread.Model != "gpt-5.6-sol" || thread.Input != "2K" || thread.Cached != "1.5K" || thread.Output != "300" {
+		t.Fatalf("routing row = %+v", thread)
 	}
 	payload, err := renderDashboard("dashboard", view)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Input</th>", "<th>Cached</th>", "<th>Output</th>"} {
+	for _, expected := range []string{"<th>Model</th>", "<th>Input</th>", "<th>Cached</th>", "<th>Output</th>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}

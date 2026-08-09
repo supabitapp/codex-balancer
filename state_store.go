@@ -384,7 +384,7 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 			attempts.Close()
 			return err
 		}
-		stats.applyRouted(time.Unix(0, at), thread, clientID, account, tier, via)
+		stats.applyRouted(time.Unix(0, at), thread, clientID, account, "", tier, via)
 	}
 	if err := attempts.Close(); err != nil {
 		return err

@@ -65,6 +65,7 @@ type threadStats struct {
 	key         string
 	clientID    string
 	account     string
+	model       string
 	serviceTier string
 	turns       int64
 	usage       responseUsage
@@ -136,15 +137,15 @@ func (s *Stats) failedOver(account, reason string) {
 	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
-func (s *Stats) routed(thread, clientID, account, serviceTier string, via transport) {
+func (s *Stats) routed(thread, clientID, account, model, serviceTier string, via transport) {
 	now := time.Now()
 	s.persistAttempt(storedAttempt{At: now, Thread: thread, ClientID: clientID, Account: account, ServiceTier: serviceTier, Transport: via})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applyRouted(now, thread, clientID, account, serviceTier, via)
+	s.applyRouted(now, thread, clientID, account, model, serviceTier, via)
 }
 
-func (s *Stats) applyRouted(now time.Time, thread, clientID, account, serviceTier string, via transport) {
+func (s *Stats) applyRouted(now time.Time, thread, clientID, account, model, serviceTier string, via transport) {
 	s.turns++
 	if via == transportWebSocket {
 		s.wsTurns++
@@ -165,6 +166,7 @@ func (s *Stats) applyRouted(now time.Time, thread, clientID, account, serviceTie
 	}
 	t.clientID = clientID
 	t.account = account
+	t.model = model
 	t.serviceTier = serviceTier
 	t.turns++
 	t.last = now
@@ -215,6 +217,7 @@ func (s *Stats) applyUsageAt(at time.Time, thread, model, serviceTier string, us
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if current := s.threads[thread]; current != nil && !at.Before(current.started) {
+		current.model = model
 		current.usage.add(usage)
 	}
 	month := calendarMonth(at)
@@ -283,6 +286,7 @@ type ThreadSnapshot struct {
 	Key         string `json:"key"`
 	ClientID    string `json:"client_id"`
 	Account     string `json:"account"`
+	Model       string `json:"model"`
 	ServiceTier string `json:"service_tier"`
 	Turns       int64  `json:"turns"`
 	Usage       responseUsage
@@ -330,6 +334,7 @@ func (s *Stats) snapshot() Snapshot {
 			Key:         t.key,
 			ClientID:    t.clientID,
 			Account:     t.account,
+			Model:       t.model,
 			ServiceTier: t.serviceTier,
 			Turns:       t.turns,
 			Usage:       t.usage,

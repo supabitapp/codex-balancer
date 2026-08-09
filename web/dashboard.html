@@ -143,6 +143,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Client</th>
 <th>Route</th>
 <th>Account</th>
+<th>Model</th>
 <th>Via</th>
 <th>Fast</th>
 <th>Input</th>
@@ -156,6 +157,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td class="dim">{{.ClientID}}</td>
 <td class="dim">→</td>
 <td>{{.Account}}</td>
+<td>{{.Model}}</td>
 <td>{{.Via}}</td>
 <td>{{if .Fast}}<svg class="fast-icon" viewBox="0 0 15 15" role="img" aria-label="Fast"><title>Fast</title><path d="M8.5 1 3.75 8H7l-.5 6 4.75-7H8l.5-6Z"/></svg>{{end}}</td>
 <td>{{.Input}}</td>
@@ -163,7 +165,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.Output}}</td>
 <td class="dim">{{.Turns}}</td>
 <td class="dim">{{.Last}}</td>
-</tr>{{end}}{{else}}<tr><td class="empty" colspan="11">nothing routed yet</td></tr>{{end}}</tbody>
+</tr>{{end}}{{else}}<tr><td class="empty" colspan="12">nothing routed yet</td></tr>{{end}}</tbody>
 </table>
 </div>
 </section>

@@ -334,7 +334,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		if err := s.affinity.bindAll(bindings, id); err != nil {
 			s.log.Warn("affinity save failed", "thread", key, "account", id, "error", err)
 		}
-		s.stats.routed(key, requestClientID(r, s.clientIDKey), id, request.ServiceTier, transportHTTP)
+		s.stats.routed(key, requestClientID(r, s.clientIDKey), id, request.Model, request.ServiceTier, transportHTTP)
 		attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
 		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 		s.log.Debug("http turn routed", attrs...)
