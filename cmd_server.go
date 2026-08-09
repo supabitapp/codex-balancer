@@ -76,6 +76,10 @@ func serverCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	compactionRotation, err := newCompactionRotation(store)
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
 
 	log, logFile, err := newLogger(*jsonLogs, *plain, *logPath)
 	if err != nil {
@@ -96,17 +100,18 @@ func serverCmd(args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv := &server{
-		ctx:         ctx,
-		pool:        pool,
-		catalog:     newModelCatalog(),
-		affinity:    affinity,
-		stats:       stats,
-		upstream:    *upstream,
-		key:         *key,
-		clientIDKey: clientIDKey,
-		client:      newProxyClient(),
-		log:         log,
-		admission:   newAdmissionGate(maxActiveProxyRequests),
+		ctx:                ctx,
+		pool:               pool,
+		catalog:            newModelCatalog(),
+		affinity:           affinity,
+		compactionRotation: compactionRotation,
+		stats:              stats,
+		upstream:           *upstream,
+		key:                *key,
+		clientIDKey:        clientIDKey,
+		client:             newProxyClient(),
+		log:                log,
+		admission:          newAdmissionGate(maxActiveProxyRequests),
 	}
 	pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)
@@ -166,7 +171,7 @@ func serverCmd(args []string) error {
 	log.Info("listening", "addr", listener.Addr().String(), "accounts", pool.count(), "upstream", *upstream, "log_file", *logPath)
 
 	if !*plain {
-		board := dashboard{pool: pool, stats: stats, addr: listener.Addr().String()}
+		board := dashboard{pool: pool, stats: stats, compactionRotation: compactionRotation, addr: listener.Addr().String()}
 		if _, err := tea.NewProgram(board, tea.WithContext(signalCtx)).Run(); err != nil &&
 			!errors.Is(err, context.Canceled) {
 			return err

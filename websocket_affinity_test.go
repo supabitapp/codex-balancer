@@ -224,6 +224,163 @@ func TestWebSocketCompletedResponseTracksAPIEstimate(t *testing.T) {
 	}
 }
 
+func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_" + account},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.completed",
+			"response": map[string]any{"id": "resp_" + account},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	rotation, err := newCompactionRotation(store.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rotation.toggle(); err != nil {
+		t.Fatal(err)
+	}
+	server.compactionRotation = rotation
+	server.upstream = upstream.URL
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+
+	compaction := turnMetadata{RequestKind: "compaction", TurnID: "turn-a"}
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(compaction)},
+		"input":           []any{map[string]any{"type": "compaction_trigger"}},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+
+	continuation := turnMetadata{RequestKind: "normal", TurnID: "turn-a"}
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(continuation)},
+		"input":           []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+
+	next := turnMetadata{RequestKind: "normal", TurnID: "turn-b"}
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
+		"input":           []any{},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusServiceRestart {
+		t.Fatalf("close error = %v, want service restart", err)
+	}
+	conn.CloseNow()
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a]" {
+		t.Fatalf("requests before reconnect = %s", got)
+	}
+
+	conn = dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
+		"input":           []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a account-b]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+	if owner := store.lookup(affinityRef{kind: affinitySession, value: "session"}); owner != "account-b" {
+		t.Fatalf("session owner = %q, want account-b", owner)
+	}
+}
+
+func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		metadata := requestTurnMetadata("", request.ClientMetadata)
+		if account == "account-b" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":   "error",
+				"status": http.StatusBadRequest,
+				"error":  map[string]any{"code": "invalid_encrypted_content"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_" + metadata.TurnID},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.completed",
+			"response": map[string]any{"id": "resp_" + metadata.TurnID},
+		})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	rotation, err := newCompactionRotation(store.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rotation.toggle(); err != nil {
+		t.Fatal(err)
+	}
+	server.compactionRotation = rotation
+	server.upstream = upstream.URL
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+
+	compaction := turnMetadata{RequestKind: "compaction", TurnID: "turn-a"}
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(compaction)},
+		"input":           []any{map[string]any{"type": "compaction_trigger"}},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+
+	next := turnMetadata{RequestKind: "normal", TurnID: "turn-b"}
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
+		"input":           []any{},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusServiceRestart {
+		t.Fatalf("close error = %v, want service restart", err)
+	}
+	conn.CloseNow()
+
+	conn = dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
+		"input":           []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-b account-a]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+	if owner := store.lookup(affinityRef{kind: affinitySession, value: "session"}); owner != "account-a" {
+		t.Fatalf("session owner = %q, want account-a", owner)
+	}
+}
+
 func TestWebSocketHardRateLimitDoesNotReplay(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{

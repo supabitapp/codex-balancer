@@ -36,7 +36,7 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	want := []string{"accounts", "attempts", "bindings", "client_identity", "events"}
+	want := []string{"accounts", "attempts", "bindings", "client_identity", "events", "settings"}
 	if !slices.Equal(tables, want) {
 		t.Fatalf("tables = %v, want %v", tables, want)
 	}
@@ -65,6 +65,7 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 		ALTER TABLE events DROP COLUMN total_tokens;
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		DROP TABLE client_identity;
+		DROP TABLE settings;
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, client_ip)
 		VALUES (1, 'thread', 'account', '', 'http', '203.0.113.42');
 		PRAGMA user_version = 2;`); err != nil {
@@ -108,6 +109,7 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN turn_metadata;
+		DROP TABLE settings;
 		PRAGMA user_version = 5;`); err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +150,7 @@ func TestStateStoreClearsStoredClientIDs(t *testing.T) {
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN turn_metadata;
+		DROP TABLE settings;
 		PRAGMA user_version = 4;`); err != nil {
 		t.Fatal(err)
 	}

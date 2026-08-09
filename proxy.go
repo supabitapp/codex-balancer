@@ -55,6 +55,7 @@ type server struct {
 	pool                 *Pool
 	catalog              *modelCatalog
 	affinity             *AffinityStore
+	compactionRotation   *compactionRotation
 	stats                *Stats
 	logins               accountLoginStore
 	upstream             string

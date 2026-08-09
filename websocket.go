@@ -45,6 +45,7 @@ type websocketTurn struct {
 	modelRetried bool
 	resolution   affinityResolution
 	thread       string
+	rotationFrom string
 	excluded     map[string]bool
 	reauthed     map[string]bool
 }
@@ -97,7 +98,15 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	thread := affinity.statsKey(r.Header)
 	s.log.Debug("websocket requested", "thread", thread, "required_account", resolution.required, "preferred_account", resolution.preferred)
-	dial, failed, err := s.dialResponsesWebSocket(r, thread, resolution, nil, "", "")
+	skip, rotating := s.compactionRotation.handshakeSkip(thread, resolution.hard)
+	dial, failed, err := s.dialResponsesWebSocket(r, thread, resolution, skip, "", "")
+	if rotating && (err != nil || failed != nil) {
+		if failed != nil && failed.Body != nil {
+			failed.Body.Close()
+		}
+		s.compactionRotation.finish(thread)
+		dial, failed, err = s.dialResponsesWebSocket(r, thread, resolution, nil, "", "")
+	}
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -428,15 +437,28 @@ func (s *server) relayResponsesWebSocket(
 				writeWebSocketAffinityError(ctx, downstream, err)
 				continue
 			}
+			turnThread := requestAffinity.statsKey(r.Header)
+			if turnThread == "" {
+				turnThread = thread
+			}
+			metadata := requestTurnMetadata("", event.ClientMetadata)
 			allowed := s.allowedAccounts(event.Model, event.ServiceTier)
+			alternate := s.pool.pick("", "", map[string]bool{current.account.id(): true}, allowed) != nil
+			if len(turns) == 0 && s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, resolution.hard, alternate) {
+				s.log.Info("restarting websocket for compaction rotation", "thread", turnThread, "account", current.account.id())
+				s.stats.note("rotation reconnect", current.account.id(), turnThread)
+				downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction")
+				return
+			}
+			rotationFrom := ""
+			if rotationFrom = s.compactionRotation.routeSource(turnThread, current.account.id(), metadata, resolution.hard); rotationFrom != "" {
+				resolution.required = ""
+				resolution.preferred = current.account.id()
+			}
 			target := s.pool.pick(resolution.required, resolution.preferred, nil, allowed)
 			if target == nil {
 				writeWebSocketAffinityError(ctx, downstream, errAffinityOwnerUnavailable)
 				continue
-			}
-			turnThread := requestAffinity.statsKey(r.Header)
-			if turnThread == "" {
-				turnThread = thread
 			}
 			if target.id() != current.account.id() {
 				if len(turns) > 0 {
@@ -467,18 +489,19 @@ func (s *server) relayResponsesWebSocket(
 			attrs = append(attrs, routingLogAttrs(current.account.routingCandidate(), time.Now())...)
 			s.log.Debug("websocket turn received", attrs...)
 			turns = append(turns, websocketTurn{
-				kind:        message.kind,
-				data:        append([]byte(nil), message.data...),
-				sent:        time.Now(),
-				model:       event.Model,
-				effort:      event.Reasoning.Effort,
-				serviceTier: event.ServiceTier,
-				metadata:    requestTurnMetadata("", event.ClientMetadata),
-				counted:     counted,
-				resolution:  resolution,
-				thread:      turnThread,
-				excluded:    map[string]bool{},
-				reauthed:    map[string]bool{},
+				kind:         message.kind,
+				data:         append([]byte(nil), message.data...),
+				sent:         time.Now(),
+				model:        event.Model,
+				effort:       event.Reasoning.Effort,
+				serviceTier:  event.ServiceTier,
+				metadata:     metadata,
+				counted:      counted,
+				resolution:   resolution,
+				thread:       turnThread,
+				rotationFrom: rotationFrom,
+				excluded:     map[string]bool{},
+				reauthed:     map[string]bool{},
 			})
 			continue
 		}
@@ -559,6 +582,15 @@ func (s *server) relayResponsesWebSocket(
 					continue
 				}
 			}
+			if previsible && turns[0].rotationFrom != "" && websocketInvalidEncryptedContent(event) {
+				turn := &turns[0]
+				resolution := turn.resolution
+				resolution.required = turn.rotationFrom
+				resolution.preferred = ""
+				if redialTurn(turn, resolution, nil, "encrypted content rejected") {
+					continue
+				}
+			}
 			switch event.Type {
 			case "response.created":
 				for index := range turns {
@@ -582,6 +614,12 @@ func (s *server) relayResponsesWebSocket(
 						s.stats.routed(turns[index].thread, requestClientID(r, s.clientIDKey), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket, turns[index].metadata)
 						s.stats.answered(turns[index].thread, time.Since(turns[index].sent))
 					}
+					if turns[index].rotationFrom != "" {
+						if current.account.id() != turns[index].rotationFrom {
+							s.stats.note("rotated", current.account.id(), "after compaction")
+						}
+						s.compactionRotation.finish(turns[index].thread)
+					}
 					break
 				}
 			case "error", "response.completed", "response.failed", "response.incomplete":
@@ -599,7 +637,11 @@ func (s *server) relayResponsesWebSocket(
 						s.stats.recordUsage(turn.thread, model, serviceTier, event.Response.Usage)
 						if event.Type == "response.completed" {
 							s.stats.completed(turn.thread, turn.metadata, time.Since(turn.sent))
+							s.compactionRotation.arm(turn.thread, current.account.id(), turn.metadata)
 						}
+					}
+					if turn.rotationFrom != "" {
+						s.compactionRotation.finish(turn.thread)
 					}
 					turns = turns[1:]
 				}
@@ -693,6 +735,10 @@ func websocketAccountModelUnsupported(event websocketEnvelope, model string) boo
 func websocketRateLimited(event websocketEnvelope) bool {
 	code := websocketErrorCode(event)
 	return websocketStatus(event) == http.StatusTooManyRequests || code == "rate_limit_exceeded" || code == "usage_limit_reached"
+}
+
+func websocketInvalidEncryptedContent(event websocketEnvelope) bool {
+	return websocketErrorCode(event) == "invalid_encrypted_content"
 }
 
 func websocketReplaySafe(event websocketEnvelope) bool {

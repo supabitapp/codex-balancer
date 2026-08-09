@@ -39,13 +39,14 @@ var (
 )
 
 type dashboard struct {
-	pool   *Pool
-	stats  *Stats
-	addr   string
-	width  int
-	height int
-	cursor int
-	snap   Snapshot
+	pool               *Pool
+	stats              *Stats
+	compactionRotation *compactionRotation
+	addr               string
+	width              int
+	height             int
+	cursor             int
+	snap               Snapshot
 }
 
 type tickMsg time.Time
@@ -68,6 +69,8 @@ func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			d.cursor = min(d.cursor+1, max(d.pool.count()-1, 0))
 		case "space", "enter":
 			d.toggle()
+		case "r":
+			d.toggleCompactionRotation()
 		}
 	case tickMsg:
 		d.cursor = min(d.cursor, max(d.pool.count()-1, 0))
@@ -75,6 +78,19 @@ func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Tick(frame, func(t time.Time) tea.Msg { return tickMsg(t) })
 	}
 	return d, nil
+}
+
+func (d dashboard) toggleCompactionRotation() {
+	enabled, err := d.compactionRotation.toggle()
+	if err != nil {
+		d.stats.note("save failed", "", err.Error())
+		return
+	}
+	kind := "rotation off"
+	if enabled {
+		kind = "rotation on"
+	}
+	d.stats.note(kind, "", "")
 }
 
 func (d dashboard) toggle() {
@@ -256,7 +272,11 @@ func (d dashboard) accounts(limit int) string {
 	if limit < len(accounts) {
 		title = fmt.Sprintf("ACCOUNTS  %d-%d/%d", start+1, end, len(accounts))
 	}
-	rows := []string{sSection.Render(title) + sDim.Render("   ↑↓ pick · space pauses"), "", hdr, sep}
+	rotation := "OFF"
+	if d.compactionRotation.isEnabled() {
+		rotation = "ON"
+	}
+	rows := []string{sSection.Render(title) + sDim.Render("   ↑↓ pick · space pauses · r rotation "+rotation), "", hdr, sep}
 
 	for i, a := range accounts[start:end] {
 		primary, secondary, _, reauth := a.health()
