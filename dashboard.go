@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"cmp"
+	"embed"
+	"fmt"
+	"html/template"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 )
 
 const (
@@ -14,55 +20,88 @@ const (
 	dashboardMaxConnections = 32
 )
 
-type dashboardResponse struct {
-	UptimeSeconds           float64            `json:"uptime_seconds"`
-	Turns                   int64              `json:"turns"`
-	WebSocketTurns          int64              `json:"websocket_turns"`
-	OpenWebSockets          int64              `json:"open_websockets"`
-	Failovers               int64              `json:"failovers"`
-	RateLimits              int64              `json:"rate_limits"`
-	AverageTTFBMilliseconds float64            `json:"average_ttfb_ms"`
-	Accounts                []dashboardAccount `json:"accounts"`
-	Threads                 []dashboardThread  `json:"threads"`
-	Events                  []dashboardEvent   `json:"events"`
+//go:embed web/dashboard.html web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
+var dashboardFiles embed.FS
+
+var dashboardTemplate = template.Must(template.ParseFS(dashboardFiles, "web/dashboard.html"))
+
+type dashboardView struct {
+	Summary  []dashboardCount
+	Meta     string
+	Accounts []dashboardAccountView
+	Totals   []dashboardTotal
+	Threads  []dashboardThreadView
+	Events   []dashboardEventView
 }
 
-type dashboardAccount struct {
-	Name                   string        `json:"name"`
-	Plan                   string        `json:"plan"`
-	Status                 accountStatus `json:"status"`
-	WeeklyRemainingPercent *float64      `json:"weekly_remaining_percent"`
-	BankedResets           *int64        `json:"banked_resets"`
-	ResetAt                *time.Time    `json:"reset_at"`
-	Turns                  int64         `json:"turns"`
-	OpenWebSockets         int64         `json:"open_websockets"`
-	RateLimits             int64         `json:"rate_limits"`
-	Activity               []int64       `json:"activity"`
+type dashboardCount struct {
+	Count int
+	Label string
 }
 
-type dashboardThread struct {
-	KeyPrefix   string    `json:"key_prefix"`
-	Account     string    `json:"account"`
-	ServiceTier string    `json:"service_tier"`
-	Turns       int64     `json:"turns"`
-	Last        time.Time `json:"last"`
-	Via         transport `json:"via"`
+type dashboardAccountView struct {
+	Name           string
+	Plan           string
+	Status         string
+	StatusClass    string
+	Weekly         string
+	WeeklyClass    string
+	Banked         string
+	BankedClass    string
+	ResetIn        string
+	Turns          string
+	OpenWebSockets string
+	Traffic        string
+	RateLimits     string
+	Activity       string
 }
 
-type dashboardEvent struct {
-	At      time.Time `json:"at"`
-	Kind    string    `json:"kind"`
-	Account string    `json:"account"`
-	Detail  string    `json:"detail"`
+type dashboardTotal struct {
+	Name  string
+	Value string
+}
+
+type dashboardThreadView struct {
+	KeyPrefix string
+	Account   string
+	Via       string
+	Fast      bool
+	Turns     string
+	Last      string
+}
+
+type dashboardEventView struct {
+	At      string
+	Kind    string
+	Class   string
+	Account string
+	Detail  string
+}
+
+func dashboardScript(path string) http.HandlerFunc {
+	content, err := dashboardFiles.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write(content)
+	}
 }
 
 func (s *server) dashboardPage(w http.ResponseWriter, _ *http.Request) {
+	payload, err := renderDashboard("page", s.currentDashboard(time.Now()))
+	if err != nil {
+		http.Error(w, "render dashboard", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self' ws: wss:; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Write([]byte(dashboardHTML))
+	w.Write(payload)
 }
 
 func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +121,11 @@ func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(dashboardFrame)
 	defer ticker.Stop()
 	for {
-		if err := wsjson.Write(r.Context(), conn, s.currentDashboard(time.Now())); err != nil {
+		payload, err := renderDashboard("dashboard", s.currentDashboard(time.Now()))
+		if err != nil {
+			return
+		}
+		if err := conn.Write(r.Context(), websocket.MessageText, payload); err != nil {
 			return
 		}
 		select {
@@ -93,320 +136,156 @@ func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) currentDashboard(now time.Time) dashboardResponse {
+func renderDashboard(name string, view dashboardView) ([]byte, error) {
+	var output bytes.Buffer
+	if err := dashboardTemplate.ExecuteTemplate(&output, name, view); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func (s *server) currentDashboard(now time.Time) dashboardView {
 	snapshot := s.stats.snapshot()
 	stats := s.statsResponseAt(now, snapshot)
-	publicAccounts := make([]dashboardAccount, 0, len(stats.Accounts))
+	counts := map[accountStatus]int{}
 	names := make(map[string]string, len(stats.Accounts))
+	accounts := make([]dashboardAccountView, 0, len(stats.Accounts))
 	for i, account := range stats.Accounts {
+		counts[account.Status]++
 		name := account.Email
 		if name == "" {
 			name = "account " + strconv.Itoa(i+1)
 		}
 		names[account.ID] = name
-		publicAccounts = append(publicAccounts, dashboardAccount{
-			Name:                   name,
-			Plan:                   account.Plan,
-			Status:                 account.Status,
-			WeeklyRemainingPercent: account.WeeklyRemainingPercent,
-			BankedResets:           account.BankedResets,
-			ResetAt:                account.ResetAt,
-			Turns:                  account.Turns,
-			OpenWebSockets:         account.OpenWebSockets,
-			RateLimits:             account.RateLimits,
-			Activity:               account.Activity,
+		status, statusClass := dashboardStatus(account.Status)
+		weekly, weeklyClass := "--", "dim"
+		if account.WeeklyRemainingPercent != nil {
+			weekly = formatPercent(*account.WeeklyRemainingPercent)
+			weeklyClass = ""
+			if *account.WeeklyRemainingPercent <= 30 {
+				weeklyClass = "strong"
+			}
+		}
+		banked, bankedClass := "--", "dim"
+		if account.BankedResets != nil {
+			banked = strconv.FormatInt(*account.BankedResets, 10)
+			bankedClass = "strong"
+		}
+		resetIn := "--"
+		if account.ResetAt != nil {
+			resetIn = short(account.ResetAt.Sub(now))
+		}
+		traffic := ""
+		if snapshot.Turns > 0 {
+			traffic = fmt.Sprintf("%d%%", account.Turns*100/snapshot.Turns)
+		}
+		accounts = append(accounts, dashboardAccountView{
+			Name:           name,
+			Plan:           account.Plan,
+			Status:         status,
+			StatusClass:    statusClass,
+			Weekly:         weekly,
+			WeeklyClass:    weeklyClass,
+			Banked:         banked,
+			BankedClass:    bankedClass,
+			ResetIn:        resetIn,
+			Turns:          dashboardNumber(account.Turns),
+			OpenWebSockets: dashboardNumber(account.OpenWebSockets),
+			Traffic:        traffic,
+			RateLimits:     dashboardNumber(account.RateLimits),
+			Activity:       sparkline(account.Activity),
 		})
 	}
-	threads := make([]dashboardThread, 0, len(snapshot.Threads))
-	for _, thread := range snapshot.Threads {
-		threads = append(threads, dashboardThread{
-			KeyPrefix:   shortKey(thread.Key),
-			Account:     names[thread.Account],
-			ServiceTier: thread.ServiceTier,
-			Turns:       thread.Turns,
-			Last:        thread.Last,
-			Via:         thread.Via,
+
+	summary := make([]dashboardCount, 0, 5)
+	for _, item := range []struct {
+		status accountStatus
+		label  string
+	}{
+		{accountLive, "live"},
+		{accountChecking, "checking"},
+		{accountCooling, "cooling"},
+		{accountPaused, "paused"},
+		{accountNeedsReauth, "need reauth"},
+	} {
+		if count := counts[item.status]; count > 0 {
+			summary = append(summary, dashboardCount{Count: count, Label: item.label})
+		}
+	}
+
+	threads := slices.Clone(snapshot.Threads)
+	slices.SortFunc(threads, func(left, right ThreadSnapshot) int {
+		return cmp.Compare(right.Last.UnixNano(), left.Last.UnixNano())
+	})
+	threadViews := make([]dashboardThreadView, 0, len(threads))
+	for _, thread := range threads {
+		threadViews = append(threadViews, dashboardThreadView{
+			KeyPrefix: shortKey(thread.Key),
+			Account:   names[thread.Account],
+			Via:       strings.ToUpper(string(thread.Via)),
+			Fast:      thread.ServiceTier == serviceTierFast,
+			Turns:     plural(thread.Turns, "turn"),
+			Last:      agoAt(now, thread.Last),
 		})
 	}
-	events := make([]dashboardEvent, 0, len(snapshot.Events))
-	for _, event := range snapshot.Events {
-		events = append(events, dashboardEvent{
-			At:      event.At,
+
+	events := make([]dashboardEventView, 0, len(snapshot.Events))
+	for i := len(snapshot.Events) - 1; i >= 0; i-- {
+		event := snapshot.Events[i]
+		class := "dim"
+		if event.Kind == "failover" || event.Kind == "rate limited" {
+			class = "strong"
+		}
+		events = append(events, dashboardEventView{
+			At:      event.At.UTC().Format("15:04:05") + " UTC",
 			Kind:    event.Kind,
+			Class:   class,
 			Account: names[event.Account],
 			Detail:  event.Detail,
 		})
 	}
-	return dashboardResponse{
-		UptimeSeconds:           stats.UptimeSeconds,
-		Turns:                   stats.Turns,
-		WebSocketTurns:          stats.WebSocketTurns,
-		OpenWebSockets:          stats.OpenWebSockets,
-		Failovers:               stats.Failovers,
-		RateLimits:              stats.RateLimits,
-		AverageTTFBMilliseconds: stats.AverageTTFBMilliseconds,
-		Accounts:                publicAccounts,
-		Threads:                 threads,
-		Events:                  events,
+
+	return dashboardView{
+		Summary:  summary,
+		Meta:     rate(snapshot) + " · up " + short(snapshot.Uptime),
+		Accounts: accounts,
+		Totals: []dashboardTotal{
+			{Name: "turns", Value: strconv.FormatInt(snapshot.Turns, 10)},
+			{Name: "http", Value: strconv.FormatInt(snapshot.Turns-snapshot.WSTurns, 10)},
+			{Name: "ws turns", Value: strconv.FormatInt(snapshot.WSTurns, 10)},
+			{Name: "ws open", Value: strconv.FormatInt(snapshot.WSOpen, 10)},
+			{Name: "threads", Value: strconv.Itoa(len(snapshot.Threads))},
+			{Name: "accounts", Value: strconv.Itoa(len(accounts))},
+			{Name: "failovers", Value: strconv.FormatInt(snapshot.Failures, 10)},
+			{Name: "rate limits", Value: strconv.FormatInt(snapshot.Limited, 10)},
+			{Name: "ttfb", Value: short(snapshot.TTFB)},
+			{Name: "uptime", Value: short(snapshot.Uptime)},
+		},
+		Threads: threadViews,
+		Events:  events,
 	}
 }
 
-const dashboardHTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Codex Balancer</title>
-<style>
-:root { color-scheme: only light; font-family: system-ui, sans-serif; background: Canvas; color: CanvasText }
-* { box-sizing: border-box }
-body { margin: 0 }
-main { width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding-bottom: 3rem }
-header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 2rem 0 1rem; border-bottom: 1px solid GrayText }
-header > div { display: flex; align-items: baseline; gap: .75rem; min-width: 0 }
-h1 { margin: 0; font-size: 1.125rem }
-h2 { margin: 0 0 .75rem; font-size: .875rem }
-section { margin-top: 2rem }
-p { margin: 0 }
-#summary, #meta, .dim, .empty, th, dt { color: GrayText }
-#summary { white-space: nowrap }
-.dot { margin: 0 .35rem }
-.strong { font-weight: 600 }
-.scroll { overflow-x: auto }
-#threads { --row-height: 2.25rem; max-height: calc(10 * var(--row-height)); overflow: auto }
-#threads tr { height: var(--row-height) }
-table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums }
-th, td { padding: .5rem .75rem .5rem 0; border-bottom: 1px solid GrayText; text-align: left }
-th:last-child, td:last-child { padding-right: 0 }
-th { font-size: .75rem; font-weight: 500 }
-.spark { font-family: ui-monospace, monospace; letter-spacing: .08em }
-.empty { padding: .5rem 0 }
-.totals { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1.5rem; margin: 0 }
-.totals div { min-width: 0 }
-dt { font-size: .75rem }
-dd { margin: .2rem 0 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis }
-@media (max-width: 760px) {
-  main { width: min(calc(100% - 1.25rem), 100rem) }
-  header { align-items: flex-start; flex-direction: column; padding-top: 1.25rem }
-  header > div { align-items: flex-start; flex-direction: column; gap: .25rem }
-  #meta { font-size: .8rem }
-  .totals { grid-template-columns: repeat(2, minmax(0, 1fr)) }
-}
-</style>
-</head>
-<body>
-<main>
-<header>
-<div><h1>Codex Balancer</h1><span id="summary"></span></div>
-<p id="meta">connecting…</p>
-</header>
-<section>
-<h2>Accounts</h2>
-<div id="accounts" class="scroll"></div>
-</section>
-<section>
-<h2>Totals</h2>
-<dl id="totals" class="totals"></dl>
-</section>
-<section>
-<h2 id="threads-title">Threads</h2>
-<div id="threads" class="scroll"></div>
-</section>
-<section>
-<h2>Events</h2>
-<div id="events" class="scroll"></div>
-</section>
-</main>
-<script>
-const blocks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
-let reconnectTimer
-
-function connect() {
-  clearTimeout(reconnectTimer)
-  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const socket = new WebSocket(scheme + '//' + location.host + '/dashboard/ws')
-  socket.addEventListener('message', event => render(JSON.parse(event.data)))
-  socket.addEventListener('close', () => {
-    document.getElementById('meta').textContent = 'reconnecting…'
-    reconnectTimer = setTimeout(connect, 1000)
-  })
-  socket.addEventListener('error', () => {
-    document.getElementById('meta').textContent = 'connection failed'
-  })
+func dashboardStatus(status accountStatus) (string, string) {
+	switch status {
+	case accountPaused:
+		return "⏸ paused", "dim"
+	case accountNeedsReauth:
+		return "✕ reauth", "strong"
+	case accountCooling:
+		return "◐ cooling", "strong"
+	case accountChecking:
+		return "◌ checking", "dim"
+	case accountLive:
+		return "● live", "strong"
+	default:
+		return string(status), ""
+	}
 }
 
-function render(stats) {
-  const counts = stats.accounts.reduce((all, account) => {
-    all[account.status] = (all[account.status] || 0) + 1
-    return all
-  }, {})
-  const activity = stats.accounts.reduce((total, account) => {
-    account.activity.forEach((turns, index) => total[index] = (total[index] || 0) + turns)
-    return total
-  }, [])
-  const summary = []
-  addCount(summary, counts.live, 'live')
-  addCount(summary, counts.checking, 'checking')
-  addCount(summary, counts.cooling, 'cooling')
-  addCount(summary, counts.paused, 'paused')
-  addCount(summary, counts.needs_reauth, 'need reauth')
-  document.getElementById('summary').innerHTML = summary.join('<span class="dot">·</span>')
-  document.getElementById('meta').textContent = rate(activity) + ' · up ' + short(stats.uptime_seconds * 1000)
-  renderAccounts(stats.accounts, stats.turns)
-  renderTotals(stats)
-  renderThreads(stats.threads)
-  renderEvents(stats.events)
+func dashboardNumber(value int64) string {
+	if value == 0 {
+		return ""
+	}
+	return strconv.FormatInt(value, 10)
 }
-
-function addCount(parts, count, label) {
-  if (count) parts.push('<span>' + count + ' ' + h(label) + '</span>')
-}
-
-function renderAccounts(accounts, turns) {
-  if (!accounts.length) {
-    document.getElementById('accounts').innerHTML = '<div class="empty">(none)</div>'
-    return
-  }
-  const rows = accounts.map(account => {
-    const remaining = account.weekly_remaining_percent
-    const remainingClass = remaining === null ? 'dim' : remaining <= 30 ? 'strong' : ''
-    const traffic = turns ? Math.floor(account.turns * 100 / turns) + '%' : ''
-    return '<tr>' +
-      cell(account.name, 'strong') +
-      cell(account.plan, 'dim') +
-      cell(status(account.status), statusClass(account.status)) +
-      cell(remaining === null ? '--' : percent(remaining), remainingClass) +
-      cell(account.banked_resets === null ? '--' : account.banked_resets, account.banked_resets === null ? 'dim' : 'strong') +
-      cell(account.reset_at ? short(new Date(account.reset_at).getTime() - Date.now()) : '--', 'dim') +
-      cell(account.turns || '', 'strong') +
-      cell(account.open_websockets || '', 'strong') +
-      cell(traffic, 'dim') +
-      cell(account.rate_limits || '', 'strong') +
-      cell(spark(account.activity), 'spark') +
-      '</tr>'
-  }).join('')
-  document.getElementById('accounts').innerHTML = '<table><thead><tr>' +
-    headers(['Account', 'Plan', 'Status', 'Weekly', 'Banked', 'Reset in', 'Turns', 'WS', 'Traffic', 'Limits', 'Activity']) +
-    '</tr></thead><tbody>' + rows + '</tbody></table>'
-}
-
-function renderTotals(stats) {
-  const values = [
-    ['turns', stats.turns],
-    ['http', stats.turns - stats.websocket_turns],
-    ['ws turns', stats.websocket_turns],
-    ['ws open', stats.open_websockets],
-    ['threads', stats.threads.length],
-    ['accounts', stats.accounts.length],
-    ['failovers', stats.failovers],
-    ['rate limits', stats.rate_limits],
-    ['ttfb', short(stats.average_ttfb_ms)],
-    ['uptime', short(stats.uptime_seconds * 1000)]
-  ]
-  document.getElementById('totals').innerHTML = values.map(value =>
-    '<div><dt>' + h(value[0]) + '</dt><dd>' + h(value[1]) + '</dd></div>'
-  ).join('')
-}
-
-function renderThreads(threads) {
-  const sorted = [...threads].sort((left, right) => new Date(right.last) - new Date(left.last))
-  document.getElementById('threads-title').textContent = 'Threads  ' + sorted.length
-  if (!sorted.length) {
-    document.getElementById('threads').innerHTML = '<div class="empty">nothing routed yet</div>'
-    return
-  }
-  const rows = sorted.map(thread => '<tr>' +
-    cell(thread.key_prefix, 'strong') +
-    cell('→', 'dim') +
-    cell(thread.account) +
-    cell(String(thread.via).toUpperCase()) +
-    cell(thread.service_tier === 'priority' ? 'FAST' : '', 'strong') +
-    cell(plural(thread.turns, 'turn'), 'dim') +
-    cell(ago(thread.last), 'dim') +
-    '</tr>').join('')
-  document.getElementById('threads').innerHTML = '<table><tbody>' + rows + '</tbody></table>'
-}
-
-function renderEvents(events) {
-  const sorted = [...events].reverse()
-  if (!sorted.length) {
-    document.getElementById('events').innerHTML = '<div class="empty">quiet</div>'
-    return
-  }
-  const rows = sorted.map(event => '<tr>' +
-    cell(clock(event.at), 'dim') +
-    cell(event.kind, event.kind === 'failover' || event.kind === 'rate limited' ? 'strong' : 'dim') +
-    cell(event.account, 'strong') +
-    cell(event.detail, 'dim') +
-    '</tr>').join('')
-  document.getElementById('events').innerHTML = '<table><tbody>' + rows + '</tbody></table>'
-}
-
-function headers(values) {
-  return values.map(value => '<th>' + h(value) + '</th>').join('')
-}
-
-function cell(value, className) {
-  return '<td' + (className ? ' class="' + className + '"' : '') + '>' + h(value) + '</td>'
-}
-
-function status(value) {
-  const labels = {
-    paused: '⏸ paused',
-    needs_reauth: '✕ reauth',
-    cooling: '◐ cooling',
-    checking: '◌ checking',
-    live: '● live'
-  }
-  return labels[value] || value
-}
-
-function statusClass(value) {
-  return value === 'checking' || value === 'paused' ? 'dim' : 'strong'
-}
-
-function spark(activity) {
-  const peak = Math.max(1, ...activity)
-  return [...activity].reverse().map(value => blocks[Math.floor(value * (blocks.length - 1) / peak)]).join('')
-}
-
-function rate(activity) {
-  const turns = activity.reduce((total, value) => total + value, 0)
-  return (turns / 12).toFixed(1) + ' turns/min'
-}
-
-function short(milliseconds) {
-  const seconds = Math.max(0, milliseconds) / 1000
-  if (seconds < 1) return 'now'
-  if (seconds < 10) return seconds.toFixed(1) + 's'
-  if (seconds < 60) return Math.floor(seconds) + 's'
-  if (seconds < 3600) return Math.floor(seconds / 60) + 'm'
-  if (seconds < 86400) return Math.floor(seconds / 3600) + 'h' + String(Math.floor(seconds / 60) % 60).padStart(2, '0') + 'm'
-  return Math.floor(seconds / 86400) + 'd' + Math.floor(seconds / 3600 % 24) + 'h'
-}
-
-function ago(value) {
-  const elapsed = Date.now() - new Date(value).getTime()
-  return elapsed >= 1000 ? short(elapsed) + ' ago' : 'now'
-}
-
-function clock(value) {
-  return new Date(value).toLocaleTimeString([], {hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'})
-}
-
-function plural(count, noun) {
-  return count + ' ' + noun + (count === 1 ? '' : 's')
-}
-
-function percent(value) {
-  return Number(value.toFixed(2)) + '%'
-}
-
-function h(value) {
-  return String(value == null ? '' : value).replace(/[&<>"']/g, character => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[character]))
-}
-
-connect()
-</script>
-</body>
-</html>`

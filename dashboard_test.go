@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,13 +11,71 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 )
 
-func TestDashboardWebSocketStreamsPublicSnapshot(t *testing.T) {
+func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
+	server := &server{pool: &Pool{}, stats: newStats()}
+	httpServer := httptest.NewServer(server.routes())
+	defer httpServer.Close()
+
+	response, err := http.Get(httpServer.URL + "/dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	payload, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(payload)
+	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Security-Policy"), "script-src 'self'") {
+		t.Fatalf("status = %s, CSP = %q", response.Status, response.Header.Get("Content-Security-Policy"))
+	}
+	for _, expected := range []string{
+		`src="/dashboard/assets/htmx-2.0.10.min.js"`,
+		`src="/dashboard/assets/ws-2.0.4.min.js"`,
+		`hx-ext="ws"`,
+		`ws-connect="/dashboard/ws"`,
+		`id="dashboard"`,
+		`nothing routed yet`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("dashboard missing %q", expected)
+		}
+	}
+}
+
+func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
+	server := &server{pool: &Pool{}, stats: newStats()}
+	httpServer := httptest.NewServer(server.routes())
+	defer httpServer.Close()
+
+	for _, path := range []string{
+		"/dashboard/assets/htmx-2.0.10.min.js",
+		"/dashboard/assets/ws-2.0.4.min.js",
+	} {
+		response, err := http.Get(httpServer.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, readErr := io.ReadAll(response.Body)
+		response.Body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/javascript") || len(payload) < 1_000 {
+			t.Fatalf("%s returned status %s, content type %q, length %d", path, response.Status, response.Header.Get("Content-Type"), len(payload))
+		}
+		if response.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" {
+			t.Fatalf("%s cache control = %q", path, response.Header.Get("Cache-Control"))
+		}
+	}
+}
+
+func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStats()
 	stats.routed("019fe5c2private", "unused", serviceTierFast, transportWebSocket)
-	stats.failedOver("unused", "upstream unavailable")
+	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
 	account := accountFromState(accountState{IDToken: "x." + tokenPayload + ".x"})
 	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: stats, key: "secret"}
@@ -31,65 +89,32 @@ func TestDashboardWebSocketStreamsPublicSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.CloseNow()
-	var payload json.RawMessage
-	if err := wsjson.Read(ctx, conn, &payload); err != nil {
+	messageType, payload, err := conn.Read(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	fields := jsonFields(t, payload,
-		"uptime_seconds", "turns", "websocket_turns", "open_websockets",
-		"failovers", "rate_limits", "average_ttfb_ms", "accounts", "threads", "events",
-	)
-	var accounts []json.RawMessage
-	if err := json.Unmarshal(fields["accounts"], &accounts); err != nil {
-		t.Fatal(err)
+	if messageType != websocket.MessageText {
+		t.Fatalf("message type = %v", messageType)
 	}
-	if len(accounts) != 1 {
-		t.Fatalf("accounts = %d, want 1", len(accounts))
-	}
-	jsonFields(t, accounts[0],
-		"name", "plan", "status", "weekly_remaining_percent", "banked_resets",
-		"reset_at", "turns", "open_websockets", "rate_limits", "activity",
-	)
-	var threads []json.RawMessage
-	if err := json.Unmarshal(fields["threads"], &threads); err != nil {
-		t.Fatal(err)
-	}
-	if len(threads) != 1 {
-		t.Fatalf("threads = %d, want 1", len(threads))
-	}
-	jsonFields(t, threads[0], "key_prefix", "account", "service_tier", "turns", "last", "via")
-	var events []json.RawMessage
-	if err := json.Unmarshal(fields["events"], &events); err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("events = %d, want 1", len(events))
-	}
-	jsonFields(t, events[0], "at", "kind", "account", "detail")
-	var response dashboardResponse
-	if err := json.Unmarshal(payload, &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.Turns != 1 || response.WebSocketTurns != 1 || response.Failovers != 1 || response.Accounts[0].Name != "a***e@***.com" || response.Accounts[0].Plan != "pro" || response.Accounts[0].Status != accountChecking || response.Accounts[0].Activity[0] != 1 || response.Threads[0].KeyPrefix != "019fe5c2" || response.Threads[0].Account != "a***e@***.com" || response.Events[0].Account != "a***e@***.com" {
-		t.Fatalf("unexpected dashboard response: %+v", response)
-	}
-}
-
-func jsonFields(t *testing.T, payload json.RawMessage, expected ...string) map[string]json.RawMessage {
-	t.Helper()
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if len(fields) != len(expected) {
-		t.Fatalf("fields = %v, want %v", fields, expected)
-	}
-	for _, field := range expected {
-		if fields[field] == nil {
-			t.Fatalf("missing public field %q", field)
+	body := string(payload)
+	for _, expected := range []string{
+		`hx-swap-oob="outerHTML"`,
+		`a***e@***.com`,
+		`<td class="dim">pro</td>`,
+		`019fe5c2`,
+		`FAST`,
+		`failover`,
+		`&lt;script&gt;upstream unavailable&lt;/script&gt;`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("dashboard update missing %q:\n%s", expected, body)
 		}
 	}
-	return fields
+	for _, private := range []string{"alice@example.com", "019fe5c2private", "<script>"} {
+		if strings.Contains(body, private) {
+			t.Fatalf("dashboard update exposed %q", private)
+		}
+	}
 }
 
 func TestDashboardWebSocketRejectsWhenFull(t *testing.T) {

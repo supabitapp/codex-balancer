@@ -389,6 +389,10 @@ func label(a *Account) string {
 var sparkRunes = []rune("▁▂▃▄▅▆▇█")
 
 func spark(activity []int64) string {
+	return sSpark.Render(sparkline(activity))
+}
+
+func sparkline(activity []int64) string {
 	peak := int64(1)
 	for _, v := range activity {
 		peak = max(peak, v)
@@ -397,7 +401,7 @@ func spark(activity []int64) string {
 	for i := len(activity) - 1; i >= 0; i-- {
 		b.WriteRune(sparkRunes[activity[i]*int64(len(sparkRunes)-1)/peak])
 	}
-	return sSpark.Render(b.String())
+	return b.String()
 }
 
 func column(title string, rows []string, width, limit int) string {
@@ -552,8 +556,12 @@ func short(d time.Duration) string {
 }
 
 func ago(t time.Time) string {
-	if since := time.Since(t); since >= time.Second {
-		return short(since) + " ago"
+	return agoAt(time.Now(), t)
+}
+
+func agoAt(now, then time.Time) string {
+	if elapsed := now.Sub(then); elapsed >= time.Second {
+		return short(elapsed) + " ago"
 	}
 	return "now"
 }
