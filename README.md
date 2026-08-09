@@ -1,6 +1,6 @@
 # codex-balancer
 
-<img width="3024" height="1898" alt="image" src="https://github.com/user-attachments/assets/52f14b54-d3d3-4a00-bd5b-50afc5109337" />
+<img width="2984" height="1796" alt="CleanShot 2026-08-09 at 17 55 30@2x" src="https://github.com/user-attachments/assets/e39dcef1-1de3-4e4e-8cc3-af94769c2054" />
 
 
 Spread Codex turns across several ChatGPT accounts. 
