@@ -79,10 +79,8 @@ type dashboardThreadView struct {
 	Via         string
 	Fast        bool
 	Input       string
-	Cached      string
 	CacheRate   string
 	Output      string
-	Reasoning   string
 	Context     string
 	ContextInfo string
 	Compactions string
@@ -253,16 +251,14 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Via:         strings.ToUpper(string(thread.Via)),
 			Fast:        isFastServiceTier(thread.ServiceTier),
 			Input:       formatTokenCount(thread.Usage.InputTokens),
-			Cached:      formatTokenCount(thread.Usage.InputDetails.CachedTokens),
 			CacheRate:   dashboardCacheRate(thread.Usage),
 			Output:      formatTokenCount(thread.Usage.OutputTokens),
-			Reasoning:   formatTokenCount(thread.Usage.OutputDetails.ReasoningTokens),
 			Context:     dashboardContext(thread.LatestUsage.contextTokens(), limits),
 			ContextInfo: dashboardContextInfo(thread.LatestUsage.contextTokens(), limits),
 			Compactions: strconv.FormatInt(thread.Compactions, 10),
 			Latency:     formatLatency(thread.Latency),
 			LatencyInfo: dashboardLatencyInfo(thread.TTFB, thread.Latency),
-			Turns:       plural(thread.Turns, "turn"),
+			Turns:       dashboardNumber(thread.Turns),
 			Last:        agoAt(now, thread.Last),
 		})
 	}
