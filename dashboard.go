@@ -26,6 +26,7 @@ var dashboardFiles embed.FS
 
 var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.FuncMap{
 	"dashboardAssetURL": dashboardAssetURL,
+	"dashboardStatus":   dashboardStatus,
 }).ParseFS(dashboardFiles, "web/dashboard.html"))
 
 type dashboardView struct {
@@ -45,7 +46,7 @@ type dashboardCount struct {
 type dashboardAccountView struct {
 	Name           string
 	Plan           string
-	Status         string
+	Status         accountStatus
 	Weekly         string
 	Banked         string
 	BankedInfo     string
@@ -55,6 +56,11 @@ type dashboardAccountView struct {
 	Traffic        string
 	RateLimits     string
 	Activity       string
+}
+
+type dashboardStatusView struct {
+	Mark  string
+	Label string
 }
 
 type dashboardTotal struct {
@@ -168,7 +174,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			name = "account " + strconv.Itoa(i+1)
 		}
 		names[account.ID] = name
-		status := dashboardStatus(account.Status)
 		weekly := "--"
 		if account.WeeklyRemainingPercent != nil {
 			weekly = formatPercent(*account.WeeklyRemainingPercent)
@@ -189,7 +194,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		accounts = append(accounts, dashboardAccountView{
 			Name:           name,
 			Plan:           account.Plan,
-			Status:         status,
+			Status:         account.Status,
 			Weekly:         weekly,
 			Banked:         banked,
 			BankedInfo:     bankedInfo,
@@ -286,20 +291,20 @@ func dashboardResetInfo(now time.Time, credits []resetCreditStatsResponse) strin
 	return strings.Join(lines, "\n")
 }
 
-func dashboardStatus(status accountStatus) string {
+func dashboardStatus(status accountStatus) dashboardStatusView {
 	switch status {
 	case accountPaused:
-		return "⏸ paused"
+		return dashboardStatusView{Mark: "⏸", Label: "paused"}
 	case accountNeedsReauth:
-		return "✕ reauth"
+		return dashboardStatusView{Mark: "✕", Label: "reauth"}
 	case accountCooling:
-		return "◐ cooling"
+		return dashboardStatusView{Mark: "◐", Label: "cooling"}
 	case accountChecking:
-		return "◌ checking"
+		return dashboardStatusView{Mark: "◌", Label: "checking"}
 	case accountLive:
-		return "● live"
+		return dashboardStatusView{Mark: "●", Label: "live"}
 	default:
-		return string(status)
+		return dashboardStatusView{Label: string(status)}
 	}
 }
 

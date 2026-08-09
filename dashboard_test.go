@@ -114,7 +114,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
 		`203.0.113.***`,
-		`<td class="status">◌ checking</td>`,
+		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<td>WS</td>`,
 		`class="fast-icon"`,
 		`aria-label="Fast"`,
