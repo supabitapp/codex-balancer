@@ -118,6 +118,9 @@ var websocketHopByHop = map[string]bool{
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard", http.StatusPermanentRedirect)
+	})
 	mux.HandleFunc("GET /accounts", s.accountsPage)
 	mux.HandleFunc("GET /dashboard", s.dashboardPage)
 	mux.HandleFunc("GET /dashboard/assets/dashboard.js", dashboardScript("web/dashboard.js"))

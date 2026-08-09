@@ -13,6 +13,18 @@ import (
 	"github.com/coder/websocket"
 )
 
+func TestRootRedirectsToDashboard(t *testing.T) {
+	server := &server{pool: &Pool{}, stats: newStats()}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+
+	server.routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusPermanentRedirect || response.Header().Get("Location") != "/dashboard" {
+		t.Fatalf("status = %d, location = %q", response.Code, response.Header().Get("Location"))
+	}
+}
+
 func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: newStats()}
 	httpServer := httptest.NewServer(server.routes())
