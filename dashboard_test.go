@@ -50,7 +50,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		`hx-ext="ws"`,
 		`ws-connect="/dashboard/ws"`,
 		`id="dashboard"`,
-		`active segments`,
+		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
 		`nothing routed yet`,
 	} {
 		if !strings.Contains(body, expected) {
