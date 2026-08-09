@@ -138,7 +138,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums }
 <table>
 <thead><tr>
 <th>Thread</th>
-<th>IP</th>
+<th>Client</th>
 <th>Route</th>
 <th>Account</th>
 <th>Via</th>
@@ -148,7 +148,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums }
 </tr></thead>
 <tbody>{{if .Threads}}{{range .Threads}}<tr>
 <td>{{.KeyPrefix}}</td>
-<td class="dim">{{.IP}}</td>
+<td class="dim">{{.ClientID}}</td>
 <td class="dim">→</td>
 <td>{{.Account}}</td>
 <td>{{.Via}}</td>

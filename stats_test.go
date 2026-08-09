@@ -59,17 +59,14 @@ func TestRequestIPFallsBackToRemoteAddress(t *testing.T) {
 	}
 }
 
-func TestMaskIPHidesHost(t *testing.T) {
-	for ip, want := range map[string]string{
-		"203.0.113.42":       "203.0.113.***",
-		"::ffff:192.0.2.128": "192.0.2.***",
-		"2001:db8:1:2:3::4":  "2001:db8:1:2:****",
-		"invalid":            "",
-		"":                   "",
-	} {
-		if got := maskIP(ip); got != want {
-			t.Errorf("maskIP(%q) = %q, want %q", ip, got, want)
-		}
+func TestRequestClientIDHidesIP(t *testing.T) {
+	request := httptest.NewRequest("POST", "/v1/responses", nil)
+	request.Header.Set("X-Forwarded-For", "203.0.113.42")
+	if got := requestClientID(request, "secret"); got != "52f3c1d8" {
+		t.Fatalf("requestClientID() = %q, want 52f3c1d8", got)
+	}
+	if got := requestClientID(request, ""); got != "" {
+		t.Fatalf("requestClientID() without key = %q", got)
 	}
 }
 

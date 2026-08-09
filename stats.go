@@ -1,7 +1,9 @@
 package main
 
 import (
-	"fmt"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"net/netip"
@@ -60,7 +62,7 @@ type accountStats struct {
 
 type threadStats struct {
 	key         string
-	ip          string
+	clientID    string
 	account     string
 	serviceTier string
 	turns       int64
@@ -131,15 +133,15 @@ func (s *Stats) failedOver(account, reason string) {
 	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
-func (s *Stats) routed(thread, ip, account, serviceTier string, via transport) {
+func (s *Stats) routed(thread, clientID, account, serviceTier string, via transport) {
 	now := time.Now()
-	s.persistAttempt(storedAttempt{At: now, Thread: thread, IP: ip, Account: account, ServiceTier: serviceTier, Transport: via})
+	s.persistAttempt(storedAttempt{At: now, Thread: thread, ClientID: clientID, Account: account, ServiceTier: serviceTier, Transport: via})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applyRouted(now, thread, ip, account, serviceTier, via)
+	s.applyRouted(now, thread, clientID, account, serviceTier, via)
 }
 
-func (s *Stats) applyRouted(now time.Time, thread, ip, account, serviceTier string, via transport) {
+func (s *Stats) applyRouted(now time.Time, thread, clientID, account, serviceTier string, via transport) {
 	s.turns++
 	if via == transportWebSocket {
 		s.wsTurns++
@@ -157,7 +159,7 @@ func (s *Stats) applyRouted(now time.Time, thread, ip, account, serviceTier stri
 		t = &threadStats{key: thread}
 		s.threads[thread] = t
 	}
-	t.ip = ip
+	t.clientID = clientID
 	t.account = account
 	t.serviceTier = serviceTier
 	t.turns++
@@ -271,7 +273,7 @@ type AccountSnapshot struct {
 
 type ThreadSnapshot struct {
 	Key         string    `json:"key"`
-	IP          string    `json:"ip"`
+	ClientID    string    `json:"client_id"`
 	Account     string    `json:"account"`
 	ServiceTier string    `json:"service_tier"`
 	Turns       int64     `json:"turns"`
@@ -316,7 +318,7 @@ func (s *Stats) snapshot() Snapshot {
 	for _, t := range s.threads {
 		out.Threads = append(out.Threads, ThreadSnapshot{
 			Key:         t.key,
-			IP:          t.ip,
+			ClientID:    t.clientID,
 			Account:     t.account,
 			ServiceTier: t.serviceTier,
 			Turns:       t.turns,
@@ -502,20 +504,13 @@ func requestIP(r *http.Request) string {
 	return parsed.Unmap().String()
 }
 
-func maskIP(ip string) string {
-	address, err := netip.ParseAddr(ip)
-	if err != nil {
+func requestClientID(r *http.Request, key string) string {
+	ip := requestIP(r)
+	if ip == "" || key == "" {
 		return ""
 	}
-	address = address.Unmap()
-	if address.Is4() {
-		bytes := address.As4()
-		return fmt.Sprintf("%d.%d.%d.***", bytes[0], bytes[1], bytes[2])
-	}
-	bytes := address.As16()
-	return fmt.Sprintf("%x:%x:%x:%x:****",
-		uint16(bytes[0])<<8|uint16(bytes[1]),
-		uint16(bytes[2])<<8|uint16(bytes[3]),
-		uint16(bytes[4])<<8|uint16(bytes[5]),
-		uint16(bytes[6])<<8|uint16(bytes[7]))
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte("codex-balancer-client\x00"))
+	mac.Write([]byte(ip))
+	return hex.EncodeToString(mac.Sum(nil)[:4])
 }

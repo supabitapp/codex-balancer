@@ -42,6 +42,44 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 	}
 }
 
+func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_id;
+		ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';
+		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, client_ip)
+		VALUES (1, 'thread', 'account', '', 'http', '203.0.113.42');
+		PRAGMA user_version = 2;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var clientID string
+	if err := reopened.db.QueryRow(`SELECT client_id FROM attempts WHERE thread_key = 'thread'`).Scan(&clientID); err != nil {
+		t.Fatal(err)
+	}
+	if clientID != "" {
+		t.Fatalf("client ID = %q, want empty", clientID)
+	}
+	var oldColumns int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM pragma_table_info('attempts') WHERE name = 'client_ip'`).Scan(&oldColumns); err != nil {
+		t.Fatal(err)
+	}
+	if oldColumns != 0 {
+		t.Fatal("client_ip column remains")
+	}
+}
+
 func TestStateStoreRejectsNewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)
@@ -86,8 +124,8 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stats.routed("thread", "198.51.100.8", "account-a", serviceTierFast, transportHTTP)
-	stats.routed("thread", "198.51.100.9", "account-a", serviceTierFast, transportWebSocket)
+	stats.routed("thread", "client-a", "account-a", serviceTierFast, transportHTTP)
+	stats.routed("thread", "client-b", "account-a", serviceTierFast, transportWebSocket)
 	stats.failedOver("account-a", "unreachable")
 	stats.rateLimited("account-a")
 	stats.answered(2 * time.Second)
@@ -118,7 +156,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if snapshot.WSOpen != 0 || snapshot.Accounts["account-a"].WSOpen != 0 {
 		t.Fatalf("live sockets survived restart: %+v", snapshot)
 	}
-	if len(snapshot.Threads) != 1 || snapshot.Threads[0].IP != "198.51.100.9" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
+	if len(snapshot.Threads) != 1 || snapshot.Threads[0].ClientID != "client-b" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
 		t.Fatalf("threads = %+v", snapshot.Threads)
 	}
 	if len(snapshot.Events) != 3 {
