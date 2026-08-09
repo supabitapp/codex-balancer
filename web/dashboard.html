@@ -17,9 +17,6 @@
   --gray-7: #cecece;
   --gray-11: #646464;
   --gray-12: #202020;
-  --green-11: #218358;
-  --amber-11: #ab6400;
-  --red-11: #ce2c31;
   background: var(--gray-1);
   color: var(--gray-12);
 }
@@ -36,9 +33,6 @@ p { margin: 0 }
 #summary, #meta, td, dd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace }
 .dot { margin: 0 .35rem; color: var(--gray-7) }
 .status-mark { display: inline-block; min-width: 1em; text-align: center }
-.status-mark.status-live { color: var(--green-11) }
-.status-mark.status-cooling { color: var(--amber-11) }
-.status-mark.status-needs_reauth { color: var(--red-11) }
 .has-tooltip { cursor: help; text-decoration: underline dotted; text-underline-offset: .2em }
 #dashboard-tooltip { position: fixed; z-index: 1; width: max-content; max-width: min(28rem, calc(100vw - 1rem)); padding: .5rem .75rem; border-radius: .5rem; background: var(--gray-12); box-shadow: 0 .25rem 1rem rgb(0 0 0 / 20%); color: var(--gray-1); font-size: .8125rem; line-height: 1.4; pointer-events: none; white-space: pre-line }
 .scroll { overflow-x: auto }
@@ -53,7 +47,7 @@ th:last-child, td:last-child { padding-right: 0 }
 th { font-size: .75rem; font-weight: 500 }
 td { font-weight: 400 }
 .spark { letter-spacing: .08em }
-.fast-icon { display: block; width: 1rem; height: 1rem; color: var(--amber-11); fill: currentColor; opacity: .75 }
+.fast-icon { display: block; width: 1rem; height: 1rem; fill: currentColor; opacity: .75 }
 .empty { padding: .5rem 0 }
 .totals { display: flex; gap: 2rem; margin: 0; overflow-x: auto }
 .totals div { display: grid; gap: .25rem; min-width: max-content }
@@ -67,9 +61,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
     --gray-7: #484848;
     --gray-11: #b4b4b4;
     --gray-12: #eeeeee;
-    --green-11: #3dd68c;
-    --amber-11: #ffca16;
-    --red-11: #ff9592;
   }
 }
 @media (max-width: 760px) {
