@@ -110,8 +110,14 @@ func affinityFromRequest(headers http.Header, body []byte) (requestAffinity, err
 	}
 
 	var affinity requestAffinity
-	if turnState := firstHeader(headers, "x-codex-turn-state"); turnState != "" {
-		affinity.hard = append(affinity.hard, affinityRef{kind: affinityTurnState, value: turnState})
+	turnState := clientTurnStateAffinity(payload)
+	if !turnState.valid() {
+		if value := firstHeader(headers, "x-codex-turn-state"); value != "" {
+			turnState = affinityRef{kind: affinityTurnState, value: value}
+		}
+	}
+	if turnState.valid() {
+		affinity.hard = append(affinity.hard, turnState)
 	} else if session := sessionAffinity(headers); session.valid() {
 		affinity.preferred = session
 	} else {
@@ -139,6 +145,18 @@ func affinityFromRequest(headers http.Header, body []byte) (requestAffinity, err
 		affinity.hard = append(affinity.hard, affinityRef{kind: affinityFile, value: fileID})
 	}
 	return affinity, nil
+}
+
+func clientTurnStateAffinity(payload map[string]any) affinityRef {
+	metadata, ok := payload["client_metadata"].(map[string]any)
+	if !ok {
+		return affinityRef{}
+	}
+	value, ok := nonEmptyString(metadata["x-codex-turn-state"])
+	if !ok {
+		return affinityRef{}
+	}
+	return affinityRef{kind: affinityTurnState, value: value}
 }
 
 func sessionAffinity(headers http.Header) affinityRef {
