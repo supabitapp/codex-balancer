@@ -84,6 +84,7 @@ func serverCmd(args []string) error {
 	srv := &server{
 		ctx:      ctx,
 		pool:     pool,
+		catalog:  newModelCatalog(),
 		affinity: affinity,
 		stats:    stats,
 		upstream: *upstream,
@@ -94,6 +95,12 @@ func serverCmd(args []string) error {
 	if err := pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)
 		stats.note("accounts updated", "", fmt.Sprintf("%d added, %d removed, %d updated", change.added, change.removed, change.updated))
+		srv.catalog.invalidate()
+		go func() {
+			if err := srv.refreshModels(ctx, srv.catalog.version()); err != nil && ctx.Err() == nil {
+				log.Warn("model refresh failed", "error", err)
+			}
+		}()
 	}, func(err error) {
 		log.Warn("account watch failed", "error", err)
 		stats.note("account watch failed", "", err.Error())
@@ -114,6 +121,7 @@ func serverCmd(args []string) error {
 
 	go sweepAffinity(ctx, affinity, log)
 	go srv.watchUsage(ctx, *poll)
+	go srv.watchModels(ctx)
 
 	go func() {
 		<-ctx.Done()

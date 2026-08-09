@@ -48,6 +48,7 @@ func newProxyClient() *http.Client {
 type server struct {
 	ctx                  context.Context
 	pool                 *Pool
+	catalog              *modelCatalog
 	affinity             *AffinityStore
 	stats                *Stats
 	logins               accountLoginStore
@@ -99,8 +100,34 @@ func (s *server) routes() http.Handler {
 }
 
 func (s *server) models(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "missing or invalid bearer key")
+		return
+	}
+	clientVersion := strings.TrimSpace(r.URL.Query().Get("client_version"))
+	if clientVersion != "" {
+		if err := s.refreshModels(r.Context(), clientVersion); err != nil && s.log != nil {
+			s.log.Warn("model refresh failed", "error", err)
+		}
+	}
+	models := []modelEntry{}
+	if s.catalog != nil {
+		models = s.catalog.entries()
+	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"models":[]}` + "\n"))
+	if clientVersion != "" {
+		json.NewEncoder(w).Encode(map[string]any{"models": models})
+		return
+	}
+	data := make([]map[string]any, 0, len(models))
+	for _, model := range models {
+		data = append(data, map[string]any{
+			"id":       modelSlug(model),
+			"object":   "model",
+			"owned_by": "openai",
+		})
+	}
+	json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
 }
 
 func (s *server) responses(w http.ResponseWriter, r *http.Request) {
@@ -134,10 +161,11 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	key := affinity.statsKey(r.Header)
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
+	modelRetried := false
 	s.log.Debug("http turn received", "thread", key, "required_account", resolution.required, "preferred_account", resolution.preferred, "service_tier", request.ServiceTier)
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		account := s.pickAccount(key, resolution.required, resolution.preferred, skip, attempt, transportHTTP)
+		account := s.pickAccount(key, resolution.required, resolution.preferred, request.Model, request.ServiceTier, skip, attempt, transportHTTP)
 		if account == nil {
 			writeError(w, http.StatusServiceUnavailable, "no account available")
 			return
@@ -203,12 +231,12 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 				account.failed(attempt)
 			}
 			noReplacement := false
-			if unsupportedModel && !resolution.hard {
+			if unsupportedModel && !resolution.hard && !modelRetried {
 				replacementSkip := maps.Clone(skip)
 				replacementSkip[id] = true
-				noReplacement = s.pool.pick("", "", replacementSkip) == nil
+				noReplacement = s.pool.pick("", "", replacementSkip, s.allowedAccounts(request.Model, request.ServiceTier)) == nil
 			}
-			if resolution.hard || noReplacement {
+			if resolution.hard || noReplacement || unsupportedModel && modelRetried {
 				if resolution.hard {
 					s.log.Info("hard affinity stays on its account", "transport", transportHTTP, "thread", key, "account", id, "status", status)
 				}
@@ -221,6 +249,9 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			resp.Body.Close()
 			s.stats.failedOver(id, resp.Status)
 			skip[id] = true
+			if unsupportedModel {
+				modelRetried = true
+			}
 			continue
 		}
 
@@ -277,17 +308,18 @@ func responseAccountModelUnsupported(resp *http.Response, model string) bool {
 	}
 	var envelope struct {
 		Error struct {
+			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(prefix, &envelope) != nil {
 		return false
 	}
-	return accountModelUnsupported(envelope.Error.Message, model)
+	return accountModelUnsupported(envelope.Error.Code, envelope.Error.Message, model)
 }
 
-func accountModelUnsupported(message, model string) bool {
-	if model == "" {
+func accountModelUnsupported(code, message, model string) bool {
+	if code != "invalid_request_error" || model == "" {
 		return false
 	}
 	want := fmt.Sprintf("The '%s' model is not supported when using Codex with a ChatGPT account.", model)

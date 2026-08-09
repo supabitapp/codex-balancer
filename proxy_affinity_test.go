@@ -154,6 +154,141 @@ func TestHTTPUnsupportedModelPreservesRejectionWithoutReplacement(t *testing.T) 
 	}
 }
 
+func TestHTTPModelCatalogSkipsUnsupportedSoftOwner(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp_b")
+	})
+	defer closeServer()
+	server.catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-5.6-terra")},
+			b.id(): {testModelEntry("gpt-5.6-sol")},
+		},
+		"0.1.0",
+	)
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, a.id()); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-5.6-sol","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-b]" {
+		t.Fatalf("calls = %v, want account-b", calls)
+	}
+}
+
+func TestHTTPModelCatalogFiltersPriorityTier(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp_b")
+	})
+	defer closeServer()
+	server.catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-5.6-sol")},
+			b.id(): {testModelEntry("gpt-5.6-sol", "priority")},
+		},
+		"0.1.0",
+	)
+
+	response := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-5.6-sol","service_tier":"priority","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-b]" {
+		t.Fatalf("calls = %v, want account-b", calls)
+	}
+}
+
+func TestHTTPModelCatalogDoesNotMoveHardOwner(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "unexpected")
+	})
+	defer closeServer()
+	server.catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-5.6-terra")},
+			b.id(): {testModelEntry("gpt-5.6-sol")},
+		},
+		"0.1.0",
+	)
+	if err := store.bind(affinityRef{kind: affinityResponse, value: "resp_a"}, a.id()); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-5.6-sol","previous_response_id":"resp_a","input":[]}`)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if len(calls) != 0 {
+		t.Fatalf("calls = %v, want none", calls)
+	}
+}
+
+func TestHTTPUnsupportedModelRetriesOnlyOnce(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	c := testAccount("account-c", 40)
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b, c}, func(w http.ResponseWriter, r *http.Request) {
+		account := r.Header.Get("chatgpt-account-id")
+		calls = append(calls, account)
+		if account == c.id() {
+			writeResponseCreated(w, "unexpected")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"The 'gpt-route' model is not supported when using Codex with a ChatGPT account."}}`)
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-route","input":[]}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-a account-b]" {
+		t.Fatalf("calls = %v, want one replacement", calls)
+	}
+}
+
+func TestHTTPUnsupportedModelRequiresInvalidRequestCode(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":{"code":"other_error","message":"The 'gpt-route' model is not supported when using Codex with a ChatGPT account."}}`)
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-route","input":[]}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-a]" {
+		t.Fatalf("calls = %v, want one attempt", calls)
+	}
+}
+
 func TestHTTPHardPreviousResponseNeverMoves(t *testing.T) {
 	a := testAccount("account-a", 99)
 	b := testAccount("account-b", 0)
@@ -634,6 +769,7 @@ func newAffinityHTTPServer(
 	server := &server{
 		ctx:      context.Background(),
 		pool:     &Pool{accounts: accounts},
+		catalog:  newModelCatalog(),
 		affinity: store,
 		stats:    newStats(),
 		upstream: upstream.URL,

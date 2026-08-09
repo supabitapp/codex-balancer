@@ -82,7 +82,7 @@ func TestPoolRouteHonorsHardAndSoftAffinity(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate()
 			}
-			got := pool.route(test.required, test.preferred, nil).account
+			got := pool.route(test.required, test.preferred, nil, nil).account
 			if got == nil {
 				if test.want != "" {
 					t.Fatalf("account = nil, want %s", test.want)
@@ -100,10 +100,10 @@ func TestPoolRouteDoesNotRetryExcludedOwner(t *testing.T) {
 	a := testAccount("account-a", 10)
 	b := testAccount("account-b", 20)
 	pool := &Pool{accounts: []*Account{a, b}}
-	if got := pool.route("account-a", "", map[string]bool{"account-a": true}).account; got != nil {
+	if got := pool.route("account-a", "", map[string]bool{"account-a": true}, nil).account; got != nil {
 		t.Fatalf("hard route selected %s after exclusion", got.id())
 	}
-	if got := pool.route("", "account-a", map[string]bool{"account-a": true}).account; got == nil || got.id() != "account-b" {
+	if got := pool.route("", "account-a", map[string]bool{"account-a": true}, nil).account; got == nil || got.id() != "account-b" {
 		t.Fatalf("soft route selected %v, want account-b", got)
 	}
 }
