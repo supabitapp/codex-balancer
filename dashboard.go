@@ -158,7 +158,7 @@ const dashboardHTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Codex Balancer</title>
 <style>
-:root { color-scheme: light dark; font-family: system-ui, sans-serif; background: Canvas; color: CanvasText }
+:root { color-scheme: only light; font-family: system-ui, sans-serif; background: Canvas; color: CanvasText }
 * { box-sizing: border-box }
 body { margin: 0 }
 main { width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding-bottom: 3rem }
