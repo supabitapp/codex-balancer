@@ -137,7 +137,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <thead><tr>
 <th>Thread</th>
 <th>Client</th>
-<th class="fit">Route</th>
 <th>Account</th>
 <th>Model</th>
 <th>Thinking</th>
@@ -155,7 +154,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <tbody>{{if .Threads}}{{range .Threads}}<tr>
 <td>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.KeyPrefix}}</span>{{else}}{{.KeyPrefix}}{{end}}</td>
 <td class="dim">{{.ClientID}}</td>
-<td class="fit dim">→</td>
 <td>{{.Account}}</td>
 <td>{{.Model}}</td>
 <td>{{.Thinking}}</td>
@@ -169,7 +167,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{if .LatencyInfo}}<span class="has-tooltip" data-tooltip="{{.LatencyInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Latency}}</span>{{else}}{{.Latency}}{{end}}</td>
 <td class="dim">{{.Turns}}</td>
 <td class="dim">{{.Last}}</td>
-</tr>{{end}}{{else}}<tr><td class="empty" colspan="16">nothing routed yet</td></tr>{{end}}</tbody>
+</tr>{{end}}{{else}}<tr><td class="empty" colspan="15">nothing routed yet</td></tr>{{end}}</tbody>
 </table>
 </div>
 </section>
