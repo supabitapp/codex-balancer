@@ -289,10 +289,10 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "gpt-5.6-sol" || thread.Thinking != "xhigh" || thread.Input != "2K" || thread.CacheRate != "75" || thread.Output != "300" || thread.Context != "2.3K / 258.4K" || thread.Compactions != "1" || thread.Latency != "2s" || thread.Turns != "1" {
+	if thread.Model != "gpt-5.6-sol" || thread.Thinking != "xhigh" || thread.Input != "2K" || thread.CacheRate != "75" || thread.Output != "300" || thread.Context != "2.3K / 258.4K (1)" || thread.Latency != "2s" || thread.Turns != "1" {
 		t.Fatalf("routing row = %+v", thread)
 	}
-	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
+	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
 		t.Fatalf("routing details = %+v", thread)
 	}
 	payload, err := renderDashboard("dashboard", view)
@@ -300,12 +300,12 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Model</th>", "<th>Thinking</th>", "<th>Input</th>", "<th>Cache %</th>", "<th>Output</th>", "<th>Context</th>", `<th class="fit">Compacts</th>`, "<th>Latency</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "First byte: 500ms"} {
+	for _, expected := range []string{"<th>Model</th>", "<th>Thinking</th>", "<th>Input</th>", "<th>Cache %</th>", "<th>Output</th>", "<th>Context/Compaction</th>", "<th>Latency</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1", "First byte: 500ms"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
 	}
-	for _, absent := range []string{">Route</th>", "<th>Cached</th>", "<th>Reasoning</th>", ">1 turn<"} {
+	for _, absent := range []string{">Route</th>", "<th>Cached</th>", "<th>Reasoning</th>", ">Compacts</th>", ">1 turn<"} {
 		if strings.Contains(body, absent) {
 			t.Fatalf("dashboard contains %q", absent)
 		}
@@ -314,6 +314,16 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard exposed %q", private)
 		}
+	}
+}
+
+func TestDashboardContextOmitsZeroCompactions(t *testing.T) {
+	limits := modelContextLimits{Window: 4_000, AutoCompact: 3_000}
+	if got := dashboardContext(2_000, limits, 0); got != "2K / 4K" {
+		t.Fatalf("context = %q, want 2K / 4K", got)
+	}
+	if info := dashboardContextInfo(2_000, limits, 0); !strings.Contains(info, "Compactions: 0") {
+		t.Fatalf("context info = %q", info)
 	}
 }
 

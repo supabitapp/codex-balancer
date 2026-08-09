@@ -83,7 +83,6 @@ type dashboardThreadView struct {
 	Output      string
 	Context     string
 	ContextInfo string
-	Compactions string
 	Latency     string
 	LatencyInfo string
 	Turns       string
@@ -241,6 +240,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	threadViews := make([]dashboardThreadView, 0, len(threads))
 	for _, thread := range threads {
 		limits := s.catalog.contextLimits(thread.Account, thread.Model)
+		used := thread.LatestUsage.contextTokens()
 		threadViews = append(threadViews, dashboardThreadView{
 			KeyPrefix:   shortKey(thread.Key),
 			Info:        dashboardThreadInfo(thread.Metadata),
@@ -253,9 +253,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Input:       formatTokenCount(thread.Usage.InputTokens),
 			CacheRate:   dashboardCacheRate(thread.Usage),
 			Output:      formatTokenCount(thread.Usage.OutputTokens),
-			Context:     dashboardContext(thread.LatestUsage.contextTokens(), limits),
-			ContextInfo: dashboardContextInfo(thread.LatestUsage.contextTokens(), limits),
-			Compactions: dashboardNumber(thread.Compactions),
+			Context:     dashboardContext(used, limits, thread.Compactions),
+			ContextInfo: dashboardContextInfo(used, limits, thread.Compactions),
 			Latency:     formatLatency(thread.Latency),
 			LatencyInfo: dashboardLatencyInfo(thread.TTFB, thread.Latency),
 			Turns:       dashboardNumber(thread.Turns),
@@ -327,18 +326,21 @@ func dashboardCacheRate(usage responseUsage) string {
 	return formatDecimal(float64(usage.InputDetails.CachedTokens) * 100 / float64(usage.InputTokens))
 }
 
-func dashboardContext(used int64, limits modelContextLimits) string {
-	if used == 0 && limits.Window == 0 {
-		return "--"
+func dashboardContext(used int64, limits modelContextLimits, compactions int64) string {
+	context := "--"
+	if limits.Window > 0 {
+		context = formatTokenCount(used) + " / " + formatTokenCount(limits.Window)
+	} else if used > 0 {
+		context = formatTokenCount(used)
 	}
-	if limits.Window == 0 {
-		return formatTokenCount(used)
+	if compactions > 0 {
+		context += " (" + strconv.FormatInt(compactions, 10) + ")"
 	}
-	return formatTokenCount(used) + " / " + formatTokenCount(limits.Window)
+	return context
 }
 
-func dashboardContextInfo(used int64, limits modelContextLimits) string {
-	lines := make([]string, 0, 2)
+func dashboardContextInfo(used int64, limits modelContextLimits, compactions int64) string {
+	lines := make([]string, 0, 4)
 	if limits.Window > 0 {
 		lines = append(lines, "Usable context: "+formatTokenCount(limits.Window))
 	}
@@ -348,6 +350,7 @@ func dashboardContextInfo(used int64, limits modelContextLimits) string {
 	if used > 0 && limits.Window > 0 {
 		lines = append(lines, "Used: "+formatPercent(float64(used)*100/float64(limits.Window)))
 	}
+	lines = append(lines, "Compactions: "+strconv.FormatInt(compactions, 10))
 	return strings.Join(lines, "\n")
 }
 
