@@ -1,19 +1,19 @@
-const tooltip = document.querySelector("#banked-tooltip")
+const tooltip = document.querySelector("#dashboard-tooltip")
 const dashboardHost = document.querySelector("[ws-connect]")
 let active
 
-function bankedInfo(element) {
-  return element instanceof Element ? element.closest(".banked-info") : null
+function tooltipAnchor(element) {
+  return element instanceof Element ? element.closest(".has-tooltip") : null
 }
 
-function hideBankedInfo() {
+function hideTooltip() {
   active = undefined
   tooltip.hidden = true
 }
 
-function placeBankedInfo() {
+function placeTooltip() {
   if (!active?.isConnected) {
-    hideBankedInfo()
+    hideTooltip()
     return
   }
   const anchor = active.getBoundingClientRect()
@@ -27,37 +27,37 @@ function placeBankedInfo() {
   tooltip.style.top = `${top}px`
 }
 
-function showBankedInfo(element) {
+function showTooltip(element) {
   active = element
-  if (tooltip.textContent !== element.dataset.info) tooltip.textContent = element.dataset.info
+  if (tooltip.textContent !== element.dataset.tooltip) tooltip.textContent = element.dataset.tooltip
   tooltip.hidden = false
-  placeBankedInfo()
+  placeTooltip()
 }
 
-function showBankedInfoFor(event) {
-  const element = bankedInfo(event.target)
-  if (element) showBankedInfo(element)
+function showTooltipFor(event) {
+  const element = tooltipAnchor(event.target)
+  if (element) showTooltip(element)
 }
 
-function hideBankedInfoFor(event) {
-  const element = bankedInfo(event.target)
-  if (element && element !== bankedInfo(event.relatedTarget)) hideBankedInfo()
+function hideTooltipFor(event) {
+  const element = tooltipAnchor(event.target)
+  if (element && element !== tooltipAnchor(event.relatedTarget)) hideTooltip()
 }
 
-document.addEventListener("pointerover", showBankedInfoFor)
-document.addEventListener("pointerout", hideBankedInfoFor)
-document.addEventListener("focusin", showBankedInfoFor)
-document.addEventListener("focusout", hideBankedInfoFor)
+document.addEventListener("pointerover", showTooltipFor)
+document.addEventListener("pointerout", hideTooltipFor)
+document.addEventListener("focusin", showTooltipFor)
+document.addEventListener("focusout", hideTooltipFor)
 
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape") hideBankedInfo()
+  if (event.key === "Escape") hideTooltip()
 })
 
-document.addEventListener("scroll", placeBankedInfo, true)
-window.addEventListener("resize", placeBankedInfo)
+document.addEventListener("scroll", placeTooltip, true)
+window.addEventListener("resize", placeTooltip)
 
 new MutationObserver(() => {
-  const hovered = document.querySelector(".banked-info:hover")
-  if (hovered) showBankedInfo(hovered)
-  else if (active && !active.isConnected) hideBankedInfo()
+  const hovered = document.querySelector(".has-tooltip:hover")
+  if (hovered) showTooltip(hovered)
+  else if (active && !active.isConnected) hideTooltip()
 }).observe(dashboardHost, {childList: true, subtree: true})

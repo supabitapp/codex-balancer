@@ -60,6 +60,7 @@ type dashboardAccountView struct {
 type dashboardTotal struct {
 	Name  string
 	Value string
+	Info  string
 }
 
 type dashboardThreadView struct {
@@ -260,7 +261,11 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			{Name: "rate limits", Value: strconv.FormatInt(snapshot.Limited, 10)},
 			{Name: "ttfb", Value: short(snapshot.TTFB)},
 			{Name: "uptime", Value: short(snapshot.Uptime)},
-			{Name: "API estimate", Value: formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses)},
+			{
+				Name:  "API estimate",
+				Value: formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses),
+				Info:  "Calculated from " + calendarMonthStart(now).Format("2 January 2006, 15:04 MST"),
+			},
 		},
 		Threads: threadViews,
 		Events:  events,

@@ -134,7 +134,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	}
 }
 
-func TestDashboardBankedResetHoverShowsExpirations(t *testing.T) {
+func TestDashboardBankedResetTooltipShowsExpirations(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(4 * time.Minute)
 	laterExpiresAt := now.Add(2 * time.Hour)
@@ -173,7 +173,7 @@ func TestDashboardBankedResetHoverShowsExpirations(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{`class="banked-info"`, `data-info="Expires in 4m at 2026-08-09 12:04 UTC`, `Expires in 2h00m at 2026-08-09 14:00 UTC`, `aria-describedby="banked-tooltip"`, `tabindex="0"`} {
+	for _, expected := range []string{`class="has-tooltip"`, `data-tooltip="Expires in 4m at 2026-08-09 12:04 UTC`, `Expires in 2h00m at 2026-08-09 14:00 UTC`, `aria-describedby="dashboard-tooltip"`, `tabindex="0"`} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q:\n%s", expected, body)
 		}
@@ -183,6 +183,22 @@ func TestDashboardBankedResetHoverShowsExpirations(t *testing.T) {
 			t.Fatalf("dashboard exposed %q", absent)
 		}
 	}
+}
+
+func TestDashboardAPIEstimateTooltipShowsMonthStart(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("BST", 60*60))
+	server := &server{pool: &Pool{}, stats: newStats()}
+	view := server.currentDashboard(now)
+	for _, total := range view.Totals {
+		if total.Name == "API estimate" {
+			want := "Calculated from 1 August 2026, 00:00 BST"
+			if total.Info != want {
+				t.Fatalf("API estimate info = %q, want %q", total.Info, want)
+			}
+			return
+		}
+	}
+	t.Fatal("API estimate total missing")
 }
 
 func TestDashboardWebSocketRejectsWhenFull(t *testing.T) {
