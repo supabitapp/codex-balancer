@@ -7,11 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
 
-const affinityTTL = 12 * time.Hour
+const (
+	affinityTTL                        = 12 * time.Hour
+	maxEphemeralAffinityRecordsPerKind = 8192
+)
 
 type softAffinityBinding struct {
 	Account string    `json:"account"`
@@ -19,14 +23,16 @@ type softAffinityBinding struct {
 }
 
 type affinityState struct {
-	Soft map[string]softAffinityBinding `json:"soft,omitempty"`
-	Hard map[string]string              `json:"hard,omitempty"`
+	Soft      map[string]softAffinityBinding `json:"soft,omitempty"`
+	Hard      map[string]string              `json:"hard,omitempty"`
+	HardOrder []string                       `json:"hard_order,omitempty"`
 }
 
 func (s affinityState) clone() affinityState {
 	return affinityState{
-		Soft: maps.Clone(s.Soft),
-		Hard: maps.Clone(s.Hard),
+		Soft:      maps.Clone(s.Soft),
+		Hard:      maps.Clone(s.Hard),
+		HardOrder: slices.Clone(s.HardOrder),
 	}
 }
 
@@ -126,6 +132,9 @@ func (s *AffinityStore) bindAll(refs []affinityRef, account string) error {
 			owner := next.Hard[key]
 			if owner == "" {
 				next.Hard[key] = account
+				if ref.kind == affinityResponse || ref.kind == affinityTurnState {
+					next.HardOrder = append(next.HardOrder, key)
+				}
 				changed = true
 			}
 			continue
@@ -136,6 +145,7 @@ func (s *AffinityStore) bindAll(refs []affinityRef, account string) error {
 			changed = true
 		}
 	}
+	limitHardAffinityState(&next, maxEphemeralAffinityRecordsPerKind)
 	if !changed {
 		return nil
 	}
@@ -216,9 +226,8 @@ func (s *AffinityStore) sweep() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.state.clone()
-	before := len(next.Soft)
 	sweepAffinityState(&next, s.now())
-	if len(next.Soft) == before {
+	if maps.Equal(next.Soft, s.state.Soft) && maps.Equal(next.Hard, s.state.Hard) && slices.Equal(next.HardOrder, s.state.HardOrder) {
 		return nil
 	}
 	if err := writeJSONFile(s.path, next); err != nil {
@@ -239,4 +248,44 @@ func sweepAffinityState(state *affinityState, now time.Time) {
 			delete(state.Hard, key)
 		}
 	}
+	limitHardAffinityState(state, maxEphemeralAffinityRecordsPerKind)
+}
+
+func limitHardAffinityState(state *affinityState, limit int) {
+	seen := make(map[string]bool, len(state.Hard))
+	order := make([]string, 0, len(state.Hard))
+	for _, key := range state.HardOrder {
+		if state.Hard[key] == "" || seen[key] || !ephemeralHardAffinityKey(key) {
+			continue
+		}
+		seen[key] = true
+		order = append(order, key)
+	}
+	missing := make([]string, 0, len(state.Hard)-len(order))
+	for key := range state.Hard {
+		if !seen[key] && ephemeralHardAffinityKey(key) {
+			missing = append(missing, key)
+		}
+	}
+	slices.Sort(missing)
+	order = append(missing, order...)
+	counts := map[string]int{}
+	kept := make([]string, 0, len(order))
+	for index := len(order) - 1; index >= 0; index-- {
+		key := order[index]
+		kind, _, _ := strings.Cut(key, "\n")
+		if counts[kind] >= limit {
+			delete(state.Hard, key)
+			continue
+		}
+		counts[kind]++
+		kept = append(kept, key)
+	}
+	slices.Reverse(kept)
+	state.HardOrder = kept
+}
+
+func ephemeralHardAffinityKey(key string) bool {
+	kind, _, _ := strings.Cut(key, "\n")
+	return kind == string(affinityResponse) || kind == string(affinityTurnState)
 }

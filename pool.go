@@ -118,25 +118,28 @@ func (p *Pool) togglePause(a *Account) (bool, error) {
 	return paused, err
 }
 
-func (p *Pool) persistTokens(a *Account) error {
-	state := a.persisted()
+func (p *Pool) persistTokens(state accountState) (accountState, error) {
 	id := claimsFromToken(state.IDToken).Auth.AccountID
-	return p.mutate(func(accounts []*Account) ([]*Account, error) {
+	var persisted accountState
+	err := p.mutate(func(accounts []*Account) ([]*Account, error) {
 		i := indexOf(accounts, id)
 		if i < 0 {
 			return nil, fmt.Errorf("no account %q", id)
 		}
 		current := accounts[i].persisted()
 		if current.LastRefresh.After(state.LastRefresh) {
+			persisted = current
 			return accounts, nil
 		}
 		current.IDToken = state.IDToken
 		current.AccessToken = state.AccessToken
 		current.RefreshToken = state.RefreshToken
 		current.LastRefresh = state.LastRefresh
+		persisted = current
 		accounts[i] = accountFromState(current)
 		return accounts, nil
 	})
+	return persisted, err
 }
 
 func (p *Pool) pick(required, preferred string, skip map[string]bool) *Account {
@@ -289,8 +292,12 @@ func resetHeader(h http.Header) time.Time {
 	if !binding.resetsAt.IsZero() {
 		return binding.resetsAt
 	}
-	if secs, err := strconv.Atoi(h.Get("retry-after")); err == nil {
+	retryAfter := h.Get("retry-after")
+	if secs, err := strconv.Atoi(retryAfter); err == nil {
 		return time.Now().Add(time.Duration(secs) * time.Second)
+	}
+	if date, err := http.ParseTime(retryAfter); err == nil {
+		return date
 	}
 	return time.Time{}
 }

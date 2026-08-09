@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -261,6 +262,78 @@ func TestAffinityStoreSweepPersistsSoftExpiry(t *testing.T) {
 	}
 	if got := reloaded.lookup(hard); got != "account-a" {
 		t.Fatalf("hard owner = %q, want account-a", got)
+	}
+}
+
+func TestLimitHardAffinityStateDropsOldestRecords(t *testing.T) {
+	state := affinityState{
+		Hard: map[string]string{
+			"response\nfirst":  "account-a",
+			"response\nsecond": "account-a",
+			"response\nthird":  "account-b",
+		},
+		HardOrder: []string{"response\nfirst", "response\nsecond", "response\nthird"},
+	}
+	limitHardAffinityState(&state, 2)
+	if state.Hard["response\nfirst"] != "" {
+		t.Fatal("oldest hard record remained")
+	}
+	if got := state.HardOrder; !slices.Equal(got, []string{"response\nsecond", "response\nthird"}) {
+		t.Fatalf("hard order = %v", got)
+	}
+}
+
+func TestLimitHardAffinityStateRepairsPersistedOrder(t *testing.T) {
+	state := affinityState{
+		Hard: map[string]string{
+			"response\na": "account-a",
+			"response\nb": "account-b",
+		},
+		HardOrder: []string{"missing", "response\nb", "response\nb"},
+	}
+	limitHardAffinityState(&state, 2)
+	if got := state.HardOrder; !slices.Equal(got, []string{"response\na", "response\nb"}) {
+		t.Fatalf("hard order = %v", got)
+	}
+}
+
+func TestLimitHardAffinityStateKeepsEachKindIndependent(t *testing.T) {
+	state := affinityState{
+		Hard: map[string]string{
+			"file\nfile-a":       "account-a",
+			"response\nfirst":    "account-a",
+			"response\nsecond":   "account-a",
+			"response\nthird":    "account-b",
+			"turn_state\nturn-a": "account-a",
+		},
+		HardOrder: []string{"file\nfile-a", "response\nfirst", "response\nsecond", "response\nthird", "turn_state\nturn-a"},
+	}
+	limitHardAffinityState(&state, 2)
+	if state.Hard["file\nfile-a"] == "" || state.Hard["turn_state\nturn-a"] == "" {
+		t.Fatal("one affinity kind evicted another")
+	}
+	if state.Hard["response\nfirst"] != "" {
+		t.Fatal("oldest response remained")
+	}
+}
+
+func TestEvictedResponseAffinityFailsClosed(t *testing.T) {
+	state := affinityState{
+		Soft: map[string]softAffinityBinding{},
+		Hard: map[string]string{
+			"response\nold": "account-a",
+			"response\nnew": "account-b",
+		},
+		HardOrder: []string{"response\nold", "response\nnew"},
+	}
+	limitHardAffinityState(&state, 1)
+	store := &AffinityStore{state: state, now: time.Now}
+	pool := &Pool{accounts: []*Account{testAccount("account-a", 10), testAccount("account-b", 20)}}
+	_, err := store.resolve(requestAffinity{
+		hard: []affinityRef{{kind: affinityResponse, value: "old"}},
+	}, pool)
+	if !errors.Is(err, errAffinityOwnerUnavailable) {
+		t.Fatalf("error = %v, want owner unavailable", err)
 	}
 }
 
