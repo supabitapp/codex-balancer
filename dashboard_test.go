@@ -126,9 +126,10 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	}
 }
 
-func TestDashboardBankedResetHoverShowsSafeCreditDetails(t *testing.T) {
+func TestDashboardBankedResetHoverShowsExpirations(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
 	expiresAt := now.Add(4 * time.Minute)
+	laterExpiresAt := now.Add(2 * time.Hour)
 	account := testAccount("account-a", 20)
 	account.adoptResetCredits(2, []resetCredit{
 		{
@@ -140,19 +141,22 @@ func TestDashboardBankedResetHoverShowsSafeCreditDetails(t *testing.T) {
 			Description: "Weekly & five-hour windows",
 		},
 		{
-			ID:        "redeemed-credit-id",
-			ResetType: "codex_rate_limits",
-			Status:    "redeemed",
+			ID:          "second-private-credit-id",
+			ResetType:   "codex_rate_limits",
+			Status:      "available",
+			ExpiresAt:   &laterExpiresAt,
+			Title:       "Another reset",
+			Description: "More detail",
 		},
 	})
 	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
 
 	stats := server.currentStats(now)
-	if len(stats.Accounts) != 1 || len(stats.Accounts[0].ResetCredits) != 1 {
+	if len(stats.Accounts) != 1 || len(stats.Accounts[0].ResetCredits) != 2 {
 		t.Fatalf("reset credits = %+v", stats.Accounts)
 	}
 	view := server.currentDashboard(now)
-	wantInfo := "2 reset credits available\n\nFull <reset>\nWeekly & five-hour windows\nExpires in 4m at 2026-08-09 12:04 UTC"
+	wantInfo := "Expires in 4m at 2026-08-09 12:04 UTC\nExpires in 2h00m at 2026-08-09 14:00 UTC"
 	if len(view.Accounts) != 1 || view.Accounts[0].BankedInfo != wantInfo {
 		t.Fatalf("banked info = %q", view.Accounts[0].BankedInfo)
 	}
@@ -161,12 +165,12 @@ func TestDashboardBankedResetHoverShowsSafeCreditDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{`class="banked-info"`, `data-info="2 reset credits available`, `Full &lt;reset&gt;`, `Weekly &amp; five-hour windows`, `aria-describedby="banked-tooltip"`, `tabindex="0"`} {
+	for _, expected := range []string{`class="banked-info"`, `data-info="Expires in 4m at 2026-08-09 12:04 UTC`, `Expires in 2h00m at 2026-08-09 14:00 UTC`, `aria-describedby="banked-tooltip"`, `tabindex="0"`} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q:\n%s", expected, body)
 		}
 	}
-	for _, absent := range []string{"private-credit-id", "redeemed-credit-id", `title="2 reset credits available`} {
+	for _, absent := range []string{"private-credit-id", "second-private-credit-id", "Full &lt;reset&gt;", "Weekly &amp; five-hour windows", "Another reset", "More detail"} {
 		if strings.Contains(body, absent) {
 			t.Fatalf("dashboard exposed %q", absent)
 		}

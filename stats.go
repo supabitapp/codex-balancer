@@ -288,9 +288,7 @@ type accountStatsResponse struct {
 }
 
 type resetCreditStatsResponse struct {
-	Title       string     `json:"title,omitempty"`
-	Description string     `json:"description,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 func (s *server) statsJSON(w http.ResponseWriter, _ *http.Request) {
@@ -331,9 +329,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 					continue
 				}
 				resetCredits = append(resetCredits, resetCreditStatsResponse{
-					Title:       credit.Title,
-					Description: credit.Description,
-					ExpiresAt:   credit.ExpiresAt,
+					ExpiresAt: credit.ExpiresAt,
 				})
 			}
 		}

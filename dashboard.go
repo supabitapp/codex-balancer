@@ -176,7 +176,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			banked = strconv.FormatInt(*account.BankedResets, 10)
 			bankedClass = "strong"
 		}
-		bankedInfo := dashboardResetInfo(now, account.BankedResets, account.ResetCredits)
+		bankedInfo := dashboardResetInfo(now, account.ResetCredits)
 		resetIn := "--"
 		if account.ResetAt != nil {
 			resetIn = short(account.ResetAt.Sub(now))
@@ -278,16 +278,9 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 }
 
-func dashboardResetInfo(now time.Time, count *int64, credits []resetCreditStatsResponse) string {
-	if count == nil {
-		return ""
-	}
-	sections := []string{plural(*count, "reset credit") + " available"}
+func dashboardResetInfo(now time.Time, credits []resetCreditStatsResponse) string {
+	lines := make([]string, 0, len(credits))
 	for _, credit := range credits {
-		lines := []string{cmp.Or(strings.TrimSpace(credit.Title), "Rate-limit reset")}
-		if description := strings.TrimSpace(credit.Description); description != "" {
-			lines = append(lines, description)
-		}
 		if credit.ExpiresAt == nil {
 			lines = append(lines, "Does not expire")
 		} else if credit.ExpiresAt.After(now) {
@@ -295,9 +288,8 @@ func dashboardResetInfo(now time.Time, count *int64, credits []resetCreditStatsR
 		} else {
 			lines = append(lines, "Expired at "+credit.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC"))
 		}
-		sections = append(sections, strings.Join(lines, "\n"))
 	}
-	return strings.Join(sections, "\n\n")
+	return strings.Join(lines, "\n")
 }
 
 func dashboardStatus(status accountStatus) (string, string) {
