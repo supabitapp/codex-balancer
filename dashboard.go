@@ -37,6 +37,7 @@ type dashboardView struct {
 type dashboardCount struct {
 	Count int
 	Label string
+	Class string
 }
 
 type dashboardAccountView struct {
@@ -161,9 +162,12 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		weekly, weeklyClass := "--", "dim"
 		if account.WeeklyRemainingPercent != nil {
 			weekly = formatPercent(*account.WeeklyRemainingPercent)
-			weeklyClass = ""
-			if *account.WeeklyRemainingPercent <= 30 {
-				weeklyClass = "strong"
+			weeklyClass = "good"
+			switch {
+			case *account.WeeklyRemainingPercent <= 10:
+				weeklyClass = "bad"
+			case *account.WeeklyRemainingPercent <= 30:
+				weeklyClass = "warn"
 			}
 		}
 		banked, bankedClass := "--", "dim"
@@ -209,7 +213,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		{accountNeedsReauth, "need reauth"},
 	} {
 		if count := counts[item.status]; count > 0 {
-			summary = append(summary, dashboardCount{Count: count, Label: item.label})
+			_, class := dashboardStatus(item.status)
+			summary = append(summary, dashboardCount{Count: count, Label: item.label, Class: class})
 		}
 	}
 
@@ -233,8 +238,11 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	for i := len(snapshot.Events) - 1; i >= 0; i-- {
 		event := snapshot.Events[i]
 		class := "dim"
-		if event.Kind == "failover" || event.Kind == "rate limited" {
-			class = "strong"
+		switch event.Kind {
+		case "failover":
+			class = "bad"
+		case "rate limited":
+			class = "hot"
 		}
 		events = append(events, dashboardEventView{
 			At:      event.At.UTC().Format("15:04:05") + " UTC",
@@ -272,13 +280,13 @@ func dashboardStatus(status accountStatus) (string, string) {
 	case accountPaused:
 		return "⏸ paused", "dim"
 	case accountNeedsReauth:
-		return "✕ reauth", "strong"
+		return "✕ reauth", "bad"
 	case accountCooling:
-		return "◐ cooling", "strong"
+		return "◐ cooling", "hot"
 	case accountChecking:
 		return "◌ checking", "dim"
 	case accountLive:
-		return "● live", "strong"
+		return "● live", "good"
 	default:
 		return string(status), ""
 	}

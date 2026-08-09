@@ -103,10 +103,11 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
-		`FAST`,
+		`<td class="good">WS</td>`,
+		`<td class="hot">FAST</td>`,
 		`API estimate`,
 		`$30.00`,
-		`failover`,
+		`<td class="bad">failover</td>`,
 		`&lt;script&gt;upstream unavailable&lt;/script&gt;`,
 	} {
 		if !strings.Contains(body, expected) {
