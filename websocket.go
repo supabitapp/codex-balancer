@@ -530,7 +530,6 @@ func (s *server) relayResponsesWebSocket(
 			allowed := s.allowedAccounts(event.Model, event.ServiceTier)
 			alternate := s.pool.pick("", "", map[string]bool{current.account.id(): true}, allowed) != nil
 			if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, resolution.hard, len(turns), alternate) {
-				s.stats.note(eventRotationReconnect, current.account.id(), shortKey(metadata.ThreadID))
 				if err := downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction"); err != nil {
 					s.log.Warn("compaction rotation downstream restart failed",
 						"thread", turnThread,
@@ -796,7 +795,7 @@ func (s *server) relayResponsesWebSocket(
 					if turns[index].rotationFrom != "" {
 						outcome := "source_fallback"
 						if current.account.id() != turns[index].rotationFrom {
-							s.stats.note(eventRotated, current.account.id(), "after compaction")
+							s.stats.compactionSwitched(turns[index].metadata.ThreadID, turns[index].rotationFrom, current.account.id())
 							outcome = "rotated"
 						}
 						s.compactionRotation.finish(turns[index].metadata.ThreadID, outcome, current.account.id())

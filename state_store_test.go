@@ -227,6 +227,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	usage.OutputDetails.ReasoningTokens = 5
 	stats.recordUsage("thread", "gpt-5.6-sol", serviceTierFast, usage)
 	stats.note("account added", "account-a", "")
+	stats.compactionSwitched("codex-thread", "account-a", "account-b")
 	stats.websocketOpened("account-a")
 	wantCost, _ := estimateAPIPrice("gpt-5.6-sol", serviceTierFast, usage)
 	if err := store.Close(); err != nil {
@@ -257,8 +258,12 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if snapshot.Threads[0].Usage != usage || snapshot.Threads[0].LatestUsage != usage || snapshot.Threads[0].Metadata != metadata || snapshot.Threads[0].Compactions != 1 || snapshot.Threads[0].TTFB != 2*time.Second || snapshot.Threads[0].Latency != 3*time.Second {
 		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads[0].Usage, usage)
 	}
-	if len(snapshot.Events) != 3 {
+	if len(snapshot.Events) != 4 {
 		t.Fatalf("events = %+v", snapshot.Events)
+	}
+	switchEvent := snapshot.Events[3]
+	if switchEvent.Kind != eventCompactionSwitch || switchEvent.Thread != "codex-thread" || switchEvent.SourceAccount != "account-a" || switchEvent.Account != "account-b" {
+		t.Fatalf("compaction switch = %+v", switchEvent)
 	}
 }
 

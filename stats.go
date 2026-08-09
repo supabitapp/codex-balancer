@@ -24,8 +24,9 @@ const (
 	eventResponseAnswered  = "response answered"
 	eventResponseCompleted = "response completed"
 	eventResponseUsage     = "response usage"
-	eventRotationReconnect = "rotation reconnect"
-	eventRotated           = "rotated"
+	eventCompactionSwitch  = "compaction switch"
+	eventLegacyReconnect   = "rotation reconnect"
+	eventLegacyRotated     = "rotated"
 )
 
 type transport string
@@ -85,10 +86,12 @@ type threadStats struct {
 }
 
 type Event struct {
-	At      time.Time `json:"at"`
-	Kind    string    `json:"kind"`
-	Account string    `json:"account"`
-	Detail  string    `json:"detail"`
+	At            time.Time `json:"at"`
+	Kind          string    `json:"kind"`
+	Account       string    `json:"account"`
+	SourceAccount string    `json:"source_account,omitempty"`
+	Thread        string    `json:"thread,omitempty"`
+	Detail        string    `json:"detail"`
 }
 
 func newStats() *Stats {
@@ -128,11 +131,29 @@ func (s *Stats) note(kind, account, detail string) {
 	s.appendEvent(Event{At: now, Kind: kind, Account: account, Detail: detail})
 }
 
-func publicEventDetail(event Event) string {
-	if event.Kind == eventRotationReconnect {
-		return shortKey(event.Detail)
+func (s *Stats) compactionSwitched(thread, source, target string) {
+	now := time.Now()
+	s.persistEvent(storedEvent{At: now, Kind: eventCompactionSwitch, Account: target, Thread: thread, Detail: source})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.appendEvent(Event{At: now, Kind: eventCompactionSwitch, Account: target, SourceAccount: source, Thread: thread})
+}
+
+func eventText(event Event, names map[string]string) (string, string, bool) {
+	switch event.Kind {
+	case eventLegacyReconnect, eventLegacyRotated:
+		return "", "", false
+	case eventCompactionSwitch:
+		return eventAccountName(names, event.SourceAccount) + " → " + eventAccountName(names, event.Account), shortKey(event.Thread), true
 	}
-	return event.Detail
+	return eventAccountName(names, event.Account), event.Detail, true
+}
+
+func eventAccountName(names map[string]string, account string) string {
+	if name := names[account]; name != "" {
+		return name
+	}
+	return shortKey(account)
 }
 
 func (s *Stats) rateLimited(account string) {

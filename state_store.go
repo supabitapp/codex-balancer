@@ -450,6 +450,10 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 		case eventFailover:
 			stats.failures++
 		}
+		if event.Kind == eventCompactionSwitch {
+			stats.appendEvent(Event{At: event.At, Kind: event.Kind, Account: event.Account, SourceAccount: event.Detail, Thread: event.Thread})
+			continue
+		}
 		stats.appendEvent(Event{At: event.At, Kind: event.Kind, Account: event.Account, Detail: event.Detail})
 	}
 	return events.Err()

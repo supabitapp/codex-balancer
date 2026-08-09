@@ -100,10 +100,13 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats.routed("019fe5c2private", "a1b2c3d4", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{})
 	stats.recordUsage("019fe5c2private", "gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
-	stats.note(eventRotationReconnect, "unused", "019fe827-9296-7f82-b526-180a27ca764c")
+	stats.note(eventLegacyReconnect, "source", "019fe701-7a55-7760-8d38-d1cd74544ef8")
+	stats.note(eventLegacyRotated, "unused", "after compaction")
+	stats.compactionSwitched("019fe827-9296-7f82-b526-180a27ca764c", "source", "unused")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
 	account := accountFromState(accountState{IDToken: "x." + tokenPayload + ".x"})
-	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: stats, key: "secret"}
+	source := testAccount("source", 20)
+	server := &server{pool: &Pool{accounts: []*Account{account, source}}, stats: stats, key: "secret"}
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
 
@@ -143,7 +146,8 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`$30.00`,
 		`<td>failover</td>`,
 		`&lt;script&gt;upstream unavailable&lt;/script&gt;`,
-		`<td>rotation reconnect</td>`,
+		`<td>compaction switch</td>`,
+		`<td>s***e@***.com → a***e@***.com</td>`,
 		`<td class="dim">019fe827</td>`,
 	} {
 		if !strings.Contains(body, expected) {
@@ -155,7 +159,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 			t.Fatalf("dashboard update replaces stable container %q", replaced)
 		}
 	}
-	for _, private := range []string{"alice@example.com", "019fe5c2private", "019fe827-9296-7f82-b526-180a27ca764c", "203.0.113.42", "<script>"} {
+	for _, private := range []string{"alice@example.com", "source@example.com", "019fe5c2private", "019fe701-7a55-7760-8d38-d1cd74544ef8", "019fe827-9296-7f82-b526-180a27ca764c", "rotation reconnect", "<td>rotated</td>", "after compaction", "203.0.113.42", "<script>"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard update exposed %q", private)
 		}

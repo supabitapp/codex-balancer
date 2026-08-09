@@ -304,6 +304,9 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a account-a account-a]" {
 		t.Fatalf("requests before reconnect = %s", got)
 	}
+	if events := server.stats.snapshot().Events; len(events) != 0 {
+		t.Fatalf("events before switch = %+v", events)
+	}
 
 	conn = dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
 	defer conn.CloseNow()
@@ -316,6 +319,9 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	readWebSocketEvent(t, conn)
 	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a account-a account-a account-a]" {
 		t.Fatalf("requests after background reconnect = %s", got)
+	}
+	if events := server.stats.snapshot().Events; len(events) != 0 {
+		t.Fatalf("events after background reconnect = %+v", events)
 	}
 
 	writeWebSocketEvent(t, conn, map[string]any{
@@ -330,6 +336,10 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	}
 	if owner := store.lookup(affinityRef{kind: affinitySession, value: "session"}); owner != "account-b" {
 		t.Fatalf("session owner = %q, want account-b", owner)
+	}
+	events := server.stats.snapshot().Events
+	if len(events) != 1 || events[0].Kind != eventCompactionSwitch || events[0].Thread != "logical-thread" || events[0].SourceAccount != "account-a" || events[0].Account != "account-b" {
+		t.Fatalf("switch events = %+v", events)
 	}
 }
 
@@ -432,6 +442,11 @@ func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testin
 		"source_account": "account-a",
 		"account":        "account-a",
 	})
+	for _, event := range server.stats.snapshot().Events {
+		if event.Kind == eventCompactionSwitch {
+			t.Fatalf("fallback switch event = %+v", event)
+		}
+	}
 }
 
 func TestWebSocketHardRateLimitDoesNotReplay(t *testing.T) {

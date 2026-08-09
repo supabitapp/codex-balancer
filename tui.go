@@ -465,6 +465,10 @@ func (d dashboard) events(width, height int) string {
 	rows := []string{}
 	for i := len(d.snap.Events) - 1; i >= 0; i-- {
 		e := d.snap.Events[i]
+		account, detail, visible := eventText(e, names)
+		if !visible {
+			continue
+		}
 		style := sDim
 		switch e.Kind {
 		case "failover":
@@ -474,9 +478,9 @@ func (d dashboard) events(width, height int) string {
 		}
 		rows = append(rows, fmt.Sprintf("%s %s %s %s",
 			sDim.Render(e.At.Format("15:04:05")),
-			style.Render(pad(e.Kind, 13)),
-			sText.Render(pad(names[e.Account], 14)),
-			sDim.Render(publicEventDetail(e))))
+			style.Render(pad(e.Kind, 18)),
+			sText.Render(pad(account, 30)),
+			sDim.Render(detail)))
 	}
 	if len(rows) == 0 {
 		rows = []string{sDim.Render("quiet")}
