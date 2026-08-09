@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ func TestDashboardTogglesCompactionRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	rotation, err := newCompactionRotation(store)
+	rotation, err := newCompactionRotation(store, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

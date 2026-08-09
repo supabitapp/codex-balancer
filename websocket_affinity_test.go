@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -240,7 +241,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	b := testAccount("account-b", 20)
 	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
 	closeUnusedUpstream()
-	rotation, err := newCompactionRotation(store.store)
+	rotation, err := newCompactionRotation(store.store, server.log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +330,9 @@ func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testin
 	b := testAccount("account-b", 20)
 	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
 	closeUnusedUpstream()
-	rotation, err := newCompactionRotation(store.store)
+	logs := &testLogBuffer{}
+	server.log = slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	rotation, err := newCompactionRotation(store.store, server.log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +382,28 @@ func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testin
 	if owner := store.lookup(affinityRef{kind: affinitySession, value: "session"}); owner != "account-a" {
 		t.Fatalf("session owner = %q, want account-a", owner)
 	}
+	records := logs.records(t)
+	requireLogRecord(t, records, "compaction rotation context rejected", map[string]any{
+		"thread":         "session",
+		"turn":           "turn-b",
+		"source_account": "account-a",
+		"target_account": "account-b",
+		"status":         float64(http.StatusBadRequest),
+		"code":           "invalid_encrypted_content",
+	})
+	requireLogRecord(t, records, "websocket redialed", map[string]any{
+		"thread":       "session",
+		"turn":         "turn-b",
+		"from_account": "account-b",
+		"to_account":   "account-a",
+		"reason":       "encrypted content rejected",
+	})
+	requireLogRecord(t, records, "compaction rotation finished", map[string]any{
+		"outcome":        "source_fallback",
+		"thread":         "session",
+		"source_account": "account-a",
+		"account":        "account-a",
+	})
 }
 
 func TestWebSocketHardRateLimitDoesNotReplay(t *testing.T) {

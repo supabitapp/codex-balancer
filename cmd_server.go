@@ -76,10 +76,6 @@ func serverCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	compactionRotation, err := newCompactionRotation(store)
-	if err != nil {
-		return fmt.Errorf("load settings: %w", err)
-	}
 
 	log, logFile, err := newLogger(*jsonLogs, *plain, *logPath)
 	if err != nil {
@@ -88,6 +84,11 @@ func serverCmd(args []string) error {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+	compactionRotation, err := newCompactionRotation(store, log)
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+	log.Info("compaction rotation configured", "enabled", compactionRotation.isEnabled())
 	stats, err := newPersistentStats(store, func(err error) {
 		log.Error("state write failed", "error", err)
 	})
