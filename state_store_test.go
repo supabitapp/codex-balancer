@@ -126,6 +126,43 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	}
 }
 
+func TestStatsRestoreUsesCurrentMonthAPIUsage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	month := time.Now()
+	month = time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, month.Location())
+	previousUsage := responseUsage{InputTokens: 1_000}
+	currentUsage := responseUsage{OutputTokens: 1_000}
+	for _, event := range []storedEvent{
+		{At: month.Add(-time.Second), Kind: eventResponseUsage, Model: "gpt-5.6-sol", Usage: previousUsage},
+		{At: month.Add(time.Second), Kind: eventResponseUsage, Model: "gpt-5.6-sol", Usage: currentUsage},
+	} {
+		if err := store.recordEvent(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	stats, err := newPersistentStats(reopened, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := estimateAPIPrice("gpt-5.6-sol", "", currentUsage)
+	snapshot := stats.snapshot()
+	if snapshot.APICostNanoDollars != want || snapshot.UnpricedResponses != 0 {
+		t.Fatalf("API estimate = %d with %d unpriced, want %d with none", snapshot.APICostNanoDollars, snapshot.UnpricedResponses, want)
+	}
+}
+
 func TestPoolDerivesLastUsedFromAttempts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)

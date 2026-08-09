@@ -387,7 +387,7 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 			stats.ttfbN++
 			continue
 		case eventResponseUsage:
-			stats.applyUsage(event.Model, event.ServiceTier, event.Usage)
+			stats.applyUsageAt(event.At, event.Model, event.ServiceTier, event.Usage)
 			continue
 		case eventRateLimited:
 			stats.limited++

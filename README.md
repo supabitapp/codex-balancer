@@ -26,7 +26,8 @@ State lives in `~/.codex-balancer/state.db`.
 
 SQLite stores credentials, affinity owners, routed turns, and events. The
 server fetches current limits, reset credits, auth state, and model lists. It
-derives status, totals, activity, response time, and cost from those facts.
+derives status, totals, activity, response time, and current-month cost from
+those facts.
 
 ## Serve
 

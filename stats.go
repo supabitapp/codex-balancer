@@ -39,6 +39,7 @@ type Stats struct {
 	ttfbN              int64
 	wsTurns            int64
 	wsOpen             int64
+	apiMonth           int
 	apiCostNanoDollars int64
 	unpricedResponses  int64
 	accounts           map[string]*accountStats
@@ -71,8 +72,10 @@ type Event struct {
 }
 
 func newStats() *Stats {
+	now := time.Now()
 	return &Stats{
-		started:  time.Now(),
+		started:  now,
+		apiMonth: calendarMonth(now),
 		accounts: map[string]*accountStats{},
 		threads:  map[string]*threadStats{},
 	}
@@ -197,14 +200,20 @@ func (s *Stats) recordUsage(model, serviceTier string, usage responseUsage) {
 	if usage.empty() {
 		return
 	}
-	s.persistEvent(storedEvent{At: time.Now(), Kind: eventResponseUsage, Model: model, ServiceTier: serviceTier, Usage: usage})
-	s.applyUsage(model, serviceTier, usage)
+	now := time.Now()
+	s.persistEvent(storedEvent{At: now, Kind: eventResponseUsage, Model: model, ServiceTier: serviceTier, Usage: usage})
+	s.applyUsageAt(now, model, serviceTier, usage)
 }
 
-func (s *Stats) applyUsage(model, serviceTier string, usage responseUsage) {
-	cost, known := estimateAPIPrice(model, serviceTier, usage)
+func (s *Stats) applyUsageAt(at time.Time, model, serviceTier string, usage responseUsage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	month := calendarMonth(at)
+	if month < s.apiMonth {
+		return
+	}
+	s.syncAPIMonth(month)
+	cost, known := estimateAPIPrice(model, serviceTier, usage)
 	if !known {
 		s.unpricedResponses++
 		return
@@ -272,6 +281,7 @@ func (s *Stats) snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
+	s.syncAPIMonth(calendarMonth(now))
 	for _, account := range s.accounts {
 		advanceActivity(account, now)
 	}
@@ -311,6 +321,20 @@ func (s *Stats) snapshot() Snapshot {
 		})
 	}
 	return out
+}
+
+func calendarMonth(value time.Time) int {
+	year, month, _ := value.Date()
+	return year*12 + int(month) - 1
+}
+
+func (s *Stats) syncAPIMonth(month int) {
+	if month == s.apiMonth {
+		return
+	}
+	s.apiMonth = month
+	s.apiCostNanoDollars = 0
+	s.unpricedResponses = 0
 }
 
 func advanceActivity(account *accountStats, now time.Time) {
