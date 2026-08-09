@@ -328,7 +328,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Model (thinking mode)</th>", "<td>gpt-5.6-sol (xhigh)</td>", "<th>Uncached input</th>", "<th>Cache %</th>", "<th>Output</th>", "<th>Context left/Compactions</th>", "<th>Latency</th>", "<th>Requests</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1", "First byte: 500ms"} {
+	for _, expected := range []string{"<th>Model (thinking mode)</th>", "<td>gpt-5.6-sol (xhigh)</td>", "<th>Uncached input</th>", "<th>Cache %</th>", "<th>Output</th>", "<th>Context left<br>Compactions</th>", "<th>Latency</th>", "<th>Requests</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1", "First byte: 500ms"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
