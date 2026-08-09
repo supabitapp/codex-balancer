@@ -293,7 +293,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
 		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 		s.log.Debug("http turn routed", attrs...)
-		s.relay(w, resp, sent, id, request)
+		s.relay(w, resp, sent, key, id, request)
 		return
 	}
 	s.log.Warn("every account failed", "transport", transportHTTP, "thread", key, "attempts", maxAttempts)
@@ -446,7 +446,7 @@ func (b *prefixedResponseBody) Close() error {
 	return b.body.Close()
 }
 
-func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, account string, request responseRequestData) {
+func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, thread, account string, request responseRequestData) {
 	defer resp.Body.Close()
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
@@ -455,6 +455,7 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Tim
 	inspector := responseOwnerInspector{
 		store:       s.affinity,
 		stats:       s.stats,
+		thread:      thread,
 		account:     account,
 		model:       request.Model,
 		serviceTier: request.ServiceTier,
@@ -488,6 +489,7 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Tim
 type responseOwnerInspector struct {
 	store         *AffinityStore
 	stats         *Stats
+	thread        string
 	account       string
 	model         string
 	serviceTier   string
@@ -632,7 +634,7 @@ func (i *responseOwnerInspector) inspect(line []byte) {
 		if serviceTier == "" {
 			serviceTier = i.serviceTier
 		}
-		i.stats.recordUsage(model, serviceTier, payload.Usage)
+		i.stats.recordUsage(i.thread, model, serviceTier, payload.Usage)
 		i.usageRecorded = true
 	}
 	if payload.ID != "" && (event.Type == "" || event.Type == "response.created") {

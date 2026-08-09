@@ -212,6 +212,10 @@ func TestWebSocketCompletedResponseTracksAPIEstimate(t *testing.T) {
 	if snapshot.APICostNanoDollars != 16_000_000 || snapshot.UnpricedResponses != 0 {
 		t.Fatalf("API estimate = %d with %d unpriced, want 16000000 with none", snapshot.APICostNanoDollars, snapshot.UnpricedResponses)
 	}
+	wantUsage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
+	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Usage != wantUsage {
+		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads, wantUsage)
+	}
 }
 
 func TestWebSocketHardRateLimitDoesNotReplay(t *testing.T) {

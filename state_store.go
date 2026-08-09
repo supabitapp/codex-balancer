@@ -69,6 +69,7 @@ var stateMigrations = []string{
 	`ALTER TABLE bindings ADD COLUMN last_used_at_ns INTEGER NOT NULL DEFAULT 0;
 	UPDATE bindings SET last_used_at_ns = created_at_ns;
 	ALTER TABLE bindings ADD COLUMN abandoned_at_ns INTEGER;`,
+	`ALTER TABLE events ADD COLUMN thread_key TEXT NOT NULL DEFAULT '';`,
 }
 
 type StateStore struct {
@@ -89,6 +90,7 @@ type storedEvent struct {
 	At          time.Time
 	Kind        string
 	Account     string
+	Thread      string
 	Detail      string
 	Duration    time.Duration
 	Model       string
@@ -361,10 +363,10 @@ func (s *StateStore) recordAttempt(attempt storedAttempt) error {
 
 func (s *StateStore) recordEvent(event storedEvent) error {
 	_, err := s.db.Exec(`INSERT INTO events (
-		at_ns, kind, account_id, detail, duration_ns, model, service_tier,
+		at_ns, kind, account_id, thread_key, detail, duration_ns, model, service_tier,
 		input_tokens, cached_tokens, cache_write_tokens, output_tokens
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.At.UnixNano(), event.Kind, event.Account, event.Detail, event.Duration.Nanoseconds(), event.Model, event.ServiceTier,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.At.UnixNano(), event.Kind, event.Account, event.Thread, event.Detail, event.Duration.Nanoseconds(), event.Model, event.ServiceTier,
 		event.Usage.InputTokens, event.Usage.InputDetails.CachedTokens, event.Usage.InputDetails.CacheWriteTokens, event.Usage.OutputTokens)
 	return err
 }
@@ -387,7 +389,7 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 	if err := attempts.Close(); err != nil {
 		return err
 	}
-	events, err := s.db.Query(`SELECT at_ns, kind, account_id, detail, duration_ns, model, service_tier,
+	events, err := s.db.Query(`SELECT at_ns, kind, account_id, thread_key, detail, duration_ns, model, service_tier,
 		input_tokens, cached_tokens, cache_write_tokens, output_tokens FROM events ORDER BY id`)
 	if err != nil {
 		return err
@@ -396,7 +398,7 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 	for events.Next() {
 		var event storedEvent
 		var at, duration int64
-		if err := events.Scan(&at, &event.Kind, &event.Account, &event.Detail, &duration, &event.Model, &event.ServiceTier,
+		if err := events.Scan(&at, &event.Kind, &event.Account, &event.Thread, &event.Detail, &duration, &event.Model, &event.ServiceTier,
 			&event.Usage.InputTokens, &event.Usage.InputDetails.CachedTokens, &event.Usage.InputDetails.CacheWriteTokens, &event.Usage.OutputTokens); err != nil {
 			return err
 		}
@@ -408,7 +410,7 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 			stats.ttfbN++
 			continue
 		case eventResponseUsage:
-			stats.applyUsageAt(event.At, event.Model, event.ServiceTier, event.Usage)
+			stats.applyUsageAt(event.At, event.Thread, event.Model, event.ServiceTier, event.Usage)
 			continue
 		case eventRateLimited:
 			stats.limited++

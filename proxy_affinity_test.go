@@ -768,6 +768,11 @@ func TestHTTPCompletedResponseTracksAPIEstimate(t *testing.T) {
 	if snapshot.APICostNanoDollars != 4_400_000 || snapshot.UnpricedResponses != 0 {
 		t.Fatalf("API estimate = %d with %d unpriced, want 4400000 with none", snapshot.APICostNanoDollars, snapshot.UnpricedResponses)
 	}
+	wantUsage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
+	wantUsage.InputDetails.CachedTokens = 800
+	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Usage != wantUsage {
+		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads, wantUsage)
+	}
 }
 
 func TestHTTPMissingPreviousResponseFailsBeforeUpstream(t *testing.T) {

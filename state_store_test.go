@@ -59,6 +59,7 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 		ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';
 		ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
+		ALTER TABLE events DROP COLUMN thread_key;
 		DROP TABLE client_identity;
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, client_ip)
 		VALUES (1, 'thread', 'account', '', 'http', '203.0.113.42');
@@ -98,6 +99,7 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
+		ALTER TABLE events DROP COLUMN thread_key;
 		PRAGMA user_version = 5;`); err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +135,7 @@ func TestStateStoreClearsStoredClientIDs(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
+		ALTER TABLE events DROP COLUMN thread_key;
 		PRAGMA user_version = 4;`); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +207,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	stats.rateLimited("account-a")
 	stats.answered(2 * time.Second)
 	usage := responseUsage{InputTokens: 10, OutputTokens: 20}
-	stats.recordUsage("gpt-5.6-sol", serviceTierFast, usage)
+	stats.recordUsage("thread", "gpt-5.6-sol", serviceTierFast, usage)
 	stats.note("account added", "account-a", "")
 	stats.websocketOpened("account-a")
 	wantCost, _ := estimateAPIPrice("gpt-5.6-sol", serviceTierFast, usage)
@@ -232,6 +235,9 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	}
 	if len(snapshot.Threads) != 1 || snapshot.Threads[0].ClientID != "client-b" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
 		t.Fatalf("threads = %+v", snapshot.Threads)
+	}
+	if snapshot.Threads[0].Usage != usage {
+		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads[0].Usage, usage)
 	}
 	if len(snapshot.Events) != 3 {
 		t.Fatalf("events = %+v", snapshot.Events)

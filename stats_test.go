@@ -26,6 +26,23 @@ func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
 	}
 }
 
+func TestThreadUsageFollowsActiveRoutingWindow(t *testing.T) {
+	stats := newStats()
+	now := time.Now()
+	old := now.Add(-threadActiveWindow - time.Second)
+	stats.applyRouted(old, "thread", "", "account", "", transportHTTP)
+	stats.applyUsageAt(old, "thread", "unknown", "default", responseUsage{InputTokens: 100})
+	stats.applyRouted(now, "thread", "", "account", "", transportHTTP)
+	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
+	usage.InputDetails.CachedTokens = 1_500
+	stats.applyUsageAt(now, "thread", "unknown", "default", usage)
+
+	snapshot := stats.snapshot()
+	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Turns != 1 || snapshot.Threads[0].Usage != usage {
+		t.Fatalf("threads = %+v, want current routing window usage %+v", snapshot.Threads, usage)
+	}
+}
+
 func TestMaskEmailHidesLocalPartAndDomain(t *testing.T) {
 	for email, want := range map[string]string{
 		"khoi@example.com":     "k***i@***.com",
@@ -75,12 +92,12 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	previousMonth := time.Date(2026, time.July, 31, 23, 59, 0, 0, time.UTC)
 	currentMonth := previousMonth.Add(time.Minute)
 	stats.usageMonth = calendarMonth(previousMonth)
-	stats.applyUsageAt(previousMonth, "unknown", "default", responseUsage{InputTokens: 1_000})
+	stats.applyUsageAt(previousMonth, "", "unknown", "default", responseUsage{InputTokens: 1_000})
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(currentMonth, "gpt-5.6-sol", "default", usage)
+	stats.applyUsageAt(currentMonth, "", "gpt-5.6-sol", "default", usage)
 	unpricedUsage := responseUsage{InputTokens: 400, OutputTokens: 50}
-	stats.applyUsageAt(currentMonth, "unknown", "default", unpricedUsage)
+	stats.applyUsageAt(currentMonth, "", "unknown", "default", unpricedUsage)
 	wantUsage := usage
 	wantUsage.InputTokens += unpricedUsage.InputTokens
 	wantUsage.OutputTokens += unpricedUsage.OutputTokens

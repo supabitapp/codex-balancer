@@ -568,7 +568,7 @@ func (s *server) relayResponsesWebSocket(
 						if serviceTier == "" {
 							serviceTier = turn.serviceTier
 						}
-						s.stats.recordUsage(model, serviceTier, event.Response.Usage)
+						s.stats.recordUsage(turn.thread, model, serviceTier, event.Response.Usage)
 					}
 					turns = turns[1:]
 				}

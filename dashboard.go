@@ -75,6 +75,9 @@ type dashboardThreadView struct {
 	Account   string
 	Via       string
 	Fast      bool
+	Input     string
+	Cached    string
+	Output    string
 	Turns     string
 	Last      string
 }
@@ -235,6 +238,9 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Account:   names[thread.Account],
 			Via:       strings.ToUpper(string(thread.Via)),
 			Fast:      isFastServiceTier(thread.ServiceTier),
+			Input:     formatTokenCount(thread.Usage.InputTokens),
+			Cached:    formatTokenCount(thread.Usage.InputDetails.CachedTokens),
+			Output:    formatTokenCount(thread.Usage.OutputTokens),
 			Turns:     plural(thread.Turns, "turn"),
 			Last:      agoAt(now, thread.Last),
 		})

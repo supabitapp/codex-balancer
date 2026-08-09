@@ -67,6 +67,8 @@ type threadStats struct {
 	account     string
 	serviceTier string
 	turns       int64
+	usage       responseUsage
+	started     time.Time
 	last        time.Time
 	via         transport
 }
@@ -155,9 +157,10 @@ func (s *Stats) applyRouted(now time.Time, thread, clientID, account, serviceTie
 	if thread == "" {
 		return
 	}
+	s.pruneInactiveThreads(now)
 	t := s.threads[thread]
 	if t == nil {
-		t = &threadStats{key: thread}
+		t = &threadStats{key: thread, started: now}
 		s.threads[thread] = t
 	}
 	t.clientID = clientID
@@ -166,7 +169,6 @@ func (s *Stats) applyRouted(now time.Time, thread, clientID, account, serviceTie
 	t.turns++
 	t.last = now
 	t.via = via
-	s.pruneInactiveThreads(now)
 }
 
 func (s *Stats) websocketOpened(account string) {
@@ -200,27 +202,27 @@ func (s *Stats) answered(ttfb time.Duration) {
 	s.ttfbN++
 }
 
-func (s *Stats) recordUsage(model, serviceTier string, usage responseUsage) {
+func (s *Stats) recordUsage(thread, model, serviceTier string, usage responseUsage) {
 	if usage.empty() {
 		return
 	}
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventResponseUsage, Model: model, ServiceTier: serviceTier, Usage: usage})
-	s.applyUsageAt(now, model, serviceTier, usage)
+	s.persistEvent(storedEvent{At: now, Kind: eventResponseUsage, Thread: thread, Model: model, ServiceTier: serviceTier, Usage: usage})
+	s.applyUsageAt(now, thread, model, serviceTier, usage)
 }
 
-func (s *Stats) applyUsageAt(at time.Time, model, serviceTier string, usage responseUsage) {
+func (s *Stats) applyUsageAt(at time.Time, thread, model, serviceTier string, usage responseUsage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if current := s.threads[thread]; current != nil && !at.Before(current.started) {
+		current.usage.add(usage)
+	}
 	month := calendarMonth(at)
 	if month < s.usageMonth {
 		return
 	}
 	s.syncUsageMonth(month)
-	s.monthlyUsage.InputTokens += usage.InputTokens
-	s.monthlyUsage.InputDetails.CachedTokens += usage.InputDetails.CachedTokens
-	s.monthlyUsage.InputDetails.CacheWriteTokens += usage.InputDetails.CacheWriteTokens
-	s.monthlyUsage.OutputTokens += usage.OutputTokens
+	s.monthlyUsage.add(usage)
 	cost, known := estimateAPIPrice(model, serviceTier, usage)
 	if !known {
 		s.unpricedResponses++
@@ -278,11 +280,12 @@ type AccountSnapshot struct {
 }
 
 type ThreadSnapshot struct {
-	Key         string    `json:"key"`
-	ClientID    string    `json:"client_id"`
-	Account     string    `json:"account"`
-	ServiceTier string    `json:"service_tier"`
-	Turns       int64     `json:"turns"`
+	Key         string `json:"key"`
+	ClientID    string `json:"client_id"`
+	Account     string `json:"account"`
+	ServiceTier string `json:"service_tier"`
+	Turns       int64  `json:"turns"`
+	Usage       responseUsage
 	Last        time.Time `json:"last"`
 	Via         transport `json:"via"`
 }
@@ -329,6 +332,7 @@ func (s *Stats) snapshot() Snapshot {
 			Account:     t.account,
 			ServiceTier: t.serviceTier,
 			Turns:       t.turns,
+			Usage:       t.usage,
 			Last:        t.last,
 			Via:         t.via,
 		})

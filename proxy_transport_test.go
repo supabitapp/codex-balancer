@@ -258,7 +258,7 @@ func TestHTTPDownstreamWriteFailureClosesUpstreamBody(t *testing.T) {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{},
 		Body:       body,
-	}, time.Now(), "account-a", responseRequestData{})
+	}, time.Now(), "thread", "account-a", responseRequestData{})
 	if !body.closed {
 		t.Fatal("upstream body remained open")
 	}

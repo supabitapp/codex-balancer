@@ -22,6 +22,13 @@ func (u responseUsage) empty() bool {
 	return u.InputTokens == 0 && u.OutputTokens == 0 && u.InputDetails.CachedTokens == 0 && u.InputDetails.CacheWriteTokens == 0
 }
 
+func (u *responseUsage) add(other responseUsage) {
+	u.InputTokens += other.InputTokens
+	u.OutputTokens += other.OutputTokens
+	u.InputDetails.CachedTokens += other.InputDetails.CachedTokens
+	u.InputDetails.CacheWriteTokens += other.InputDetails.CacheWriteTokens
+}
+
 type responsePayload struct {
 	ID          string        `json:"id"`
 	Model       string        `json:"model"`
