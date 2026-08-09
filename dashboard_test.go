@@ -32,6 +32,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		t.Fatalf("status = %s, CSP = %q", response.Status, response.Header.Get("Content-Security-Policy"))
 	}
 	for _, expected := range []string{
+		`src="/dashboard/assets/dashboard.js"`,
 		`src="/dashboard/assets/htmx-2.0.10.min.js"`,
 		`src="/dashboard/assets/ws-2.0.4.min.js"`,
 		`hx-ext="ws"`,
@@ -50,11 +51,15 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
 
-	for _, path := range []string{
-		"/dashboard/assets/htmx-2.0.10.min.js",
-		"/dashboard/assets/ws-2.0.4.min.js",
+	for _, asset := range []struct {
+		path string
+		min  int
+	}{
+		{"/dashboard/assets/dashboard.js", 500},
+		{"/dashboard/assets/htmx-2.0.10.min.js", 1_000},
+		{"/dashboard/assets/ws-2.0.4.min.js", 1_000},
 	} {
-		response, err := http.Get(httpServer.URL + path)
+		response, err := http.Get(httpServer.URL + asset.path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,11 +68,11 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
-		if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/javascript") || len(payload) < 1_000 {
-			t.Fatalf("%s returned status %s, content type %q, length %d", path, response.Status, response.Header.Get("Content-Type"), len(payload))
+		if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/javascript") || len(payload) < asset.min {
+			t.Fatalf("%s returned status %s, content type %q, length %d", asset.path, response.Status, response.Header.Get("Content-Type"), len(payload))
 		}
 		if response.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" {
-			t.Fatalf("%s cache control = %q", path, response.Header.Get("Cache-Control"))
+			t.Fatalf("%s cache control = %q", asset.path, response.Header.Get("Cache-Control"))
 		}
 	}
 }
@@ -156,14 +161,14 @@ func TestDashboardBankedResetHoverShowsSafeCreditDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{`class="banked-info"`, `Full &lt;reset&gt;`, `Weekly &amp; five-hour windows`} {
+	for _, expected := range []string{`class="banked-info"`, `data-info="2 reset credits available`, `Full &lt;reset&gt;`, `Weekly &amp; five-hour windows`, `aria-describedby="banked-tooltip"`, `tabindex="0"`} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q:\n%s", expected, body)
 		}
 	}
-	for _, private := range []string{"private-credit-id", "redeemed-credit-id"} {
-		if strings.Contains(body, private) {
-			t.Fatalf("dashboard exposed %q", private)
+	for _, absent := range []string{"private-credit-id", "redeemed-credit-id", `title="2 reset credits available`} {
+		if strings.Contains(body, absent) {
+			t.Fatalf("dashboard exposed %q", absent)
 		}
 	}
 }

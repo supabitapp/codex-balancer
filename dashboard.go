@@ -20,7 +20,7 @@ const (
 	dashboardMaxConnections = 32
 )
 
-//go:embed web/dashboard.html web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
+//go:embed web/dashboard.html web/dashboard.js web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
 var dashboardFiles embed.FS
 
 var dashboardTemplate = template.Must(template.ParseFS(dashboardFiles, "web/dashboard.html"))

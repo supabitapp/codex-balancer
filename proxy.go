@@ -86,6 +86,7 @@ func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /accounts", s.accountsPage)
 	mux.HandleFunc("GET /dashboard", s.dashboardPage)
+	mux.HandleFunc("GET /dashboard/assets/dashboard.js", dashboardScript("web/dashboard.js"))
 	mux.HandleFunc("GET /dashboard/assets/htmx-2.0.10.min.js", dashboardScript("web/htmx-2.0.10.min.js"))
 	mux.HandleFunc("GET /dashboard/assets/ws-2.0.4.min.js", dashboardScript("web/ws-2.0.4.min.js"))
 	mux.HandleFunc("GET /dashboard/ws", s.dashboardWebSocket)
