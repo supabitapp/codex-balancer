@@ -104,6 +104,56 @@ func TestHTTPSoftSessionRetriesServerFailureOnAnotherAccount(t *testing.T) {
 	}
 }
 
+func TestHTTPUnsupportedModelRetriesAnotherAccount(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		account := r.Header.Get("chatgpt-account-id")
+		calls = append(calls, account)
+		if account == "account-a" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"The 'gpt-route' model is not supported when using Codex with a ChatGPT account."}}`)
+			return
+		}
+		writeResponseCreated(w, "resp_b")
+	})
+	defer closeServer()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-route","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-a account-b]" {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestHTTPUnsupportedModelPreservesRejectionWithoutReplacement(t *testing.T) {
+	a := testAccount("account-a", 0)
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a}, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"The 'gpt-route' model is not supported when using Codex with a ChatGPT account."}}`)
+	})
+	defer closeServer()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "session", "", `{"model":"gpt-route","input":[]}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "The 'gpt-route' model is not supported") {
+		t.Fatalf("body = %s", response.Body.String())
+	}
+}
+
 func TestHTTPHardPreviousResponseNeverMoves(t *testing.T) {
 	a := testAccount("account-a", 99)
 	b := testAccount("account-b", 0)
@@ -196,7 +246,7 @@ func TestHTTPUnknownHardAffinityDoesNotFailOverAfterNetworkFailure(t *testing.T)
 	}
 }
 
-func TestHTTPPreviousResponseOverridesSoftSession(t *testing.T) {
+func TestHTTPPreviousResponseOverridesSoftSessionWithoutRebinding(t *testing.T) {
 	a := testAccount("account-a", 90)
 	b := testAccount("account-b", 0)
 	calls := []string{}
@@ -219,8 +269,118 @@ func TestHTTPPreviousResponseOverridesSoftSession(t *testing.T) {
 	if fmt.Sprint(calls) != "[account-a]" {
 		t.Fatalf("calls = %v", calls)
 	}
-	if got := store.lookup(affinityRef{kind: affinitySession, value: "session"}); got != "account-a" {
-		t.Fatalf("session owner = %q, want account-a", got)
+	if got := store.lookup(affinityRef{kind: affinitySession, value: "session"}); got != "account-b" {
+		t.Fatalf("session owner = %q, want account-b", got)
+	}
+}
+
+func TestHTTPPreviousResponseOverridesPromptCacheWithoutRebinding(t *testing.T) {
+	a := testAccount("account-a", 90)
+	b := testAccount("account-b", 0)
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp_next")
+	})
+	defer closeServer()
+	cache := affinityRef{kind: affinityPromptCache, value: "cache"}
+	if err := store.bind(cache, "account-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.bind(affinityRef{kind: affinityResponse, value: "resp_a"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "", "", `{"prompt_cache_key":"cache","previous_response_id":"resp_a","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-a]" {
+		t.Fatalf("calls = %v", calls)
+	}
+	if got := store.lookup(cache); got != "account-b" {
+		t.Fatalf("cache owner = %q, want account-b", got)
+	}
+}
+
+func TestHTTPOpaqueFileCanFailOver(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		account := r.Header.Get("chatgpt-account-id")
+		calls = append(calls, account)
+		if account == "account-a" {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		writeResponseCreated(w, "resp_b")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "session", "", `{"input":[{"type":"input_file","file_id":"file_unknown"}]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-a account-b]" {
+		t.Fatalf("calls = %v", calls)
+	}
+	if got := store.lookup(affinityRef{kind: affinityFile, value: "file_unknown"}); got != "" {
+		t.Fatalf("file owner = %q, want empty", got)
+	}
+	if got := store.lookup(affinityRef{kind: affinitySession, value: "session"}); got != "account-b" {
+		t.Fatalf("session owner = %q, want account-b", got)
+	}
+}
+
+func TestHTTPKnownFileOverridesSoftSessionWithoutRebinding(t *testing.T) {
+	a := testAccount("account-a", 90)
+	b := testAccount("account-b", 0)
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp_next")
+	})
+	defer closeServer()
+	session := affinityRef{kind: affinitySession, value: "session"}
+	file := affinityRef{kind: affinityFile, value: "file_owned"}
+	if err := store.bind(session, "account-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.bind(file, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "session", "", `{"input":[{"type":"input_file","file_id":"file_owned"}]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-a]" {
+		t.Fatalf("calls = %v", calls)
+	}
+	if got := store.lookup(session); got != "account-b" {
+		t.Fatalf("session owner = %q, want account-b", got)
+	}
+}
+
+func TestHTTPPartialFileOwnershipFailsBeforeUpstream(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 0)
+	calls := 0
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {
+		calls++
+	})
+	defer closeServer()
+	if err := store.bind(affinityRef{kind: affinityFile, value: "file_known"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "", "", `{"input":[{"type":"input_file","file_id":"file_known"},{"type":"input_file","file_id":"file_unknown"}]}`)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if calls != 0 {
+		t.Fatalf("upstream calls = %d, want 0", calls)
 	}
 }
 
@@ -366,6 +526,43 @@ func TestHTTPChunkedResponseRegistersHardOwner(t *testing.T) {
 	}
 	if got := store.lookup(affinityRef{kind: affinityResponse, value: "resp_a"}); got != "account-b" {
 		t.Fatalf("response owner = %q, want account-b", got)
+	}
+}
+
+func TestHTTPCarriageReturnStreamRegistersHardOwner(t *testing.T) {
+	a := testAccount("account-a", 0)
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a}, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_cr\"}}\r\r")
+		io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_cr\"}}\r\r")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "session", "", `{"input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := store.lookup(affinityRef{kind: affinityResponse, value: "resp_cr"}); got != "account-a" {
+		t.Fatalf("response owner = %q, want account-a", got)
+	}
+}
+
+func TestHTTPMultilineStreamRegistersHardOwner(t *testing.T) {
+	a := testAccount("account-a", 0)
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a}, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"type\":\"response.created\",\r")
+		w.(http.Flusher).Flush()
+		io.WriteString(w, "\ndata: \"response\":{\"id\":\"resp_multiline\"}}\r\n\r\n")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "session", "", `{"input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if got := store.lookup(affinityRef{kind: affinityResponse, value: "resp_multiline"}); got != "account-a" {
+		t.Fatalf("response owner = %q, want account-a", got)
 	}
 }
 

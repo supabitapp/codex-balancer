@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -58,6 +59,10 @@ func TestAffinityFromRequest(t *testing.T) {
 			body:               `{"conversation":"conv_a","input":[]}`,
 			hard:               []affinityRef{{kind: affinityConversation, value: "conv_a"}},
 			requireUnambiguous: true,
+		},
+		{
+			name: "blank conversation has no affinity",
+			body: `{"conversation":"  ","input":[]}`,
 		},
 		{
 			name: "nested files are hard owner evidence",
@@ -260,6 +265,78 @@ func TestAffinityStoreSweepPersistsSoftExpiry(t *testing.T) {
 	}
 }
 
+func TestLimitHardAffinityStateDropsOldestRecords(t *testing.T) {
+	state := affinityState{
+		Hard: map[string]string{
+			"response\nfirst":  "account-a",
+			"response\nsecond": "account-a",
+			"response\nthird":  "account-b",
+		},
+		HardOrder: []string{"response\nfirst", "response\nsecond", "response\nthird"},
+	}
+	limitHardAffinityState(&state, 2)
+	if state.Hard["response\nfirst"] != "" {
+		t.Fatal("oldest hard record remained")
+	}
+	if got := state.HardOrder; !slices.Equal(got, []string{"response\nsecond", "response\nthird"}) {
+		t.Fatalf("hard order = %v", got)
+	}
+}
+
+func TestLimitHardAffinityStateRepairsPersistedOrder(t *testing.T) {
+	state := affinityState{
+		Hard: map[string]string{
+			"response\na": "account-a",
+			"response\nb": "account-b",
+		},
+		HardOrder: []string{"missing", "response\nb", "response\nb"},
+	}
+	limitHardAffinityState(&state, 2)
+	if got := state.HardOrder; !slices.Equal(got, []string{"response\na", "response\nb"}) {
+		t.Fatalf("hard order = %v", got)
+	}
+}
+
+func TestLimitHardAffinityStateKeepsEachKindIndependent(t *testing.T) {
+	state := affinityState{
+		Hard: map[string]string{
+			"file\nfile-a":       "account-a",
+			"response\nfirst":    "account-a",
+			"response\nsecond":   "account-a",
+			"response\nthird":    "account-b",
+			"turn_state\nturn-a": "account-a",
+		},
+		HardOrder: []string{"file\nfile-a", "response\nfirst", "response\nsecond", "response\nthird", "turn_state\nturn-a"},
+	}
+	limitHardAffinityState(&state, 2)
+	if state.Hard["file\nfile-a"] == "" || state.Hard["turn_state\nturn-a"] == "" {
+		t.Fatal("one affinity kind evicted another")
+	}
+	if state.Hard["response\nfirst"] != "" {
+		t.Fatal("oldest response remained")
+	}
+}
+
+func TestEvictedResponseAffinityFailsClosed(t *testing.T) {
+	state := affinityState{
+		Soft: map[string]softAffinityBinding{},
+		Hard: map[string]string{
+			"response\nold": "account-a",
+			"response\nnew": "account-b",
+		},
+		HardOrder: []string{"response\nold", "response\nnew"},
+	}
+	limitHardAffinityState(&state, 1)
+	store := &AffinityStore{state: state, now: time.Now}
+	pool := &Pool{accounts: []*Account{testAccount("account-a", 10), testAccount("account-b", 20)}}
+	_, err := store.resolve(requestAffinity{
+		hard: []affinityRef{{kind: affinityResponse, value: "old"}},
+	}, pool)
+	if !errors.Is(err, errAffinityOwnerUnavailable) {
+		t.Fatalf("error = %v, want owner unavailable", err)
+	}
+}
+
 func TestResolveAffinity(t *testing.T) {
 	store, err := newAffinityStore(filepath.Join(t.TempDir(), "affinity.json"))
 	if err != nil {
@@ -306,8 +383,22 @@ func TestResolveAffinity(t *testing.T) {
 
 	t.Run("unknown files remain opaque", func(t *testing.T) {
 		got, err := store.resolve(requestAffinity{hard: []affinityRef{{kind: affinityFile, value: "missing"}}}, pool)
-		if err != nil || got.required != "" {
+		if err != nil || got.required != "" || got.hard || len(got.bindings) != 0 {
 			t.Fatalf("resolution = %+v, error = %v", got, err)
+		}
+	})
+
+	t.Run("hard owner does not rewrite soft affinity", func(t *testing.T) {
+		file := affinityRef{kind: affinityFile, value: "owned-file"}
+		if err := store.bind(file, "account-b"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.resolve(requestAffinity{preferred: session, hard: []affinityRef{file}}, pool)
+		if err != nil || got.required != "account-b" || !got.hard {
+			t.Fatalf("resolution = %+v, error = %v", got, err)
+		}
+		if !sameAffinityRefs(got.bindings, []affinityRef{file}) {
+			t.Fatalf("bindings = %#v, want only file owner", got.bindings)
 		}
 	})
 
@@ -346,6 +437,20 @@ func TestResolveAffinity(t *testing.T) {
 		}, pool)
 		if !errors.Is(err, errAffinityAmbiguous) {
 			t.Fatalf("error = %v, want ambiguous owner", err)
+		}
+	})
+
+	t.Run("hard turn owner proves conversation ownership", func(t *testing.T) {
+		conversation := affinityRef{kind: affinityConversation, value: "turn-conversation"}
+		got, err := store.resolve(requestAffinity{
+			hard:               []affinityRef{turn, conversation},
+			requireUnambiguous: true,
+		}, pool)
+		if err != nil || got.required != "account-a" || !got.hard {
+			t.Fatalf("resolution = %+v, error = %v", got, err)
+		}
+		if !sameAffinityRefs(got.bindings, []affinityRef{turn, conversation}) {
+			t.Fatalf("bindings = %#v", got.bindings)
 		}
 	})
 

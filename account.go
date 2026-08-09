@@ -245,7 +245,7 @@ var permanentRefreshFailures = []string{
 	"invalid_grant",
 }
 
-func (a *Account) refresh(ctx context.Context, hc *http.Client) error {
+func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(accountState) (accountState, error)) error {
 	a.mu.Lock()
 	if wait := a.inflight; wait != nil {
 		a.mu.Unlock()
@@ -265,13 +265,28 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client) error {
 	}
 	done := make(chan struct{})
 	a.inflight = done
+	state := a.accountState
 	token := a.RefreshToken
 	a.mu.Unlock()
 
 	tokens, permanent, err := exchangeRefreshToken(ctx, hc, token)
+	next := state
+	if err == nil {
+		next.AccessToken = tokens.AccessToken
+		if tokens.RefreshToken != "" {
+			next.RefreshToken = tokens.RefreshToken
+		}
+		if tokens.IDToken != "" {
+			next.IDToken = tokens.IDToken
+		}
+		next.LastRefresh = time.Now()
+		if persist != nil {
+			next, err = persist(next)
+		}
+	}
 
 	a.mu.Lock()
-	superseded := a.RefreshToken != token
+	superseded := a.RefreshToken != token && a.RefreshToken != next.RefreshToken
 	if superseded {
 		err = nil
 		permanent = false
@@ -283,14 +298,7 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client) error {
 		case err != nil && permanent:
 			a.dead = err.Error()
 		case err == nil:
-			a.AccessToken = tokens.AccessToken
-			if tokens.RefreshToken != "" {
-				a.RefreshToken = tokens.RefreshToken
-			}
-			if tokens.IDToken != "" {
-				a.IDToken = tokens.IDToken
-			}
-			a.LastRefresh = time.Now()
+			a.accountState = next
 		}
 	}
 	a.mu.Unlock()

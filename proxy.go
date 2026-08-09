@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -17,10 +19,12 @@ import (
 )
 
 const (
-	maxRequestBody = 64 << 20
-	maxAttempts    = 3
-	refreshTimeout = 30 * time.Second
-	upstreamWait   = 90 * time.Second
+	maxRequestBody       = 64 << 20
+	maxResponseEventLine = 1 << 20
+	maxUpstreamErrorBody = 64 << 10
+	maxAttempts          = 3
+	refreshTimeout       = 30 * time.Second
+	upstreamWait         = 90 * time.Second
 )
 
 var requestBodyDecoder = newRequestBodyDecoder()
@@ -54,6 +58,7 @@ type server struct {
 	key                  string
 	client               *http.Client
 	log                  *slog.Logger
+	admission            *admissionGate
 	dashboardConnections atomic.Int64
 }
 
@@ -91,8 +96,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /dashboard/assets/ws-2.0.4.min.js", dashboardScript("web/ws-2.0.4.min.js"))
 	mux.HandleFunc("GET /dashboard/ws", s.dashboardWebSocket)
 	mux.HandleFunc("GET /stats", s.statsJSON)
-	mux.HandleFunc("POST /v1/responses", s.responses)
-	mux.HandleFunc("GET /v1/responses", s.responsesWebSocket)
+	mux.Handle("POST /v1/responses", s.admitted(s.responses))
+	mux.Handle("GET /v1/responses", s.admitted(s.responsesWebSocket))
 	mux.HandleFunc("GET /v1/models", s.models)
 	return mux
 }
@@ -109,7 +114,12 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBody))
 	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		} else {
+			writeError(w, http.StatusBadRequest, "could not read request body")
+		}
 		return
 	}
 	inspectionBody, err := decodeRequestBody(r.Header, body)
@@ -187,8 +197,9 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		unsupportedModel := resp.StatusCode == http.StatusBadRequest && responseAccountModelUnsupported(resp, request.Model)
 		if status := resp.StatusCode; status == http.StatusTooManyRequests ||
-			status == http.StatusUnauthorized || status >= 500 {
+			status == http.StatusUnauthorized || status >= 500 || unsupportedModel {
 			if status == http.StatusTooManyRequests {
 				account.observe(resp.Header)
 				account.rateLimited(resp.Header, attempt)
@@ -196,12 +207,20 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 				attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1}
 				attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 				s.log.Info("account rate limited", attrs...)
-			} else {
+			} else if !unsupportedModel {
 				s.log.Warn("upstream refused the turn", "transport", transportHTTP, "thread", key, "account", id, "attempt", attempt+1, "status", status)
 				account.failed(attempt)
 			}
-			if resolution.hard {
-				s.log.Info("hard affinity stays on its account", "transport", transportHTTP, "thread", key, "account", id, "status", status)
+			noReplacement := false
+			if unsupportedModel && !resolution.hard {
+				replacementSkip := maps.Clone(skip)
+				replacementSkip[id] = true
+				noReplacement = s.pool.pick("", "", replacementSkip) == nil
+			}
+			if resolution.hard || noReplacement {
+				if resolution.hard {
+					s.log.Info("hard affinity stays on its account", "transport", transportHTTP, "thread", key, "account", id, "status", status)
+				}
 				copyHeaders(w.Header(), resp.Header)
 				w.WriteHeader(status)
 				io.Copy(w, resp.Body)
@@ -212,6 +231,22 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			s.stats.failedOver(id, resp.Status)
 			skip[id] = true
 			continue
+		}
+		if resp.StatusCode/100 == 2 {
+			primed, err := primeResponseBody(resp.Body)
+			if err != nil {
+				resp.Body.Close()
+				account.failed(attempt)
+				s.log.Warn("upstream response ended before its body", "transport", transportHTTP, "thread", key, "account", id, "attempt", attempt+1, "error", err)
+				if resolution.hard {
+					writeError(w, http.StatusBadGateway, "upstream response ended before its body")
+					return
+				}
+				s.stats.failedOver(id, "empty response")
+				skip[id] = true
+				continue
+			}
+			resp.Body = primed
 		}
 
 		account.observe(resp.Header)
@@ -255,16 +290,42 @@ func responseRequest(body []byte) responseRequestData {
 	return request
 }
 
+func responseAccountModelUnsupported(resp *http.Response, model string) bool {
+	original := resp.Body
+	prefix, _ := io.ReadAll(io.LimitReader(original, maxUpstreamErrorBody))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.MultiReader(bytes.NewReader(prefix), original),
+		Closer: original,
+	}
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(prefix, &envelope) != nil {
+		return false
+	}
+	return accountModelUnsupported(envelope.Error.Message, model)
+}
+
+func accountModelUnsupported(message, model string) bool {
+	if model == "" {
+		return false
+	}
+	want := fmt.Sprintf("The '%s' model is not supported when using Codex with a ChatGPT account.", model)
+	return strings.TrimSpace(message) == want
+}
+
 func (s *server) refreshed(account *Account, id string) bool {
 	s.log.Debug("refreshing account", "account", id)
 	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
 	defer cancel()
-	if err := account.refresh(ctx, s.client); err != nil {
+	if err := account.refresh(ctx, s.client, s.pool.persistTokens); err != nil {
 		s.log.Warn("refresh failed", "account", id, "error", err)
 		return false
-	}
-	if err := s.pool.persistTokens(account); err != nil {
-		s.log.Warn("could not persist refreshed tokens", "account", id, "error", err)
 	}
 	s.log.Debug("account refreshed", "account", id)
 	return true
@@ -300,12 +361,52 @@ func (s *server) forward(r *http.Request, body []byte, account *Account) (*http.
 		return nil, err
 	}
 	copyHeaders(req.Header, r.Header)
+	req.Header.Del("Accept-Encoding")
 	account.mu.Lock()
 	token := account.AccessToken
 	account.mu.Unlock()
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("chatgpt-account-id", account.id())
 	return s.client.Do(req)
+}
+
+type prefixedResponseBody struct {
+	prefix  *bytes.Reader
+	body    io.ReadCloser
+	pending error
+}
+
+func primeResponseBody(body io.ReadCloser) (io.ReadCloser, error) {
+	buffer := make([]byte, 32<<10)
+	for {
+		n, err := body.Read(buffer)
+		if n > 0 {
+			return &prefixedResponseBody{
+				prefix:  bytes.NewReader(buffer[:n]),
+				body:    body,
+				pending: err,
+			}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (b *prefixedResponseBody) Read(p []byte) (int, error) {
+	if b.prefix.Len() > 0 {
+		return b.prefix.Read(p)
+	}
+	if b.pending != nil {
+		err := b.pending
+		b.pending = nil
+		return 0, err
+	}
+	return b.body.Read(p)
+}
+
+func (b *prefixedResponseBody) Close() error {
+	return b.body.Close()
 }
 
 func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, account string, request responseRequestData) {
@@ -354,30 +455,121 @@ type responseOwnerInspector struct {
 	model         string
 	serviceTier   string
 	buffer        []byte
+	event         []byte
+	afterCR       bool
+	discardLine   bool
+	discardEvent  bool
 	usageRecorded bool
 	log           *slog.Logger
 }
 
 func (i *responseOwnerInspector) write(data []byte) {
-	i.buffer = append(i.buffer, data...)
-	for {
-		index := bytes.IndexByte(i.buffer, '\n')
+	if i.afterCR {
+		if len(data) > 0 && data[0] == '\n' {
+			data = data[1:]
+		}
+		i.afterCR = false
+	}
+	if i.discardLine {
+		index := bytes.IndexAny(data, "\r\n")
 		if index < 0 {
 			return
 		}
-		i.inspect(i.buffer[:index])
-		i.buffer = i.buffer[index+1:]
+		advance := index + 1
+		if data[index] == '\r' {
+			if advance < len(data) && data[advance] == '\n' {
+				advance++
+			} else if advance == len(data) {
+				i.afterCR = true
+			}
+		}
+		i.discardLine = false
+		data = data[advance:]
+	}
+	i.buffer = append(i.buffer, data...)
+	for {
+		index := bytes.IndexAny(i.buffer, "\r\n")
+		if index < 0 {
+			if len(i.buffer) > maxResponseEventLine {
+				i.buffer = nil
+				i.discardLine = true
+			}
+			return
+		}
+		line := i.buffer[:index]
+		ending := i.buffer[index]
+		advance := index + 1
+		if ending == '\r' {
+			if advance < len(i.buffer) && i.buffer[advance] == '\n' {
+				advance++
+			} else if advance == len(i.buffer) {
+				i.afterCR = true
+			}
+		}
+		i.buffer = i.buffer[advance:]
+		if len(line) > maxResponseEventLine {
+			i.event = nil
+			i.discardEvent = true
+		} else {
+			i.line(line)
+		}
 	}
 }
 
 func (i *responseOwnerInspector) finish() {
-	i.inspect(i.buffer)
+	if len(i.buffer) > 0 {
+		i.line(i.buffer)
+	}
+	i.dispatch()
 	i.buffer = nil
+	i.discardLine = false
+	i.discardEvent = false
+}
+
+func (i *responseOwnerInspector) line(line []byte) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		if i.discardEvent {
+			i.event = nil
+			i.discardEvent = false
+		} else {
+			i.dispatch()
+		}
+		return
+	}
+	if i.discardEvent {
+		return
+	}
+	if bytes.HasPrefix(line, []byte("data:")) {
+		data := bytes.TrimPrefix(line, []byte("data:"))
+		if len(data) > 0 && data[0] == ' ' {
+			data = data[1:]
+		}
+		separator := 0
+		if len(i.event) > 0 {
+			separator = 1
+		}
+		if len(i.event)+separator+len(data) > maxResponseEventLine {
+			i.event = nil
+			i.discardEvent = true
+			return
+		}
+		if separator > 0 {
+			i.event = append(i.event, '\n')
+		}
+		i.event = append(i.event, data...)
+		return
+	}
+	i.inspect(line)
+}
+
+func (i *responseOwnerInspector) dispatch() {
+	i.inspect(i.event)
+	i.event = nil
 }
 
 func (i *responseOwnerInspector) inspect(line []byte) {
 	line = bytes.TrimSpace(line)
-	line = bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
 	if len(line) == 0 || bytes.Equal(line, []byte("[DONE]")) {
 		return
 	}

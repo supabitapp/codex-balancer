@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -79,17 +80,20 @@ func serverCmd(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load affinity bindings: %w", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	srv := &server{
-		ctx:      ctx,
-		pool:     pool,
-		affinity: affinity,
-		stats:    stats,
-		upstream: *upstream,
-		key:      *key,
-		client:   newProxyClient(),
-		log:      log,
+		ctx:       ctx,
+		pool:      pool,
+		affinity:  affinity,
+		stats:     stats,
+		upstream:  *upstream,
+		key:       *key,
+		client:    newProxyClient(),
+		log:       log,
+		admission: newAdmissionGate(maxActiveProxyRequests),
 	}
 	if err := pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)
@@ -106,6 +110,20 @@ func serverCmd(args []string) error {
 		Handler:           srv.routes(),
 		ReadHeaderTimeout: 30 * time.Second,
 	}
+	shutdownDone := make(chan struct{})
+	var shutdownOnce sync.Once
+	startShutdown := func() {
+		shutdownOnce.Do(func() {
+			go func() {
+				drainServer(httpServer, srv.admission, cancel)
+				close(shutdownDone)
+			}()
+		})
+	}
+	go func() {
+		<-signalCtx.Done()
+		startShutdown()
+	}()
 
 	srv.pollAllUsage(ctx)
 	if ctx.Err() != nil {
@@ -114,13 +132,6 @@ func serverCmd(args []string) error {
 
 	go sweepAffinity(ctx, affinity, log)
 	go srv.watchUsage(ctx, *poll)
-
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		httpServer.Shutdown(shutdown)
-	}()
 
 	listener, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -139,15 +150,30 @@ func serverCmd(args []string) error {
 
 	if !*plain {
 		board := dashboard{pool: pool, stats: stats, addr: listener.Addr().String()}
-		if _, err := tea.NewProgram(board, tea.WithContext(ctx)).Run(); err != nil &&
+		if _, err := tea.NewProgram(board, tea.WithContext(signalCtx)).Run(); err != nil &&
 			!errors.Is(err, context.Canceled) {
 			return err
 		}
-		httpServer.Shutdown(context.Background())
-		return <-serving
+		startShutdown()
+		err := <-serving
+		<-shutdownDone
+		return err
 	}
 
-	return <-serving
+	err = <-serving
+	if signalCtx.Err() != nil {
+		<-shutdownDone
+	}
+	return err
+}
+
+func drainServer(httpServer *http.Server, admission *admissionGate, cancel context.CancelFunc) {
+	shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	admission.beginDrain()
+	httpServer.Shutdown(shutdown)
+	admission.wait(shutdown)
+	cancel()
 }
 
 func sweepAffinity(ctx context.Context, s *AffinityStore, log *slog.Logger) {

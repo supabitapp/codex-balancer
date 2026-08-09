@@ -39,13 +39,17 @@ type websocketTurn struct {
 	serviceTier string
 	counted     bool
 	created     bool
+	visible     bool
 	resolution  affinityResolution
 	thread      string
 	excluded    map[string]bool
+	reauthed    map[string]bool
 }
 
 type websocketEnvelope struct {
 	Type        string                     `json:"type"`
+	ID          string                     `json:"id"`
+	ResponseID  string                     `json:"response_id"`
 	Generate    *bool                      `json:"generate"`
 	Model       string                     `json:"model"`
 	Status      int                        `json:"status"`
@@ -53,12 +57,14 @@ type websocketEnvelope struct {
 	ServiceTier string                     `json:"service_tier"`
 	Headers     map[string]json.RawMessage `json:"headers"`
 	Error       struct {
-		Code string `json:"code"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
 	} `json:"error"`
 	Response struct {
 		responsePayload
 		Error struct {
-			Code string `json:"code"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
 		} `json:"error"`
 	} `json:"response"`
 }
@@ -263,6 +269,8 @@ func responsesWebSocketURL(upstream string) (string, error) {
 func responsesWebSocketHeaders(inbound http.Header, account *Account) http.Header {
 	headers := http.Header{}
 	copyWebSocketHeaders(headers, inbound)
+	headers.Del("Accept")
+	headers.Del("Content-Type")
 	account.mu.Lock()
 	token := account.AccessToken
 	account.mu.Unlock()
@@ -327,9 +335,8 @@ func (s *server) relayResponsesWebSocket(
 		readWebSocketMessages(ctx, current.conn, false, generation, messages)
 		s.websocketOpened(thread, current.account)
 	}
-	replayTurn := func(turn *websocketTurn, reason string) bool {
-		turn.excluded[current.account.id()] = true
-		next, failed, err := s.dialResponsesWebSocket(r, turn.thread, turn.resolution, turn.excluded)
+	redialTurn := func(turn *websocketTurn, resolution affinityResolution, skip map[string]bool, reason string) bool {
+		next, failed, err := s.dialResponsesWebSocket(r, turn.thread, resolution, skip)
 		if err != nil || failed != nil {
 			if failed != nil && failed.Body != nil {
 				failed.Body.Close()
@@ -338,12 +345,18 @@ func (s *server) relayResponsesWebSocket(
 		}
 		previousAccount := current.account.id()
 		switchDial(next)
-		s.stats.failedOver(previousAccount, reason)
+		if reason != "" {
+			s.stats.failedOver(previousAccount, reason)
+		}
 		if current.conn.Write(ctx, turn.kind, turn.data) != nil {
 			return false
 		}
 		turn.sent = time.Now()
 		return true
+	}
+	replayTurn := func(turn *websocketTurn, reason string) bool {
+		turn.excluded[current.account.id()] = true
+		return redialTurn(turn, turn.resolution, turn.excluded, reason)
 	}
 	for {
 		var message websocketMessage
@@ -427,6 +440,7 @@ func (s *server) relayResponsesWebSocket(
 				resolution:  resolution,
 				thread:      turnThread,
 				excluded:    map[string]bool{},
+				reauthed:    map[string]bool{},
 			})
 			continue
 		}
@@ -435,7 +449,7 @@ func (s *server) relayResponsesWebSocket(
 			continue
 		}
 		if message.err != nil {
-			if len(turns) == 1 && !turns[0].created && !turns[0].resolution.hard {
+			if len(turns) == 1 && !turns[0].created && !turns[0].visible && !turns[0].resolution.hard {
 				current.account.failed(0)
 				if replayTurn(&turns[0], "disconnected") {
 					continue
@@ -453,9 +467,37 @@ func (s *server) relayResponsesWebSocket(
 			if len(headers) > 0 {
 				current.account.observe(headers)
 			}
+			if len(turns) > 0 && websocketResponseVisible(event) {
+				turns[0].visible = true
+			}
+			previsible := len(turns) == 1 && !turns[0].created && !turns[0].visible
+			identitySafe := websocketReplaySafe(event)
+			if websocketStatus(event) == http.StatusUnauthorized {
+				if previsible && identitySafe {
+					turn := &turns[0]
+					id := current.account.id()
+					if !turn.reauthed[id] {
+						turn.reauthed[id] = true
+						if s.refreshed(current.account, id) {
+							resolution := turn.resolution
+							resolution.required = id
+							if redialTurn(turn, resolution, nil, "") {
+								continue
+							}
+						}
+					}
+					current.account.failed(0)
+					if !turn.resolution.hard && replayTurn(turn, "unauthorized") {
+						continue
+					}
+				} else {
+					current.account.failed(0)
+				}
+			}
 			retryable := false
 			retryReason := ""
-			if websocketRateLimited(event) {
+			rateLimited := websocketRateLimited(event)
+			if rateLimited {
 				current.account.rateLimited(headers, 0)
 				s.stats.rateLimited(current.account.id())
 				attrs := []any{"transport", transportWebSocket, "thread", thread, "status", websocketStatus(event), "code", websocketErrorCode(event)}
@@ -467,8 +509,11 @@ func (s *server) relayResponsesWebSocket(
 				current.account.failed(0)
 				retryable = true
 				retryReason = "server failure"
+			} else if len(turns) == 1 && websocketAccountModelUnsupported(event, turns[0].model) {
+				retryable = true
+				retryReason = "model unsupported"
 			}
-			if retryable && len(turns) == 1 && !turns[0].created && !turns[0].resolution.hard {
+			if retryable && previsible && !turns[0].resolution.hard && (identitySafe || rateLimited) {
 				if replayTurn(&turns[0], retryReason) {
 					continue
 				}
@@ -586,8 +631,28 @@ func websocketErrorCode(event websocketEnvelope) string {
 	return event.Response.Error.Code
 }
 
+func websocketErrorMessage(event websocketEnvelope) string {
+	if event.Error.Message != "" {
+		return event.Error.Message
+	}
+	return event.Response.Error.Message
+}
+
+func websocketAccountModelUnsupported(event websocketEnvelope, model string) bool {
+	return accountModelUnsupported(websocketErrorMessage(event), model)
+}
+
 func websocketRateLimited(event websocketEnvelope) bool {
-	return websocketStatus(event) == http.StatusTooManyRequests || websocketErrorCode(event) == "rate_limit_exceeded"
+	code := websocketErrorCode(event)
+	return websocketStatus(event) == http.StatusTooManyRequests || code == "rate_limit_exceeded" || code == "usage_limit_reached"
+}
+
+func websocketReplaySafe(event websocketEnvelope) bool {
+	return event.ID == "" && event.ResponseID == "" && event.Response.ID == ""
+}
+
+func websocketResponseVisible(event websocketEnvelope) bool {
+	return strings.HasPrefix(event.Type, "response.") && event.Type != "response.failed" && event.Type != "response.incomplete"
 }
 
 func websocketEventHeaders(values map[string]json.RawMessage) http.Header {
