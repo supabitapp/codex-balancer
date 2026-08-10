@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync/atomic"
 )
 
 type affinityKind string
@@ -22,17 +21,9 @@ const (
 )
 
 var (
-	errAffinityConflict              = errors.New("affinity owners conflict")
-	errAffinityOwnerUnavailable      = errors.New("affinity owner unavailable")
-	errAffinityAmbiguous             = errors.New("affinity owner is ambiguous")
-	affinityOwnerUnavailableMessages = []string{
-		"heroin-grade token stash: dry",
-		"token dealer raided; going cold turkey",
-		"accounts fiending; quota rehab",
-		"quota cartel seized the stash",
-		"context jonesing; call token rehab",
-	}
-	affinityOwnerUnavailableMessageIndex atomic.Uint64
+	errAffinityConflict         = errors.New("affinity owners conflict")
+	errAffinityOwnerUnavailable = errors.New("affinity owner unavailable")
+	errAffinityAmbiguous        = errors.New("affinity owner is ambiguous")
 )
 
 type affinityRef struct {
@@ -274,15 +265,10 @@ func affinityErrorStatus(err error) (int, string) {
 	case errors.Is(err, errAffinityConflict):
 		return http.StatusBadGateway, "account-owned affinity sources conflict"
 	case errors.Is(err, errAffinityOwnerUnavailable):
-		return http.StatusServiceUnavailable, nextAffinityOwnerUnavailableMessage()
+		return http.StatusServiceUnavailable, "WE ARE OUT OF TOKENS 😭"
 	case errors.Is(err, errAffinityAmbiguous):
 		return http.StatusServiceUnavailable, "account-owned affinity is ambiguous"
 	default:
 		return http.StatusBadRequest, fmt.Sprintf("invalid affinity: %v", err)
 	}
-}
-
-func nextAffinityOwnerUnavailableMessage() string {
-	index := affinityOwnerUnavailableMessageIndex.Add(1) - 1
-	return affinityOwnerUnavailableMessages[index%uint64(len(affinityOwnerUnavailableMessages))]
 }

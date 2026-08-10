@@ -119,23 +119,6 @@ func TestAffinityFromRequestRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestAffinityOwnerUnavailableMessagesRotate(t *testing.T) {
-	previous := affinityOwnerUnavailableMessageIndex.Swap(0)
-	defer affinityOwnerUnavailableMessageIndex.Store(previous)
-
-	got := make([]string, 0, len(affinityOwnerUnavailableMessages)*2)
-	for range cap(got) {
-		status, message := affinityErrorStatus(errAffinityOwnerUnavailable)
-		if status != http.StatusServiceUnavailable {
-			t.Fatalf("status = %d, want %d", status, http.StatusServiceUnavailable)
-		}
-		got = append(got, message)
-	}
-	if !slices.Equal(got[:len(affinityOwnerUnavailableMessages)], got[len(affinityOwnerUnavailableMessages):]) {
-		t.Fatalf("messages did not rotate: %v", got)
-	}
-}
-
 func TestAffinityFromRequestReportsRotationEvidence(t *testing.T) {
 	affinity, err := affinityFromRequest(http.Header{"X-Codex-Turn-State": {"turn"}}, []byte(`{
 		"previous_response_id":"response",
