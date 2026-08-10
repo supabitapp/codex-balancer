@@ -236,26 +236,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 
 	threadViews := make([]dashboardThreadView, 0, len(snapshot.Threads))
 	for _, thread := range snapshot.Threads {
-		limits := s.catalog.contextLimits(thread.Account, thread.Model)
-		used := thread.LatestUsage.contextTokens()
-		threadViews = append(threadViews, dashboardThreadView{
-			KeyPrefix:     shortKey(thread.Key),
-			Info:          dashboardThreadInfo(thread.Metadata),
-			ClientID:      thread.ClientID,
-			Account:       names[thread.Account],
-			Model:         dashboardModel(thread.Model, thread.Effort),
-			Via:           strings.ToUpper(string(thread.Via)),
-			Fast:          isFastServiceTier(thread.ServiceTier),
-			UncachedInput: formatTokenCount(thread.Usage.nonCachedInput()),
-			CacheRate:     dashboardCacheRate(thread.Usage),
-			Output:        formatTokenCount(thread.Usage.OutputTokens),
-			ContextLeft:   dashboardContext(used, limits, thread.Compactions),
-			ContextInfo:   dashboardContextInfo(used, limits, thread.Compactions),
-			Latency:       formatLatency(thread.Latency),
-			LatencyInfo:   dashboardLatencyInfo(thread.TTFB, thread.Latency),
-			Requests:      dashboardNumber(thread.Turns),
-			Last:          agoAt(now, thread.Last),
-		})
+		threadViews = append(threadViews, newDashboardThreadView(thread, names[thread.Account], s.catalog.contextLimits(thread.Account, thread.Model), now))
 	}
 
 	events := make([]dashboardEventView, 0, len(snapshot.Events))
@@ -296,6 +277,28 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		},
 		Threads: threadViews,
 		Events:  events,
+	}
+}
+
+func newDashboardThreadView(thread ThreadSnapshot, account string, limits modelContextLimits, now time.Time) dashboardThreadView {
+	used := thread.LatestUsage.contextTokens()
+	return dashboardThreadView{
+		KeyPrefix:     shortKey(thread.Key),
+		Info:          dashboardThreadInfo(thread.Metadata),
+		ClientID:      thread.ClientID,
+		Account:       account,
+		Model:         dashboardModel(thread.Model, thread.Effort),
+		Via:           strings.ToUpper(string(thread.Via)),
+		Fast:          isFastServiceTier(thread.ServiceTier),
+		UncachedInput: formatTokenCount(thread.Usage.nonCachedInput()),
+		CacheRate:     dashboardCacheRate(thread.Usage),
+		Output:        formatTokenCount(thread.Usage.OutputTokens),
+		ContextLeft:   dashboardContext(used, limits, thread.Compactions),
+		ContextInfo:   dashboardContextInfo(used, limits, thread.Compactions),
+		Latency:       formatLatency(thread.Latency),
+		LatencyInfo:   dashboardLatencyInfo(thread.TTFB, thread.Latency),
+		Requests:      dashboardNumber(thread.Turns),
+		Last:          agoAt(now, thread.Last),
 	}
 }
 

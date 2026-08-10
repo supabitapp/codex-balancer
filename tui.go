@@ -39,13 +39,14 @@ var (
 )
 
 type dashboard struct {
-	pool   *Pool
-	stats  *Stats
-	addr   string
-	width  int
-	height int
-	cursor int
-	snap   Snapshot
+	pool    *Pool
+	catalog *modelCatalog
+	stats   *Stats
+	addr    string
+	width   int
+	height  int
+	cursor  int
+	snap    Snapshot
 }
 
 type tickMsg time.Time
@@ -418,26 +419,82 @@ func column(title string, rows []string, width, limit int) string {
 }
 
 func (d dashboard) threads(width, height int) string {
-	names := d.shortNames()
-	rows := []string{}
+	names := d.accountNames()
+	now := time.Now()
+	views := make([]dashboardThreadView, 0, len(d.snap.Threads))
 	for _, t := range d.snap.Threads {
-		tier := strings.Repeat(" ", 5)
-		if isFastServiceTier(t.ServiceTier) {
-			tier = sHot.Render("FAST ")
+		name := cmp.Or(names[t.Account], shortKey(t.Account))
+		views = append(views, newDashboardThreadView(t, name, d.catalog.contextLimits(t.Account, t.Model), now))
+	}
+	if len(views) == 0 {
+		return column("ROUTING  0", []string{sDim.Render("nothing routed yet")}, width, height)
+	}
+
+	accountWidth := len("Account")
+	modelWidth := len("Model")
+	for _, view := range views {
+		accountWidth = max(accountWidth, lipgloss.Width(view.Account))
+		modelWidth = max(modelWidth, lipgloss.Width(view.Model))
+	}
+	accountWidth = min(accountWidth, 30)
+	modelWidth = min(modelWidth, 28)
+
+	type routingColumn struct {
+		title string
+		width int
+		style lipgloss.Style
+		value func(dashboardThreadView) string
+	}
+	columns := []routingColumn{
+		{"Thread", 8, sText, func(view dashboardThreadView) string { return view.KeyPrefix }},
+		{"Client", 8, sDim, func(view dashboardThreadView) string { return view.ClientID }},
+		{"Account", accountWidth, sSpark, func(view dashboardThreadView) string { return view.Account }},
+		{"Model", modelWidth, sText, func(view dashboardThreadView) string { return view.Model }},
+		{"Via", 3, sGood, func(view dashboardThreadView) string { return view.Via }},
+		{"Fast", 4, sHot, func(view dashboardThreadView) string {
+			if view.Fast {
+				return "FAST"
+			}
+			return ""
+		}},
+		{"Uncached", 8, sNum, func(view dashboardThreadView) string { return view.UncachedInput }},
+		{"Cache%", 6, sDim, func(view dashboardThreadView) string { return view.CacheRate }},
+		{"Output", 7, sNum, func(view dashboardThreadView) string { return view.Output }},
+		{"Ctx/Cmp", 8, sDim, func(view dashboardThreadView) string { return view.ContextLeft }},
+		{"Latency", 7, sDim, func(view dashboardThreadView) string { return view.Latency }},
+		{"Reqs", 5, sNum, func(view dashboardThreadView) string { return view.Requests }},
+		{"Active", 8, sDim, func(view dashboardThreadView) string { return view.Last }},
+	}
+	tableWidth := func() int {
+		total := len(columns) - 1
+		for _, column := range columns {
+			total += column.width
 		}
-		rows = append(rows, fmt.Sprintf("%s %s %s %s %s %s %s",
-			sText.Render(pad(shortKey(t.Key), 9)),
-			sDim.Render("→"),
-			sSpark.Render(pad(names[t.Account], 14)),
-			sGood.Render(pad(strings.ToUpper(string(t.Via)), 4)),
-			tier,
-			sDim.Render(pad(plural(t.Turns, "turn"), 9)),
-			sDim.Render(ago(t.Last))))
+		return total
 	}
-	if len(rows) == 0 {
-		rows = []string{sDim.Render("nothing routed yet")}
+	overflow := max(tableWidth()-width, 0)
+	for _, item := range []struct {
+		index   int
+		minimum int
+	}{{2, 8}, {3, 12}} {
+		shrink := min(max(columns[item.index].width-item.minimum, 0), overflow)
+		columns[item.index].width -= shrink
+		overflow -= shrink
 	}
-	return column(fmt.Sprintf("ROUTING  %d", len(d.snap.Threads)), rows, width, height)
+
+	header := make([]string, 0, len(columns))
+	for _, column := range columns {
+		header = append(header, sSection.Render(fit(column.title, column.width)))
+	}
+	rows := []string{strings.Join(header, " "), sDim.Render(strings.Repeat("─", tableWidth()))}
+	for _, view := range views {
+		cells := make([]string, 0, len(columns))
+		for _, column := range columns {
+			cells = append(cells, column.style.Render(fit(column.value(view), column.width)))
+		}
+		rows = append(rows, strings.Join(cells, " "))
+	}
+	return column(fmt.Sprintf("ROUTING  %d", len(views)), rows, width, height)
 }
 
 func (d dashboard) events(width, height int) string {
@@ -507,10 +564,18 @@ func stat(name, value string) string {
 }
 
 func (d dashboard) shortNames() map[string]string {
+	out := d.accountNames()
+	for id, label := range out {
+		name, _, _ := strings.Cut(label, "@")
+		out[id] = name
+	}
+	return out
+}
+
+func (d dashboard) accountNames() map[string]string {
 	out := map[string]string{}
-	for _, a := range d.pool.all() {
-		name, _, _ := strings.Cut(label(a), "@")
-		out[a.id()] = name
+	for _, account := range d.pool.all() {
+		out[account.id()] = label(account)
 	}
 	return out
 }
