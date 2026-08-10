@@ -217,7 +217,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		account := s.pickAccount(key, resolution.required, resolution.preferred, request.Model, request.ServiceTier, skip, attempt, transportHTTP)
 		if account == nil {
-			writeError(w, http.StatusServiceUnavailable, "no account available")
+			writeError(w, http.StatusServiceUnavailable, noAccountAvailableMessage)
 			return
 		}
 		id := account.id()

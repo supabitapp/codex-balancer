@@ -131,7 +131,11 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 		dial, failed, err = s.dialResponsesWebSocket(r, thread, resolution, nil, "", "")
 	}
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		message := err.Error()
+		if errors.Is(err, errNoAccountAvailable) {
+			message = noAccountAvailableMessage
+		}
+		writeError(w, http.StatusServiceUnavailable, message)
 		return
 	}
 	if failed != nil {
@@ -222,7 +226,7 @@ func (s *server) dialResponsesWebSocket(
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		account := s.pickAccount(thread, resolution.required, resolution.preferred, model, serviceTier, skip, attempt, transportWebSocket)
 		if account == nil {
-			return nil, nil, errors.New("no account available")
+			return nil, nil, errNoAccountAvailable
 		}
 		id := account.id()
 
