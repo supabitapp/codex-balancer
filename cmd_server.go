@@ -199,21 +199,14 @@ func defaultLogPath() string {
 	return filepath.Join(homeDir(), ".codex-balancer", "server.log")
 }
 
-func newLogger(asJSON, stderr bool, path string) (*slog.Logger, *os.File, error) {
+func newLogger(asJSON, stderr bool, path string) (*slog.Logger, io.Closer, error) {
 	var writers []io.Writer
-	var file *os.File
+	var file io.WriteCloser
 	if path != "" {
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			return nil, nil, fmt.Errorf("create log directory: %w", err)
-		}
 		var err error
-		file, err = os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		file, err = openRotatingLog(path, logRetentionDays, time.Now)
 		if err != nil {
-			return nil, nil, fmt.Errorf("open log file: %w", err)
-		}
-		if err := file.Chmod(0o600); err != nil {
-			file.Close()
-			return nil, nil, fmt.Errorf("secure log file: %w", err)
+			return nil, nil, err
 		}
 		writers = append(writers, file)
 	}
