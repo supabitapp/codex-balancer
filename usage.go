@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const resetCreditLead = 5 * time.Minute
+const resetCreditLead = time.Hour
 
 var accountAPIBaseURL = "https://chatgpt.com/backend-api/wham"
 

@@ -16,8 +16,8 @@ func TestExpiringResetCreditChoosesEarliestEligibleCredit(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
 	expired := now.Add(-time.Minute)
 	soon := now.Add(2 * time.Minute)
-	threshold := now.Add(resetCreditLead)
-	later := now.Add(resetCreditLead + time.Second)
+	threshold := now.Add(time.Hour)
+	later := now.Add(time.Hour + time.Second)
 	credits := []resetCredit{
 		{ID: "future", ResetType: "codex_rate_limits", Status: "available", ExpiresAt: &later},
 		{ID: "wrong-type", ResetType: "other", Status: "available", ExpiresAt: &soon},
@@ -73,7 +73,7 @@ func TestPollAllUsageConsumesExpiringResetCredit(t *testing.T) {
 					"id":         "credit-a",
 					"reset_type": "codex_rate_limits",
 					"status":     "available",
-					"expires_at": now.Add(4 * time.Minute).Format(time.RFC3339),
+					"expires_at": now.Add(30 * time.Minute).Format(time.RFC3339),
 				}},
 			})
 		case "POST /rate-limit-reset-credits/consume":
