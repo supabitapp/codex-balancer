@@ -140,7 +140,7 @@ func (d dashboard) render() string {
 	if detailHeight < 6 {
 		return sDim.Render("terminal too small")
 	}
-	threadsHeight := detailHeight / 2
+	threadsHeight := min(max(len(d.snap.Threads)+4, detailHeight/2), detailHeight-4)
 	eventsHeight := detailHeight - threadsHeight
 
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -450,7 +450,7 @@ func (d dashboard) threads(width, height int) string {
 		{"Client", 8, sDim, func(view dashboardThreadView) string { return view.ClientID }},
 		{"Account", accountWidth, sSpark, func(view dashboardThreadView) string { return view.Account }},
 		{"Model", modelWidth, sText, func(view dashboardThreadView) string { return view.Model }},
-		{"Via", 3, sGood, func(view dashboardThreadView) string { return view.Via }},
+		{"Via", 4, sGood, func(view dashboardThreadView) string { return view.Via }},
 		{"Fast", 4, sHot, func(view dashboardThreadView) string {
 			if view.Fast {
 				return "FAST"
@@ -462,7 +462,7 @@ func (d dashboard) threads(width, height int) string {
 		{"Output", 7, sNum, func(view dashboardThreadView) string { return view.Output }},
 		{"Ctx/Cmp", 8, sDim, func(view dashboardThreadView) string { return view.ContextLeft }},
 		{"Latency", 7, sDim, func(view dashboardThreadView) string { return view.Latency }},
-		{"Reqs", 5, sNum, func(view dashboardThreadView) string { return view.Requests }},
+		{"Reqs", 4, sNum, func(view dashboardThreadView) string { return view.Requests }},
 		{"Active", 8, sDim, func(view dashboardThreadView) string { return view.Last }},
 	}
 	tableWidth := func() int {

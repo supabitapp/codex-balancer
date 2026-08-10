@@ -37,14 +37,14 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 			Usage:       usage,
 			Latency:     5420 * time.Millisecond,
 			Last:        time.Now(),
-			Via:         transportWebSocket,
+			Via:         transportHTTP,
 		}}},
 	}
 
 	view := dashboard.threads(220, 8)
 	for _, expected := range []string{
 		"Thread", "Client", "Account", "Model", "Via", "Fast", "Uncached", "Cache%", "Output", "Ctx/Cmp", "Latency", "Reqs", "Active",
-		"019fe5c2", "a1b2c3d4", "account-a@example.com", "gpt-5.6-sol (xhigh)", "WS", "FAST", "500", "75", "300", "-- (2)", "5.42s", "39",
+		"019fe5c2", "a1b2c3d4", "account-a@example.com", "gpt-5.6-sol (xhigh)", "HTTP", "FAST", "500", "75", "300", "-- (2)", "5.42s", "39",
 	} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("routing missing %q:\n%s", expected, view)
