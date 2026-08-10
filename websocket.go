@@ -33,22 +33,24 @@ type websocketMessage struct {
 }
 
 type websocketTurn struct {
-	kind         websocket.MessageType
-	data         []byte
-	sent         time.Time
-	model        string
-	effort       string
-	serviceTier  string
-	metadata     turnMetadata
-	counted      bool
-	created      bool
-	visible      bool
-	modelRetried bool
-	resolution   affinityResolution
-	thread       string
-	rotationFrom string
-	excluded     map[string]bool
-	reauthed     map[string]bool
+	kind          websocket.MessageType
+	data          []byte
+	sent          time.Time
+	model         string
+	effort        string
+	serviceTier   string
+	metadata      turnMetadata
+	counted       bool
+	created       bool
+	visible       bool
+	modelRetried  bool
+	resolution    affinityResolution
+	hardKinds     []string
+	compactReplay bool
+	thread        string
+	rotationFrom  string
+	excluded      map[string]bool
+	reauthed      map[string]bool
 }
 
 type websocketEnvelope struct {
@@ -97,6 +99,8 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("websocket handshake affinity unresolved",
 			"thread", affinity.statsKey(r.Header),
 			"hard_affinity", len(affinity.hard) > 0,
+			"hard_affinity_kinds", affinity.hardKinds(),
+			"compaction_replay", affinity.compactionReplay,
 			"error", err,
 		)
 		status, message := affinityErrorStatus(err)
@@ -517,6 +521,8 @@ func (s *server) relayResponsesWebSocket(
 					"thread", requestAffinity.statsKey(r.Header),
 					"account", current.account.id(),
 					"hard_affinity", len(requestAffinity.hard) > 0,
+					"hard_affinity_kinds", requestAffinity.hardKinds(),
+					"compaction_replay", requestAffinity.compactionReplay,
 					"error", err,
 				)
 				writeWebSocketAffinityError(ctx, downstream, err)
@@ -532,7 +538,7 @@ func (s *server) relayResponsesWebSocket(
 			if fresh := s.pool.route("", "", nil, allowed).account; fresh != nil {
 				freshAccount = fresh.id()
 			}
-			if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, resolution.hard, len(turns), freshAccount) {
+			if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, requestAffinity, resolution.hard, len(turns), freshAccount) {
 				if err := downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction"); err != nil {
 					s.log.Warn("compaction rotation downstream restart failed",
 						"thread", turnThread,
@@ -551,7 +557,7 @@ func (s *server) relayResponsesWebSocket(
 			}
 			rotationFrom := ""
 			var rotationSkip map[string]bool
-			if rotationFrom = s.compactionRotation.routeSource(turnThread, current.account.id(), metadata, resolution.hard); rotationFrom != "" {
+			if rotationFrom = s.compactionRotation.routeSource(turnThread, current.account.id(), metadata, requestAffinity, resolution.hard); rotationFrom != "" {
 				resolution.required = ""
 				resolution.preferred = ""
 				rotationSkip = map[string]bool{rotationFrom: true}
@@ -637,22 +643,29 @@ func (s *server) relayResponsesWebSocket(
 			}
 			counted := event.Generate == nil || *event.Generate
 			attrs := []any{"transport", transportWebSocket, "thread", turnThread, "service_tier", event.ServiceTier}
+			attrs = append(attrs,
+				"hard_affinity", resolution.hard,
+				"hard_affinity_kinds", requestAffinity.hardKinds(),
+				"compaction_replay", requestAffinity.compactionReplay,
+			)
 			attrs = append(attrs, routingLogAttrs(current.account.routingCandidate(), time.Now())...)
 			s.log.Debug("websocket turn received", attrs...)
 			turns = append(turns, websocketTurn{
-				kind:         message.kind,
-				data:         append([]byte(nil), message.data...),
-				sent:         time.Now(),
-				model:        event.Model,
-				effort:       event.Reasoning.Effort,
-				serviceTier:  event.ServiceTier,
-				metadata:     metadata,
-				counted:      counted,
-				resolution:   resolution,
-				thread:       turnThread,
-				rotationFrom: rotationFrom,
-				excluded:     map[string]bool{},
-				reauthed:     map[string]bool{},
+				kind:          message.kind,
+				data:          append([]byte(nil), message.data...),
+				sent:          time.Now(),
+				model:         event.Model,
+				effort:        event.Reasoning.Effort,
+				serviceTier:   event.ServiceTier,
+				metadata:      metadata,
+				counted:       counted,
+				resolution:    resolution,
+				hardKinds:     requestAffinity.hardKinds(),
+				compactReplay: requestAffinity.compactionReplay,
+				thread:        turnThread,
+				rotationFrom:  rotationFrom,
+				excluded:      map[string]bool{},
+				reauthed:      map[string]bool{},
 			})
 			continue
 		}
@@ -756,6 +769,8 @@ func (s *server) relayResponsesWebSocket(
 					"target_account", current.account.id(),
 					"status", websocketStatus(event),
 					"code", websocketErrorCode(event),
+					"hard_affinity_kinds", turn.hardKinds,
+					"compaction_replay", turn.compactReplay,
 				)
 				resolution := turn.resolution
 				resolution.required = turn.rotationFrom
@@ -793,6 +808,8 @@ func (s *server) relayResponsesWebSocket(
 						"request_kind", turns[index].metadata.RequestKind,
 						"account", current.account.id(),
 						"rotation_source", turns[index].rotationFrom,
+						"hard_affinity_kinds", turns[index].hardKinds,
+						"compaction_replay", turns[index].compactReplay,
 						"latency", time.Since(turns[index].sent),
 					)
 					if turns[index].rotationFrom != "" {
@@ -816,6 +833,8 @@ func (s *server) relayResponsesWebSocket(
 							"request_kind", turn.metadata.RequestKind,
 							"account", current.account.id(),
 							"rotation_source", turn.rotationFrom,
+							"hard_affinity_kinds", turn.hardKinds,
+							"compaction_replay", turn.compactReplay,
 							"created", turn.created,
 							"visible", turn.visible,
 							"status", websocketStatus(event),
@@ -828,6 +847,8 @@ func (s *server) relayResponsesWebSocket(
 							"request_kind", turn.metadata.RequestKind,
 							"account", current.account.id(),
 							"rotation_source", turn.rotationFrom,
+							"hard_affinity_kinds", turn.hardKinds,
+							"compaction_replay", turn.compactReplay,
 							"duration", time.Since(turn.sent),
 						)
 					}

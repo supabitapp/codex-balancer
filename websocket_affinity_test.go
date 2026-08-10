@@ -241,6 +241,8 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	b := testAccount("account-b", 20)
 	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
 	closeUnusedUpstream()
+	logs := &testLogBuffer{}
+	server.log = slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	rotation := newCompactionRotation(server.log)
 	server.compactionRotation = rotation
 	server.upstream = upstream.URL
@@ -277,9 +279,10 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 
 	continuation := turnMetadata{RequestKind: "normal", ThreadID: "logical-thread", TurnID: "turn-a"}
 	writeWebSocketEvent(t, conn, map[string]any{
-		"type":            "response.create",
-		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(continuation)},
-		"input":           []any{},
+		"type":                 "response.create",
+		"client_metadata":      map[string]string{codexTurnMetadataKey: encodeTurnMetadata(continuation)},
+		"previous_response_id": "resp_account-a",
+		"input":                []any{map[string]any{"type": "compaction", "id": "cmp_a"}},
 	})
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
@@ -336,6 +339,17 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	if len(events) != 1 || events[0].Kind != eventCompactionSwitch || events[0].Thread != "logical-thread" || events[0].SourceAccount != "account-a" || events[0].Account != "account-b" {
 		t.Fatalf("switch events = %+v", events)
 	}
+	records := logs.records(t)
+	requireLogRecord(t, records, "compaction rotation decision", map[string]any{
+		"decision":            "wait_hard_affinity",
+		"hard_affinity_kinds": []any{"response"},
+		"compaction_replay":   true,
+	})
+	requireLogRecord(t, records, "websocket turn received", map[string]any{
+		"hard_affinity":       true,
+		"hard_affinity_kinds": []any{"response"},
+		"compaction_replay":   true,
+	})
 }
 
 func TestWebSocketCompactionRotationKeepsFreshRouteSource(t *testing.T) {

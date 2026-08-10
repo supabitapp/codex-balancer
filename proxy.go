@@ -204,7 +204,15 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
 	modelRetried := false
-	s.log.Debug("http turn received", "thread", key, "required_account", resolution.required, "preferred_account", resolution.preferred, "service_tier", request.ServiceTier)
+	s.log.Debug("http turn received",
+		"thread", key,
+		"required_account", resolution.required,
+		"preferred_account", resolution.preferred,
+		"hard_affinity", resolution.hard,
+		"hard_affinity_kinds", affinity.hardKinds(),
+		"compaction_replay", affinity.compactionReplay,
+		"service_tier", request.ServiceTier,
+	)
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		account := s.pickAccount(key, resolution.required, resolution.preferred, request.Model, request.ServiceTier, skip, attempt, transportHTTP)

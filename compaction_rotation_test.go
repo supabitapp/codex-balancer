@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"reflect"
 	"sync"
 	"testing"
 )
@@ -49,7 +50,7 @@ func requireLogRecord(t *testing.T, records []map[string]any, message string, fi
 		}
 		matched := true
 		for name, value := range fields {
-			if record[name] != value {
+			if !reflect.DeepEqual(record[name], value) {
 				matched = false
 				break
 			}
@@ -67,26 +68,30 @@ func TestCompactionRotationWaitsForNewUnanchoredTurn(t *testing.T) {
 	rotation := newCompactionRotation(log)
 	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
 	rotation.arm("session", "account-a", compaction)
-	if rotation.shouldReconnect("session", "account-a", turnMetadata{RequestKind: "memory"}, false, 0, "account-b") {
+	if rotation.shouldReconnect("session", "account-a", turnMetadata{RequestKind: "memory"}, requestAffinity{}, false, 0, "account-b") {
 		t.Fatal("memory request triggered reconnect")
 	}
-	if rotation.shouldReconnect("session", "account-a", turnMetadata{RequestKind: "turn", ThreadID: "other-thread", TurnID: "turn-b", SubagentKind: "thread_spawn"}, false, 0, "account-b") {
+	if rotation.shouldReconnect("session", "account-a", turnMetadata{RequestKind: "turn", ThreadID: "other-thread", TurnID: "turn-b", SubagentKind: "thread_spawn"}, requestAffinity{}, false, 0, "account-b") {
 		t.Fatal("other logical thread triggered reconnect")
 	}
-	if rotation.shouldReconnect("session", "account-a", compaction, false, 0, "account-b") {
+	if rotation.shouldReconnect("session", "account-a", compaction, requestAffinity{}, false, 0, "account-b") {
 		t.Fatal("same turn triggered reconnect")
 	}
 	next := turnMetadata{RequestKind: "turn", ThreadID: "logical-thread", TurnID: "turn-b"}
-	if rotation.shouldReconnect("session", "account-a", next, true, 0, "account-b") {
+	hard := requestAffinity{
+		hard:             []affinityRef{{kind: affinityResponse, value: "response"}},
+		compactionReplay: true,
+	}
+	if rotation.shouldReconnect("session", "account-a", next, hard, true, 0, "account-b") {
 		t.Fatal("hard affinity triggered reconnect")
 	}
-	if !rotation.shouldReconnect("session", "account-a", next, false, 0, "account-b") {
+	if !rotation.shouldReconnect("session", "account-a", next, requestAffinity{}, false, 0, "account-b") {
 		t.Fatal("new unanchored turn did not trigger reconnect")
 	}
 	if skip, _, ok := rotation.handshakeSkip("session", false); !ok || !skip["account-a"] {
 		t.Fatalf("handshake skip = %v, %t", skip, ok)
 	}
-	if source := rotation.routeSource("session", "account-b", next, false); source != "account-a" {
+	if source := rotation.routeSource("session", "account-b", next, requestAffinity{}, false); source != "account-a" {
 		t.Fatal("reconnected turn did not route to the new account")
 	}
 	rotation.finish("logical-thread", "rotated", "account-b")
@@ -105,6 +110,11 @@ func TestCompactionRotationWaitsForNewUnanchoredTurn(t *testing.T) {
 			"source_account": "account-a",
 		})
 	}
+	requireLogRecord(t, records, "compaction rotation decision", map[string]any{
+		"decision":            "wait_hard_affinity",
+		"hard_affinity_kinds": []any{"response"},
+		"compaction_replay":   true,
+	})
 	requireLogRecord(t, records, "compaction rotation handshake", map[string]any{
 		"decision":       "exclude_source",
 		"session":        "session",
@@ -134,7 +144,7 @@ func TestCompactionRotationKeepsFreshRouteSource(t *testing.T) {
 	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
 	rotation.arm("session", "account-a", compaction)
 	next := turnMetadata{RequestKind: "turn", ThreadID: "logical-thread", TurnID: "turn-b"}
-	if rotation.shouldReconnect("session", "account-a", next, false, 0, "account-a") {
+	if rotation.shouldReconnect("session", "account-a", next, requestAffinity{}, false, 0, "account-a") {
 		t.Fatal("fresh route source triggered reconnect")
 	}
 	if _, _, ok := rotation.handshakeSkip("session", false); ok {

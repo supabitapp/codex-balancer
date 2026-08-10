@@ -56,6 +56,20 @@ type requestAffinity struct {
 	preferred          affinityRef
 	hard               []affinityRef
 	requireUnambiguous bool
+	compactionReplay   bool
+}
+
+func (a requestAffinity) hardKinds() []string {
+	kinds := make([]string, 0, len(a.hard))
+	seen := map[affinityKind]bool{}
+	for _, ref := range a.hard {
+		if !ref.hard() || seen[ref.kind] {
+			continue
+		}
+		seen[ref.kind] = true
+		kinds = append(kinds, string(ref.kind))
+	}
+	return kinds
 }
 
 func (a requestAffinity) bindings() []affinityRef {
@@ -113,7 +127,7 @@ func affinityFromRequest(headers http.Header, body []byte) (requestAffinity, err
 		}
 	}
 
-	var affinity requestAffinity
+	affinity := requestAffinity{compactionReplay: inputHasCompactionReplay(payload["input"])}
 	turnState := clientTurnStateAffinity(payload)
 	if !turnState.valid() {
 		if value := firstHeader(headers, "x-codex-turn-state"); value != "" {
@@ -149,6 +163,24 @@ func affinityFromRequest(headers http.Header, body []byte) (requestAffinity, err
 		affinity.hard = append(affinity.hard, affinityRef{kind: affinityFile, value: fileID})
 	}
 	return affinity, nil
+}
+
+func inputHasCompactionReplay(value any) bool {
+	items, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range items {
+		item, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := nonEmptyString(item["type"])
+		if kind == "compaction" || kind == "compaction_summary" {
+			return true
+		}
+	}
+	return false
 }
 
 func turnStateAffinity(headers http.Header) affinityRef {

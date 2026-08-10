@@ -61,7 +61,7 @@ func (r *compactionRotation) arm(session, account string, metadata turnMetadata)
 	)
 }
 
-func (r *compactionRotation) shouldReconnect(session, account string, metadata turnMetadata, hard bool, activeTurns int, freshAccount string) bool {
+func (r *compactionRotation) shouldReconnect(session, account string, metadata turnMetadata, affinity requestAffinity, hard bool, activeTurns int, freshAccount string) bool {
 	if r == nil || metadata.ThreadID == "" {
 		return false
 	}
@@ -114,6 +114,8 @@ func (r *compactionRotation) shouldReconnect(session, account string, metadata t
 		"request_turn", metadata.TurnID,
 		"request_kind", metadata.RequestKind,
 		"hard_affinity", hard,
+		"hard_affinity_kinds", affinity.hardKinds(),
+		"compaction_replay", affinity.compactionReplay,
 		"active_turns", activeTurns,
 		"fresh_account", freshAccount,
 	)
@@ -153,7 +155,7 @@ func (r *compactionRotation) handshakeSkip(session string, hard bool) (map[strin
 	return map[string]bool{pending.account: true}, pending, true
 }
 
-func (r *compactionRotation) routeSource(session, account string, metadata turnMetadata, hard bool) string {
+func (r *compactionRotation) routeSource(session, account string, metadata turnMetadata, affinity requestAffinity, hard bool) string {
 	if r == nil || hard || metadata.ThreadID == "" {
 		return ""
 	}
@@ -171,6 +173,8 @@ func (r *compactionRotation) routeSource(session, account string, metadata turnM
 		"compaction_turn", pending.turn,
 		"request_turn", metadata.TurnID,
 		"request_kind", metadata.RequestKind,
+		"hard_affinity_kinds", affinity.hardKinds(),
+		"compaction_replay", affinity.compactionReplay,
 	)
 	return pending.account
 }

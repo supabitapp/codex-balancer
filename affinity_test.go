@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -115,6 +116,37 @@ func TestAffinityFromRequest(t *testing.T) {
 func TestAffinityFromRequestRejectsInvalidJSON(t *testing.T) {
 	if _, err := affinityFromRequest(nil, []byte(`{"input":`)); err == nil {
 		t.Fatal("expected invalid JSON error")
+	}
+}
+
+func TestAffinityFromRequestReportsRotationEvidence(t *testing.T) {
+	affinity, err := affinityFromRequest(http.Header{"X-Codex-Turn-State": {"turn"}}, []byte(`{
+		"previous_response_id":"response",
+		"input":[
+			{"type":"compaction","id":"cmp"},
+			{"type":"input_file","file_id":"file"},
+			{"type":"input_file","file_id":"file"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !affinity.compactionReplay {
+		t.Fatal("compaction replay was not detected")
+	}
+	want := []string{"turn_state", "response", "file"}
+	if got := affinity.hardKinds(); !slices.Equal(got, want) {
+		t.Fatalf("hard kinds = %v, want %v", got, want)
+	}
+}
+
+func TestAffinityFromRequestDoesNotTreatTriggerAsReplay(t *testing.T) {
+	affinity, err := affinityFromRequest(nil, []byte(`{"input":[{"type":"compaction_trigger"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if affinity.compactionReplay {
+		t.Fatal("compaction trigger was treated as replay")
 	}
 }
 
