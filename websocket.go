@@ -803,7 +803,7 @@ func (s *server) relayResponsesWebSocket(
 						}
 					}
 					if turns[index].counted {
-						s.stats.routed(turns[index].thread, requestClientID(r, s.clientIDKey), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket, turns[index].metadata)
+						s.stats.routed(turns[index].thread, requestIP(r), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket, turns[index].metadata)
 						s.stats.answered(turns[index].thread, time.Since(turns[index].sent))
 					}
 					s.log.Debug("websocket response created",

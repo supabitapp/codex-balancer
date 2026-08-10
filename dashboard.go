@@ -236,7 +236,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 
 	threadViews := make([]dashboardThreadView, 0, len(snapshot.Threads))
 	for _, thread := range snapshot.Threads {
-		threadViews = append(threadViews, newDashboardThreadView(thread, names[thread.Account], s.catalog.contextLimits(thread.Account, thread.Model), now))
+		threadViews = append(threadViews, newDashboardThreadView(thread, names[thread.Account], s.clientIDKey, s.catalog.contextLimits(thread.Account, thread.Model), now))
 	}
 
 	events := make([]dashboardEventView, 0, len(snapshot.Events))
@@ -280,12 +280,12 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 }
 
-func newDashboardThreadView(thread ThreadSnapshot, account string, limits modelContextLimits, now time.Time) dashboardThreadView {
+func newDashboardThreadView(thread ThreadSnapshot, account string, clientIDKey []byte, limits modelContextLimits, now time.Time) dashboardThreadView {
 	used := thread.LatestUsage.contextTokens()
 	return dashboardThreadView{
 		KeyPrefix:     shortKey(thread.Key),
 		Info:          dashboardThreadInfo(thread.Metadata),
-		ClientID:      thread.ClientID,
+		ClientID:      clientIDForIP(thread.ClientIP, clientIDKey),
 		Account:       account,
 		Model:         dashboardModel(thread.Model, thread.Effort),
 		Via:           strings.ToUpper(string(thread.Via)),

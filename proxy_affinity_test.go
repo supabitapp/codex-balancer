@@ -685,7 +685,7 @@ func TestHTTPFollowUpsKeepStableSessionStats(t *testing.T) {
 		t.Fatalf("threads = %+v, want one session", snapshot.Threads)
 	}
 	thread := snapshot.Threads[0]
-	if thread.Key != "session" || thread.Model != "gpt-5.6-terra" || thread.Effort != "xhigh" || thread.Turns != 2 || thread.Via != transportHTTP {
+	if thread.Key != "session" || thread.ClientIP != "192.0.2.1" || thread.Model != "gpt-5.6-terra" || thread.Effort != "xhigh" || thread.Turns != 2 || thread.Via != transportHTTP {
 		t.Fatalf("thread = %+v, want session with two HTTP turns", thread)
 	}
 }

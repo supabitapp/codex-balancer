@@ -97,7 +97,7 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStats()
-	stats.routed("019fe5c2private", "a1b2c3d4", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{})
+	stats.routed("019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{})
 	stats.recordUsage("019fe5c2private", "gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	stats.note(eventLegacyReconnect, "source", "019fe701-7a55-7760-8d38-d1cd74544ef8")
@@ -106,7 +106,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
 	account := accountFromState(accountState{IDToken: "x." + tokenPayload + ".x"})
 	source := testAccount("source", 20)
-	server := &server{pool: &Pool{accounts: []*Account{account, source}}, stats: stats, key: "secret"}
+	server := &server{pool: &Pool{accounts: []*Account{account, source}}, stats: stats, key: "secret", clientIDKey: []byte("secret")}
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
 
@@ -135,7 +135,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
-		`a1b2c3d4`,
+		`52f3c1d8`,
 		`<td>gpt-5.6-sol (high)</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<span>1 checking</span>`,

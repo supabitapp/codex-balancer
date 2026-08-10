@@ -93,14 +93,12 @@ func TestRequestIPFallsBackToRemoteAddress(t *testing.T) {
 	}
 }
 
-func TestRequestClientIDHidesIP(t *testing.T) {
-	request := httptest.NewRequest("POST", "/v1/responses", nil)
-	request.Header.Set("X-Forwarded-For", "203.0.113.42")
-	if got := requestClientID(request, []byte("secret")); got != "52f3c1d8" {
-		t.Fatalf("requestClientID() = %q, want 52f3c1d8", got)
+func TestClientIDForIP(t *testing.T) {
+	if got := clientIDForIP("203.0.113.42", []byte("secret")); got != "52f3c1d8" {
+		t.Fatalf("clientIDForIP() = %q, want 52f3c1d8", got)
 	}
-	if got := requestClientID(request, nil); got != "" {
-		t.Fatalf("requestClientID() without key = %q", got)
+	if got := clientIDForIP("203.0.113.42", nil); got != "" {
+		t.Fatalf("clientIDForIP() without key = %q", got)
 	}
 }
 

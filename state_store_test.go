@@ -47,6 +47,16 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 	if len(key) != 32 {
 		t.Fatalf("client ID key length = %d, want 32", len(key))
 	}
+	var clientIP, clientID int
+	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_table_info('attempts') WHERE name = 'client_ip'`).Scan(&clientIP); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_table_info('attempts') WHERE name = 'client_id'`).Scan(&clientID); err != nil {
+		t.Fatal(err)
+	}
+	if clientIP != 1 || clientID != 0 {
+		t.Fatalf("attempt client columns: client_ip = %d, client_id = %d", clientIP, clientID)
+	}
 }
 
 func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
@@ -60,6 +70,8 @@ func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
 		rotate_after_compaction INTEGER NOT NULL CHECK (rotate_after_compaction IN (0, 1))
 	) STRICT;
 	INSERT INTO settings (id, rotate_after_compaction) VALUES (1, 0);
+	ALTER TABLE attempts DROP COLUMN client_ip;
+	ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 	PRAGMA user_version = 10;`); err != nil {
 		t.Fatal(err)
 	}
@@ -81,25 +93,17 @@ func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
 	}
 }
 
-func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
+func TestStateStoreMigratesClientIDsToIPs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_id;
-		ALTER TABLE attempts DROP COLUMN reasoning_effort;
-		ALTER TABLE attempts DROP COLUMN turn_metadata;
-		ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';
-		ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
-		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
-		ALTER TABLE events DROP COLUMN thread_key;
-		ALTER TABLE events DROP COLUMN total_tokens;
-		ALTER TABLE events DROP COLUMN reasoning_tokens;
-		DROP TABLE client_identity;
-		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, client_ip)
-		VALUES (1, 'thread', 'account', '', 'http', '203.0.113.42');
-		PRAGMA user_version = 2;`); err != nil {
+	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_ip;
+		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
+		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, reasoning_effort, turn_metadata, client_id)
+		VALUES (1, 'thread', 'account', '', 'http', '', '', '52f3c1d8');
+		PRAGMA user_version = 11;`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -111,19 +115,19 @@ func TestStateStoreRemovesStoredClientIPs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	var clientID string
-	if err := reopened.db.QueryRow(`SELECT client_id FROM attempts WHERE thread_key = 'thread'`).Scan(&clientID); err != nil {
+	var clientIP string
+	if err := reopened.db.QueryRow(`SELECT client_ip FROM attempts WHERE thread_key = 'thread'`).Scan(&clientIP); err != nil {
 		t.Fatal(err)
 	}
-	if clientID != "" {
-		t.Fatalf("client ID = %q, want empty", clientID)
+	if clientIP != "" {
+		t.Fatalf("client IP = %q, want empty", clientIP)
 	}
-	var oldColumns int
-	if err := reopened.db.QueryRow(`SELECT count(*) FROM pragma_table_info('attempts') WHERE name = 'client_ip'`).Scan(&oldColumns); err != nil {
+	var clientID int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM pragma_table_info('attempts') WHERE name = 'client_id'`).Scan(&clientID); err != nil {
 		t.Fatal(err)
 	}
-	if oldColumns != 0 {
-		t.Fatal("client_ip column remains")
+	if clientID != 0 {
+		t.Fatal("client_id column remains")
 	}
 }
 
@@ -140,6 +144,8 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN turn_metadata;
+		ALTER TABLE attempts DROP COLUMN client_ip;
+		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 		PRAGMA user_version = 5;`); err != nil {
 		t.Fatal(err)
 	}
@@ -162,13 +168,15 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 	}
 }
 
-func TestStateStoreClearsStoredClientIDs(t *testing.T) {
+func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`INSERT INTO attempts (
+	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_ip;
+		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
+		INSERT INTO attempts (
 		at_ns, thread_key, account_id, service_tier, transport, client_id
 	) VALUES (1, 'thread', 'account', '', 'http', 'legacy')`); err != nil {
 		t.Fatal(err)
@@ -192,12 +200,12 @@ func TestStateStoreClearsStoredClientIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	var clientID string
-	if err := reopened.db.QueryRow(`SELECT client_id FROM attempts WHERE thread_key = 'thread'`).Scan(&clientID); err != nil {
+	var clientIP string
+	if err := reopened.db.QueryRow(`SELECT client_ip FROM attempts WHERE thread_key = 'thread'`).Scan(&clientIP); err != nil {
 		t.Fatal(err)
 	}
-	if clientID != "" {
-		t.Fatalf("client ID = %q, want empty", clientID)
+	if clientIP != "" {
+		t.Fatalf("client IP = %q, want empty", clientIP)
 	}
 }
 
@@ -246,8 +254,8 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "codex-turn", SubagentKind: "compact"}
-	stats.routed("thread", "client-a", "account-a", "gpt-5.6-sol", "high", serviceTierFast, transportHTTP, metadata)
-	stats.routed("thread", "client-b", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, transportWebSocket, metadata)
+	stats.routed("thread", "203.0.113.41", "account-a", "gpt-5.6-sol", "high", serviceTierFast, transportHTTP, metadata)
+	stats.routed("thread", "203.0.113.42", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, transportWebSocket, metadata)
 	stats.failedOver("account-a", "unreachable")
 	stats.rateLimited("account-a")
 	stats.answered("thread", 2*time.Second)
@@ -281,7 +289,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if snapshot.WSOpen != 0 || snapshot.Accounts["account-a"].WSOpen != 0 {
 		t.Fatalf("live sockets survived restart: %+v", snapshot)
 	}
-	if len(snapshot.Threads) != 1 || snapshot.Threads[0].ClientID != "client-b" || snapshot.Threads[0].Model != "gpt-5.6-sol" || snapshot.Threads[0].Effort != "xhigh" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
+	if len(snapshot.Threads) != 1 || snapshot.Threads[0].ClientIP != "203.0.113.42" || snapshot.Threads[0].Model != "gpt-5.6-sol" || snapshot.Threads[0].Effort != "xhigh" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
 		t.Fatalf("threads = %+v", snapshot.Threads)
 	}
 	if snapshot.Threads[0].Usage != usage || snapshot.Threads[0].LatestUsage != usage || snapshot.Threads[0].Metadata != metadata || snapshot.Threads[0].Compactions != 1 || snapshot.Threads[0].TTFB != 2*time.Second || snapshot.Threads[0].Latency != 3*time.Second {

@@ -68,7 +68,7 @@ type accountStats struct {
 
 type threadStats struct {
 	key         string
-	clientID    string
+	clientIP    string
 	account     string
 	model       string
 	effort      string
@@ -175,15 +175,15 @@ func (s *Stats) failedOver(account, reason string) {
 	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
-func (s *Stats) routed(thread, clientID, account, model, effort, serviceTier string, via transport, metadata turnMetadata) {
+func (s *Stats) routed(thread, clientIP, account, model, effort, serviceTier string, via transport, metadata turnMetadata) {
 	now := time.Now()
-	s.persistAttempt(storedAttempt{At: now, Thread: thread, ClientID: clientID, Account: account, Effort: effort, ServiceTier: serviceTier, Transport: via, Metadata: encodeTurnMetadata(metadata)})
+	s.persistAttempt(storedAttempt{At: now, Thread: thread, ClientIP: clientIP, Account: account, Effort: effort, ServiceTier: serviceTier, Transport: via, Metadata: encodeTurnMetadata(metadata)})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applyRouted(now, thread, clientID, account, model, effort, serviceTier, via, metadata)
+	s.applyRouted(now, thread, clientIP, account, model, effort, serviceTier, via, metadata)
 }
 
-func (s *Stats) applyRouted(now time.Time, thread, clientID, account, model, effort, serviceTier string, via transport, metadata turnMetadata) {
+func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, effort, serviceTier string, via transport, metadata turnMetadata) {
 	s.turns++
 	if via == transportWebSocket {
 		s.wsTurns++
@@ -202,7 +202,7 @@ func (s *Stats) applyRouted(now time.Time, thread, clientID, account, model, eff
 		t = &threadStats{key: thread, started: now}
 		s.threads[thread] = t
 	}
-	t.clientID = clientID
+	t.clientIP = clientIP
 	t.account = account
 	t.model = model
 	t.effort = effort
@@ -350,7 +350,7 @@ type AccountSnapshot struct {
 
 type ThreadSnapshot struct {
 	Key         string `json:"key"`
-	ClientID    string `json:"client_id"`
+	ClientIP    string `json:"-"`
 	Account     string `json:"account"`
 	Model       string `json:"model"`
 	Effort      string `json:"reasoning_effort"`
@@ -404,7 +404,7 @@ func (s *Stats) snapshot() Snapshot {
 	for _, t := range s.threads {
 		out.Threads = append(out.Threads, ThreadSnapshot{
 			Key:         t.key,
-			ClientID:    t.clientID,
+			ClientIP:    t.clientIP,
 			Account:     t.account,
 			Model:       t.model,
 			Effort:      t.effort,
@@ -602,8 +602,7 @@ func requestIP(r *http.Request) string {
 	return parsed.Unmap().String()
 }
 
-func requestClientID(r *http.Request, key []byte) string {
-	ip := requestIP(r)
+func clientIDForIP(ip string, key []byte) string {
 	if ip == "" || len(key) == 0 {
 		return ""
 	}
