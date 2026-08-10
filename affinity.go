@@ -265,7 +265,7 @@ func affinityErrorStatus(err error) (int, string) {
 	case errors.Is(err, errAffinityConflict):
 		return http.StatusBadGateway, "account-owned affinity sources conflict"
 	case errors.Is(err, errAffinityOwnerUnavailable):
-		return http.StatusServiceUnavailable, "account-owned affinity is unavailable"
+		return http.StatusServiceUnavailable, "the account holding this turn is taking a quota nap"
 	case errors.Is(err, errAffinityAmbiguous):
 		return http.StatusServiceUnavailable, "account-owned affinity is ambiguous"
 	default:
