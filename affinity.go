@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
 
 type affinityKind string
@@ -21,9 +22,17 @@ const (
 )
 
 var (
-	errAffinityConflict         = errors.New("affinity owners conflict")
-	errAffinityOwnerUnavailable = errors.New("affinity owner unavailable")
-	errAffinityAmbiguous        = errors.New("affinity owner is ambiguous")
+	errAffinityConflict              = errors.New("affinity owners conflict")
+	errAffinityOwnerUnavailable      = errors.New("affinity owner unavailable")
+	errAffinityAmbiguous             = errors.New("affinity owner is ambiguous")
+	affinityOwnerUnavailableMessages = []string{
+		"the heroin-grade token stash is dry; quota goblins ate the rest",
+		"the token dealer got raided; context is going cold turkey",
+		"all accounts are fiending for tokens in quota rehab",
+		"the quota cartel seized the token shipment",
+		"the context window is jonesing; somebody call token rehab",
+	}
+	affinityOwnerUnavailableMessageIndex atomic.Uint64
 )
 
 type affinityRef struct {
@@ -265,10 +274,15 @@ func affinityErrorStatus(err error) (int, string) {
 	case errors.Is(err, errAffinityConflict):
 		return http.StatusBadGateway, "account-owned affinity sources conflict"
 	case errors.Is(err, errAffinityOwnerUnavailable):
-		return http.StatusServiceUnavailable, "the account holding this turn is taking a quota nap"
+		return http.StatusServiceUnavailable, nextAffinityOwnerUnavailableMessage()
 	case errors.Is(err, errAffinityAmbiguous):
 		return http.StatusServiceUnavailable, "account-owned affinity is ambiguous"
 	default:
 		return http.StatusBadRequest, fmt.Sprintf("invalid affinity: %v", err)
 	}
+}
+
+func nextAffinityOwnerUnavailableMessage() string {
+	index := affinityOwnerUnavailableMessageIndex.Add(1) - 1
+	return affinityOwnerUnavailableMessages[index%uint64(len(affinityOwnerUnavailableMessages))]
 }
