@@ -26,11 +26,11 @@ var (
 	errAffinityOwnerUnavailable      = errors.New("affinity owner unavailable")
 	errAffinityAmbiguous             = errors.New("affinity owner is ambiguous")
 	affinityOwnerUnavailableMessages = []string{
-		"the heroin-grade token stash is dry; quota goblins ate the rest",
-		"the token dealer got raided; context is going cold turkey",
-		"all accounts are fiending for tokens in quota rehab",
-		"the quota cartel seized the token shipment",
-		"the context window is jonesing; somebody call token rehab",
+		"heroin-grade token stash: dry",
+		"token dealer raided; going cold turkey",
+		"accounts fiending; quota rehab",
+		"quota cartel seized the stash",
+		"context jonesing; call token rehab",
 	}
 	affinityOwnerUnavailableMessageIndex atomic.Uint64
 )
