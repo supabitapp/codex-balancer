@@ -40,7 +40,8 @@ section { margin-top: 1.5rem }
 .has-tooltip { cursor: help; text-decoration: underline dotted; text-underline-offset: .2em }
 #dashboard-tooltip { position: fixed; z-index: 1; width: max-content; max-width: min(28rem, calc(100vw - 1rem)); padding: .5rem .75rem; border-radius: .5rem; background: var(--gray-12); box-shadow: 0 .25rem 1rem rgb(0 0 0 / 20%); color: var(--gray-1); font-size: .8125rem; line-height: 1.4; pointer-events: none; white-space: pre-line }
 .scroll { overflow-x: auto }
-#threads { --row-height: 2.25rem; max-height: calc(11 * var(--row-height)); overflow: auto }
+#threads { --row-height: 2.25rem; max-height: calc(11 * var(--row-height)); overflow: auto; scrollbar-width: none }
+#threads::-webkit-scrollbar { display: none }
 #threads tr { height: var(--row-height) }
 #threads thead { position: sticky; top: 0; z-index: 1; background: var(--gray-1) }
 table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums }
