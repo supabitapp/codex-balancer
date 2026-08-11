@@ -165,7 +165,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Cache %</th>
 <th>Output</th>
 <th>Context left<br>Compactions</th>
-<th>Latency</th>
 <th>Last active</th>
 </tr></thead>
 <tbody>{{if .Threads}}{{range .Threads}}<tr>
@@ -179,9 +178,8 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.CacheRate}}</td>
 <td>{{.Output}}</td>
 <td>{{if .ContextInfo}}<span class="has-tooltip" data-tooltip="{{.ContextInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.ContextLeft}}</span>{{else}}{{.ContextLeft}}{{end}}</td>
-<td>{{if .LatencyInfo}}<span class="has-tooltip" data-tooltip="{{.LatencyInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Latency}}</span>{{else}}{{.Latency}}{{end}}</td>
 <td class="dim">{{.Last}}</td>
-</tr>{{end}}{{else}}<tr><td class="empty" colspan="12">no live threads</td></tr>{{end}}</tbody>
+</tr>{{end}}{{else}}<tr><td class="empty" colspan="11">no live threads</td></tr>{{end}}</tbody>
 </table>
 {{end}}
 
