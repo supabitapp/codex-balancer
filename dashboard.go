@@ -29,11 +29,12 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 }).ParseFS(dashboardFiles, "web/dashboard.html"))
 
 type dashboardView struct {
-	Summary  []dashboardCount
-	Accounts []dashboardAccountView
-	Overview []dashboardMetric
-	Threads  []dashboardThreadView
-	Events   []dashboardEventView
+	Summary   []dashboardCount
+	Accounts  []dashboardAccountView
+	Overview  []dashboardMetric
+	Resources []dashboardMetric
+	Threads   []dashboardThreadView
+	Events    []dashboardEventView
 }
 
 type dashboardCount struct {
@@ -278,8 +279,9 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 				Info:  monthInfo,
 			},
 		},
-		Threads: threadViews,
-		Events:  events,
+		Resources: dashboardResourceMetrics(s.resources.usage(now)),
+		Threads:   threadViews,
+		Events:    events,
 	}
 }
 

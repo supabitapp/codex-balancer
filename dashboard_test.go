@@ -50,6 +50,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		`hx-ext="ws"`,
 		`ws-connect="/dashboard/ws"`,
 		`id="dashboard"`,
+		`<h2>Resources</h2>`,
 		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
 		`nothing routed yet`,
 	} {
@@ -58,9 +59,10 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		}
 	}
 	overview := strings.Index(body, `<h2>Overview</h2>`)
+	resources := strings.Index(body, `<h2>Resources</h2>`)
 	accounts := strings.Index(body, `<h2>Accounts <span id="summary">`)
-	if overview < 0 || accounts < 0 || overview > accounts {
-		t.Fatalf("dashboard section order: overview = %d, accounts = %d", overview, accounts)
+	if overview < 0 || resources < 0 || accounts < 0 || overview > resources || resources > accounts {
+		t.Fatalf("dashboard section order: overview = %d, resources = %d, accounts = %d", overview, resources, accounts)
 	}
 }
 
@@ -127,6 +129,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	body := string(payload)
 	for _, expected := range []string{
 		`id="overview" hx-swap-oob="innerHTML"`,
+		`id="resources" hx-swap-oob="innerHTML"`,
 		`id="summary" hx-swap-oob="innerHTML"`,
 		`id="accounts" hx-swap-oob="innerHTML"`,
 		`id="routing-count" hx-swap-oob="innerHTML"`,

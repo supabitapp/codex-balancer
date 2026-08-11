@@ -90,6 +90,10 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <dl id="overview" class="overview">{{template "overview" .}}</dl>
 </section>
 <section>
+<h2>Resources</h2>
+<dl id="resources" class="overview">{{template "resources" .}}</dl>
+</section>
+<section>
 <h2>Accounts <span id="summary">{{template "summary" .}}</span></h2>
 <div id="accounts" class="scroll">
 {{template "accounts" .}}
@@ -110,6 +114,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </main>{{end}}
 
 {{define "dashboard-update"}}<dl id="overview" hx-swap-oob="innerHTML">{{template "overview" .}}</dl>
+<dl id="resources" hx-swap-oob="innerHTML">{{template "resources" .}}</dl>
 <span id="summary" hx-swap-oob="innerHTML">{{template "summary" .}}</span>
 <div id="accounts" hx-swap-oob="innerHTML">{{template "accounts" .}}</div>
 <span id="routing-count" hx-swap-oob="innerHTML">{{len .Threads}}</span>
@@ -117,6 +122,8 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <div id="events" hx-swap-oob="innerHTML">{{template "events" .}}</div>{{end}}
 
 {{define "overview"}}{{range .Overview}}<div><dt>{{.Name}}</dt><dd>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}{{end}}
+
+{{define "resources"}}{{range .Resources}}<div><dt>{{.Name}}</dt><dd>{{.Value}}</dd></div>{{end}}{{end}}
 
 {{define "summary"}}{{range $index, $item := .Summary}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}{{end}}
 

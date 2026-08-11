@@ -109,6 +109,7 @@ func serverCmd(args []string) error {
 		client:             newProxyClient(),
 		log:                log,
 		admission:          newAdmissionGate(maxActiveProxyRequests),
+		resources:          newResourceMonitor(),
 	}
 	pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)

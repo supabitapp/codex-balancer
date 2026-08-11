@@ -66,6 +66,7 @@ type server struct {
 	log                  *slog.Logger
 	admission            *admissionGate
 	retryBackoff         func(int) time.Duration
+	resources            *resourceMonitor
 	dashboardConnections atomic.Int64
 }
 
