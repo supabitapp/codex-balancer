@@ -148,8 +148,8 @@ func (s *server) doAccountRequest(ctx context.Context, account *Account, method,
 	}
 }
 
-func expiringResetCredit(credits []resetCredit, now time.Time) (resetCredit, bool) {
-	deadline := now.Add(resetCreditLead)
+func nextExpiringResetCredit(credits []resetCredit, now time.Time, lead time.Duration) (resetCredit, bool) {
+	deadline := now.Add(lead)
 	var next resetCredit
 	found := false
 	for _, credit := range credits {
@@ -165,6 +165,10 @@ func expiringResetCredit(credits []resetCredit, now time.Time) (resetCredit, boo
 		}
 	}
 	return next, found
+}
+
+func expiringResetCredit(credits []resetCredit, now time.Time) (resetCredit, bool) {
+	return nextExpiringResetCredit(credits, now, resetCreditLead)
 }
 
 func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Account, now time.Time) (consumeResetCreditResponse, string, error) {

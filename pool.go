@@ -28,16 +28,17 @@ type Pool struct {
 }
 
 type routingCandidate struct {
-	account   *Account
-	id        string
-	paused    bool
-	reauth    string
-	cooldown  time.Time
-	primary   window
-	secondary window
-	spent     bool
-	pressure  float64
-	lastUsed  time.Time
+	account      *Account
+	id           string
+	paused       bool
+	reauth       string
+	cooldown     time.Time
+	primary      window
+	secondary    window
+	resetCredits resetCreditState
+	spent        bool
+	pressure     float64
+	lastUsed     time.Time
 }
 
 type routingDecision struct {
@@ -47,8 +48,7 @@ type routingDecision struct {
 }
 
 type routingPriority struct {
-	resetAt          time.Time
-	windowMinutes    int
+	expiresAt        time.Time
 	remainingPercent float64
 }
 
@@ -209,9 +209,14 @@ func (a *Account) routingCandidate() routingCandidate {
 		cooldown:  a.cooldown,
 		primary:   a.primary,
 		secondary: a.secondary,
-		spent:     a.spent,
-		pressure:  a.pressure(),
-		lastUsed:  a.lastUsed,
+		resetCredits: resetCreditState{
+			known:   a.resetCredits.known,
+			count:   a.resetCredits.count,
+			details: append([]resetCredit(nil), a.resetCredits.details...),
+		},
+		spent:    a.spent,
+		pressure: a.pressure(),
+		lastUsed: a.lastUsed,
 	}
 }
 
@@ -234,22 +239,18 @@ func (c routingCandidate) quotaKnown() bool {
 }
 
 func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool) {
-	deadline := now.Add(resetPriorityLead)
-	var priority routingPriority
-	for _, candidate := range []window{c.primary, c.secondary} {
-		remaining, known := remainingPercent(candidate)
-		if !known || remaining < resetPriorityMinimumRemainingPercent || !candidate.resetsAt.After(now) || candidate.resetsAt.After(deadline) {
-			continue
-		}
-		if priority.resetAt.IsZero() || candidate.resetsAt.Before(priority.resetAt) || candidate.resetsAt.Equal(priority.resetAt) && candidate.minutes > priority.windowMinutes {
-			priority = routingPriority{
-				resetAt:          candidate.resetsAt,
-				windowMinutes:    candidate.minutes,
-				remainingPercent: remaining,
-			}
-		}
+	remaining, known := remainingPercent(longestWindow(c.primary, c.secondary))
+	if !known || remaining < resetPriorityMinimumRemainingPercent {
+		return routingPriority{}, false
 	}
-	return priority, !priority.resetAt.IsZero()
+	credit, ok := nextExpiringResetCredit(c.resetCredits.details, now, resetPriorityLead)
+	if !ok {
+		return routingPriority{}, false
+	}
+	return routingPriority{
+		expiresAt:        *credit.ExpiresAt,
+		remainingPercent: remaining,
+	}, true
 }
 
 func (c routingCandidate) routesBefore(other routingCandidate, now time.Time) bool {
@@ -258,8 +259,8 @@ func (c routingCandidate) routesBefore(other routingCandidate, now time.Time) bo
 	if prioritized != otherPrioritized {
 		return prioritized
 	}
-	if prioritized && !priority.resetAt.Equal(otherPriority.resetAt) {
-		return priority.resetAt.Before(otherPriority.resetAt)
+	if prioritized && !priority.expiresAt.Equal(otherPriority.expiresAt) {
+		return priority.expiresAt.Before(otherPriority.expiresAt)
 	}
 	return c.roomierThan(other)
 }

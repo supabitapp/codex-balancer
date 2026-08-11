@@ -78,6 +78,16 @@ func remainingPercent(w window) (float64, bool) {
 	return min(max(100-w.usedPercent, 0), 100), true
 }
 
+func longestWindow(windows ...window) window {
+	var longest window
+	for _, w := range windows {
+		if w.known() && (!longest.known() || w.minutes > longest.minutes) {
+			longest = w
+		}
+	}
+	return longest
+}
+
 func (a *Account) pressure() float64 {
 	return math.Max(a.primary.usedPercent, a.secondary.usedPercent)
 }

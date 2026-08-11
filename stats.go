@@ -490,8 +490,7 @@ type accountStatsResponse struct {
 }
 
 type routingPriorityStatsResponse struct {
-	ResetAt          time.Time `json:"reset_at"`
-	WindowMinutes    int       `json:"window_minutes"`
+	ExpiresAt        time.Time `json:"expires_at"`
 	RemainingPercent float64   `json:"remaining_percent"`
 }
 
@@ -531,9 +530,9 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		}
 		var bankedResets *int64
 		var resetCredits []resetCreditStatsResponse
-		if count, credits, known := account.bankedResets(); known {
-			bankedResets = &count
-			for _, credit := range credits {
+		if candidate.resetCredits.known {
+			bankedResets = &candidate.resetCredits.count
+			for _, credit := range candidate.resetCredits.details {
 				if !credit.available() {
 					continue
 				}
@@ -550,8 +549,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		status := candidate.status(now)
 		if priority, ok := candidate.routingPriority(now); ok && status == accountPriority {
 			routingPriority = &routingPriorityStatsResponse{
-				ResetAt:          priority.resetAt,
-				WindowMinutes:    priority.windowMinutes,
+				ExpiresAt:        priority.expiresAt,
 				RemainingPercent: priority.remainingPercent,
 			}
 		}

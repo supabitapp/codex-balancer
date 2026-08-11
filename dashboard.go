@@ -447,27 +447,11 @@ func dashboardRoutingPriorityInfo(now time.Time, priority *routingPriorityStatsR
 	if priority == nil {
 		return ""
 	}
-	window := "quota"
-	if priority.WindowMinutes > 0 {
-		window = formatWindow(priority.WindowMinutes)
-	}
 	return fmt.Sprintf(
-		"Prioritized for new routing: %s remains before the %s window resets in %s.",
+		"Prioritized for new routing: a banked reset expires in %s; %s weekly capacity remains.",
+		short(priority.ExpiresAt.Sub(now)),
 		formatPercent(priority.RemainingPercent),
-		window,
-		short(priority.ResetAt.Sub(now)),
 	)
-}
-
-func formatWindow(minutes int) string {
-	switch {
-	case minutes%(24*60) == 0:
-		return fmt.Sprintf("%dd", minutes/(24*60))
-	case minutes%60 == 0:
-		return fmt.Sprintf("%dh", minutes/60)
-	default:
-		return short(time.Duration(minutes) * time.Minute)
-	}
 }
 
 func dashboardNumber(value int64) string {

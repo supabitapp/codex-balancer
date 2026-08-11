@@ -61,6 +61,8 @@ func routingLogAttrs(candidate routingCandidate, now time.Time) []any {
 		"account", candidate.id,
 		"status", status,
 		"reset_priority", prioritized,
+		"banked_resets_known", candidate.resetCredits.known,
+		"banked_resets", candidate.resetCredits.count,
 		"reported_limit_reached", candidate.spent,
 		"cooldown_until", candidate.cooldown,
 		"last_used_at", candidate.lastUsed,
@@ -70,8 +72,7 @@ func routingLogAttrs(candidate routingCandidate, now time.Time) []any {
 	}
 	if prioritized {
 		attrs = append(attrs,
-			"reset_priority_at", priority.resetAt,
-			"reset_priority_window_minutes", priority.windowMinutes,
+			"reset_priority_expires_at", priority.expiresAt,
 			"reset_priority_remaining_percent", priority.remainingPercent,
 		)
 	}

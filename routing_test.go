@@ -119,16 +119,17 @@ func TestPoolRouteBreaksTiesByAccountID(t *testing.T) {
 	}
 }
 
-func TestPoolRoutePrioritizesImminentResetsAfterAffinity(t *testing.T) {
+func TestPoolRoutePrioritizesExpiringBankedResetsAfterAffinity(t *testing.T) {
 	now := time.Now()
 	resetting := testAccount("account-resetting", 80)
-	resetting.primary = window{usedPercent: 80, minutes: 300, resetsAt: now.Add(30 * time.Minute), seenAt: now}
+	resetting.secondary = window{usedPercent: 80, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+	adoptTestResetCredit(resetting, now.Add(30*time.Minute))
 	roomier := testAccount("account-roomier", 10)
-	roomier.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(48 * time.Hour), seenAt: now}
+	roomier.secondary = window{usedPercent: 10, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
 	pool := &Pool{accounts: []*Account{roomier, resetting}}
 
 	if got := pool.route("", "", nil, nil).account; got != resetting {
-		t.Fatalf("fresh route selected %s, want reset-soon account", got.id())
+		t.Fatalf("fresh route selected %s, want expiring-reset account", got.id())
 	}
 	if got := pool.route("", roomier.id(), nil, nil).account; got != roomier {
 		t.Fatalf("soft route selected %s, want affinity owner", got.id())
@@ -136,31 +137,35 @@ func TestPoolRoutePrioritizesImminentResetsAfterAffinity(t *testing.T) {
 	if got := pool.route(roomier.id(), "", nil, nil).account; got != roomier {
 		t.Fatalf("hard route selected %s, want affinity owner", got.id())
 	}
-	resetting.primary.resetsAt = now.Add(25 * time.Hour)
+	adoptTestResetCredit(resetting, now.Add(25*time.Hour))
 	if got := pool.route("", "", nil, nil).account; got != roomier {
 		t.Fatalf("route outside lead selected %s, want roomier account", got.id())
 	}
 }
 
-func TestPoolRoutePrioritizesEarliestImminentReset(t *testing.T) {
+func TestPoolRoutePrioritizesEarliestBankedResetExpiry(t *testing.T) {
 	now := time.Now()
 	earlier := testAccount("account-earlier", 80)
-	earlier.primary = window{usedPercent: 80, minutes: 300, resetsAt: now.Add(15 * time.Minute), seenAt: now}
+	earlier.secondary = window{usedPercent: 80, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+	adoptTestResetCredit(earlier, now.Add(15*time.Minute))
 	later := testAccount("account-later", 10)
-	later.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(45 * time.Minute), seenAt: now}
+	later.secondary = window{usedPercent: 10, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+	adoptTestResetCredit(later, now.Add(45*time.Minute))
 	pool := &Pool{accounts: []*Account{later, earlier}}
 
 	if got := pool.route("", "", nil, nil).account; got != earlier {
-		t.Fatalf("account = %s, want earliest reset", got.id())
+		t.Fatalf("account = %s, want earliest banked reset expiry", got.id())
 	}
 }
 
-func TestPoolRouteRequiresTwentyPercentRemainingForResetPriority(t *testing.T) {
+func TestPoolRouteRequiresTwentyPercentWeeklyRemainingForResetPriority(t *testing.T) {
 	now := time.Now()
 	resetting := testAccount("account-resetting", 80.01)
-	resetting.primary = window{usedPercent: 80.01, minutes: 300, resetsAt: now.Add(30 * time.Minute), seenAt: now}
+	resetting.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(4 * time.Hour), seenAt: now}
+	resetting.secondary = window{usedPercent: 80.01, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+	adoptTestResetCredit(resetting, now.Add(30*time.Minute))
 	roomier := testAccount("account-roomier", 10)
-	roomier.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(48 * time.Hour), seenAt: now}
+	roomier.secondary = window{usedPercent: 10, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
 	pool := &Pool{accounts: []*Account{resetting, roomier}}
 
 	if got := pool.route("", "", nil, nil).account; got != roomier {
@@ -169,7 +174,7 @@ func TestPoolRouteRequiresTwentyPercentRemainingForResetPriority(t *testing.T) {
 	if got := resetting.status(now); got != accountLive {
 		t.Fatalf("status = %s, want live below priority threshold", got)
 	}
-	resetting.primary.usedPercent = 80
+	resetting.secondary.usedPercent = 80
 	if got := pool.route("", "", nil, nil).account; got != resetting {
 		t.Fatalf("account = %s, want reset account at priority threshold", got.id())
 	}
@@ -178,10 +183,11 @@ func TestPoolRouteRequiresTwentyPercentRemainingForResetPriority(t *testing.T) {
 	}
 }
 
-func TestAccountPriorityStatusUsesResetLeadWindow(t *testing.T) {
+func TestAccountPriorityStatusUsesBankedResetExpiryWindow(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
-	account.primary = window{usedPercent: 20, minutes: 300, resetsAt: now.Add(30 * time.Minute), seenAt: now}
+	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+	adoptTestResetCredit(account, now.Add(30*time.Minute))
 
 	if got := account.status(now); got != accountPriority {
 		t.Fatalf("status = %s, want priority", got)
@@ -196,13 +202,32 @@ func TestAccountPriorityStatusUsesResetLeadWindow(t *testing.T) {
 		t.Fatalf("spent status = %s, want cooling", got)
 	}
 	account.spent = false
-	account.primary.resetsAt = now.Add(24 * time.Hour)
+	adoptTestResetCredit(account, now.Add(24*time.Hour))
 	if got := account.status(now); got != accountPriority {
 		t.Fatalf("status at lead boundary = %s, want priority", got)
 	}
-	account.primary.resetsAt = now.Add(24*time.Hour + time.Second)
+	adoptTestResetCredit(account, now.Add(24*time.Hour+time.Second))
 	if got := account.status(now); got != accountLive {
 		t.Fatalf("status = %s outside lead, want live", got)
+	}
+}
+
+func TestAccountPriorityStatusRequiresAvailableBankedReset(t *testing.T) {
+	now := time.Now()
+	expiresAt := now.Add(30 * time.Minute)
+	account := testAccount("account-a", 20)
+	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+
+	tests := []resetCredit{
+		{ResetType: "other", Status: "available", ExpiresAt: &expiresAt},
+		{ResetType: "codex_rate_limits", Status: "redeemed", ExpiresAt: &expiresAt},
+		{ResetType: "codex_rate_limits", Status: "available"},
+	}
+	for _, credit := range tests {
+		account.adoptResetCredits(1, []resetCredit{credit})
+		if got := account.status(now); got != accountLive {
+			t.Fatalf("status for credit %+v = %s, want live", credit, got)
+		}
 	}
 }
 
@@ -217,6 +242,15 @@ func testAccount(id string, used float64) *Account {
 	account.primary = window{usedPercent: used, seenAt: time.Now()}
 	account.secondary = window{usedPercent: used, seenAt: time.Now()}
 	return account
+}
+
+func adoptTestResetCredit(account *Account, expiresAt time.Time) {
+	account.adoptResetCredits(1, []resetCredit{{
+		ID:        "credit-" + account.id(),
+		ResetType: "codex_rate_limits",
+		Status:    "available",
+		ExpiresAt: &expiresAt,
+	}})
 }
 
 func setTestAccountUsage(account *Account, used float64) {

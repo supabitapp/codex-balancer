@@ -361,16 +361,6 @@ func nextReset(now time.Time, windows ...window) time.Time {
 	return next
 }
 
-func longestWindow(windows ...window) window {
-	var longest window
-	for _, w := range windows {
-		if w.known() && (!longest.known() || w.minutes > longest.minutes) {
-			longest = w
-		}
-	}
-	return longest
-}
-
 func formatDecimal(value float64) string {
 	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", value), "0"), ".")
 }

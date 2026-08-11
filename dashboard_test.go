@@ -258,7 +258,9 @@ func TestDashboardBankedResetTooltipShowsExpirations(t *testing.T) {
 func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 	now := time.Date(2026, time.August, 11, 9, 0, 0, 0, time.UTC)
 	account := testAccount("account-a", 80)
-	account.primary = window{usedPercent: 80, minutes: 300, resetsAt: now.Add(30 * time.Minute), seenAt: now}
+	account.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(4 * time.Hour), seenAt: now}
+	account.secondary = window{usedPercent: 80, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+	adoptTestResetCredit(account, now.Add(30*time.Minute))
 	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
 
 	payload, err := renderDashboard("dashboard", server.currentDashboard(now))
@@ -270,7 +272,7 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 		`<span>1 priority</span>`,
 		`class="status-mark status-priority"`,
 		`>◆</span> priority</span>`,
-		`data-tooltip="Prioritized for new routing: 20% remains before the 5h window resets in 30m."`,
+		`data-tooltip="Prioritized for new routing: a banked reset expires in 30m; 20% weekly capacity remains."`,
 		`aria-describedby="dashboard-tooltip"`,
 		`tabindex="0"`,
 	} {
