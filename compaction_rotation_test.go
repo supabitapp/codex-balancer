@@ -62,6 +62,15 @@ func requireLogRecord(t *testing.T, records []map[string]any, message string, fi
 	t.Fatalf("missing log %q with fields %v in %v", message, fields, records)
 }
 
+func forbidLogMessage(t *testing.T, records []map[string]any, message string) {
+	t.Helper()
+	for _, record := range records {
+		if record["msg"] == message {
+			t.Fatalf("unexpected log %q in %v", message, records)
+		}
+	}
+}
+
 func TestCompactionRotationWaitsForNewUnanchoredTurn(t *testing.T) {
 	logs := &testLogBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))

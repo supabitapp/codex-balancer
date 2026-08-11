@@ -543,20 +543,12 @@ func (s *server) relayResponsesWebSocket(
 				freshAccount = fresh.id()
 			}
 			if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, requestAffinity, resolution.hard, len(turns), freshAccount) {
-				if err := downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction"); err != nil {
-					s.log.Warn("compaction rotation downstream restart failed",
-						"thread", turnThread,
-						"account", current.account.id(),
-						"request_turn", metadata.TurnID,
-						"error", err,
-					)
-				} else {
-					s.log.Debug("compaction rotation downstream restarted",
-						"thread", turnThread,
-						"account", current.account.id(),
-						"request_turn", metadata.TurnID,
-					)
-				}
+				_ = downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction")
+				s.log.Debug("compaction rotation downstream restart requested",
+					"thread", turnThread,
+					"account", current.account.id(),
+					"request_turn", metadata.TurnID,
+				)
 				return
 			}
 			rotationFrom := ""

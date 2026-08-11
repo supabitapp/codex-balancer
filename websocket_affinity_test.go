@@ -340,6 +340,12 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 		t.Fatalf("switch events = %+v", events)
 	}
 	records := logs.records(t)
+	requireLogRecord(t, records, "compaction rotation downstream restart requested", map[string]any{
+		"thread":       "session",
+		"account":      "account-a",
+		"request_turn": "turn-b",
+	})
+	forbidLogMessage(t, records, "compaction rotation downstream restart failed")
 	requireLogRecord(t, records, "compaction rotation decision", map[string]any{
 		"decision":            "wait_hard_affinity",
 		"hard_affinity_kinds": []any{"response"},
