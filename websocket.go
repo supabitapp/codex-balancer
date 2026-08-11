@@ -48,6 +48,7 @@ type websocketTurn struct {
 	hardKinds     []string
 	compactReplay bool
 	thread        string
+	statsThread   string
 	rotationFrom  string
 	excluded      map[string]bool
 	reauthed      map[string]bool
@@ -659,6 +660,7 @@ func (s *server) relayResponsesWebSocket(
 				hardKinds:     requestAffinity.hardKinds(),
 				compactReplay: requestAffinity.compactionReplay,
 				thread:        turnThread,
+				statsThread:   statsThreadKey(turnThread, metadata),
 				rotationFrom:  rotationFrom,
 				excluded:      map[string]bool{},
 				reauthed:      map[string]bool{},
@@ -795,8 +797,8 @@ func (s *server) relayResponsesWebSocket(
 						}
 					}
 					if turns[index].counted {
-						s.stats.routed(turns[index].thread, requestIP(r), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket, turns[index].metadata)
-						s.stats.answered(turns[index].thread, time.Since(turns[index].sent))
+						s.stats.routed(turns[index].statsThread, requestIP(r), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket, turns[index].metadata)
+						s.stats.answered(turns[index].statsThread, current.account.id(), time.Since(turns[index].sent))
 					}
 					s.log.Debug("websocket response created",
 						"thread", turns[index].thread,
@@ -860,9 +862,9 @@ func (s *server) relayResponsesWebSocket(
 						if !event.Response.Usage.empty() {
 							logResponseUsage(s.log, transportWebSocket, turn.thread, current.account.id(), model, serviceTier, turn.metadata, turn.rotationFrom, turn.compactReplay, time.Since(turn.sent), event.Response.Usage)
 						}
-						s.stats.recordUsage(turn.thread, model, serviceTier, event.Response.Usage)
+						s.stats.recordUsage(turn.statsThread, current.account.id(), model, serviceTier, event.Response.Usage)
 						if event.Type == "response.completed" {
-							s.stats.completed(turn.thread, turn.metadata, time.Since(turn.sent))
+							s.stats.completed(turn.statsThread, current.account.id(), turn.metadata, time.Since(turn.sent))
 							s.compactionRotation.arm(turn.thread, current.account.id(), turn.metadata)
 						}
 					}

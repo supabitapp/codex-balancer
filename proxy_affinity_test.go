@@ -859,7 +859,7 @@ func TestHTTPV2CompactionTracksMetadataAndUsage(t *testing.T) {
 		t.Fatalf("threads = %+v", snapshot.Threads)
 	}
 	thread := snapshot.Threads[0]
-	if thread.Metadata != metadata || thread.Compactions != 1 || thread.Latency <= 0 || thread.TTFB <= 0 {
+	if thread.Key != "codex-thread" || thread.Metadata != metadata || thread.Compactions != 1 || thread.Latency <= 0 || thread.TTFB <= 0 {
 		t.Fatalf("compaction thread = %+v", thread)
 	}
 	if thread.LatestUsage.TotalTokens != 1_100 || thread.LatestUsage.OutputDetails.ReasoningTokens != 60 {

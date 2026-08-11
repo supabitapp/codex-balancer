@@ -350,11 +350,12 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		if err := s.affinity.bindAll(bindings, id); err != nil {
 			s.log.Warn("affinity save failed", "thread", key, "account", id, "error", err)
 		}
-		s.stats.routed(key, requestIP(r), id, request.Model, request.Reasoning.Effort, request.ServiceTier, transportHTTP, metadata)
+		statsThread := statsThreadKey(key, metadata)
+		s.stats.routed(statsThread, requestIP(r), id, request.Model, request.Reasoning.Effort, request.ServiceTier, transportHTTP, metadata)
 		attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
 		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 		s.log.Debug("http turn routed", attrs...)
-		s.relay(w, resp, sent, key, id, request, metadata, affinity.compactionReplay)
+		s.relay(w, resp, sent, key, statsThread, id, request, metadata, affinity.compactionReplay)
 		return
 	}
 	s.log.Warn("every account failed", "transport", transportHTTP, "thread", key, "attempts", maxAttempts)
@@ -513,7 +514,7 @@ func (b *prefixedResponseBody) Close() error {
 	return b.body.Close()
 }
 
-func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, thread, account string, request responseRequestData, metadata turnMetadata, compactionReplay bool) {
+func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, thread, statsThread, account string, request responseRequestData, metadata turnMetadata, compactionReplay bool) {
 	defer resp.Body.Close()
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
@@ -523,6 +524,7 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Tim
 		store:            s.affinity,
 		stats:            s.stats,
 		thread:           thread,
+		statsThread:      statsThread,
 		account:          account,
 		model:            request.Model,
 		serviceTier:      request.ServiceTier,
@@ -542,7 +544,7 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Tim
 			}
 			control.Flush()
 			if first {
-				s.stats.answered(thread, time.Since(sent))
+				s.stats.answered(statsThread, account, time.Since(sent))
 				first = false
 			}
 		}
@@ -560,6 +562,7 @@ type responseOwnerInspector struct {
 	store            *AffinityStore
 	stats            *Stats
 	thread           string
+	statsThread      string
 	account          string
 	model            string
 	serviceTier      string
@@ -708,12 +711,12 @@ func (i *responseOwnerInspector) inspect(line []byte) {
 		if serviceTier == "" {
 			serviceTier = i.serviceTier
 		}
-		i.stats.recordUsage(i.thread, model, serviceTier, payload.Usage)
+		i.stats.recordUsage(i.statsThread, i.account, model, serviceTier, payload.Usage)
 		logResponseUsage(i.log, transportHTTP, i.thread, i.account, model, serviceTier, i.metadata, "", i.compactionReplay, time.Since(i.started), payload.Usage)
 		i.usageRecorded = true
 	}
 	if !i.completed && (event.Type == "response.completed" || event.Object == "response" && payload.Status == "completed") {
-		i.stats.completed(i.thread, i.metadata, time.Since(i.started))
+		i.stats.completed(i.statsThread, i.account, i.metadata, time.Since(i.started))
 		i.completed = true
 	}
 	if payload.ID != "" && (event.Type == "" || event.Type == "response.created") {

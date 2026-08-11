@@ -44,7 +44,7 @@ func TestThreadUsageFollowsActiveRoutingWindow(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-threadActiveWindow - time.Second)
 	stats.applyRouted(old, "thread", "", "account", "old", "medium", "", transportHTTP, turnMetadata{})
-	stats.applyUsageAt(old, "thread", "unknown", "default", responseUsage{InputTokens: 100})
+	stats.applyUsageAt(old, "thread", "account", "unknown", "default", responseUsage{InputTokens: 100})
 	stats.applyRouted(now, "thread", "", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, turnMetadata{})
 	routed := stats.snapshot()
 	if len(routed.Threads) != 1 || routed.Threads[0].Model != "gpt-5.6-sol" || routed.Threads[0].Effort != "xhigh" {
@@ -52,11 +52,57 @@ func TestThreadUsageFollowsActiveRoutingWindow(t *testing.T) {
 	}
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(now, "thread", "unknown", "default", usage)
+	stats.applyUsageAt(now, "thread", "account", "unknown", "default", usage)
 
 	snapshot := stats.snapshot()
 	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Model != "unknown" || snapshot.Threads[0].Turns != 1 || snapshot.Threads[0].Usage != usage {
 		t.Fatalf("threads = %+v, want current routing window usage %+v", snapshot.Threads, usage)
+	}
+}
+
+func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
+	stats := newStats()
+	now := time.Now()
+	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "compact-turn"}
+	stats.applyRouted(now, "thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "", transportWebSocket, metadata)
+	sourceUsage := responseUsage{InputTokens: 100, OutputTokens: 10}
+	sourceUsage.InputDetails.CachedTokens = 90
+	stats.applyUsageAt(now.Add(time.Second), "thread", "account-a", "gpt-5.6-sol", "default", sourceUsage)
+	stats.applyAnswered(now.Add(time.Second), "thread", "account-a", 100*time.Millisecond)
+	stats.applyCompleted(now.Add(time.Second), "thread", "account-a", metadata.RequestKind, time.Second)
+
+	stats.applyRouted(now.Add(2*time.Second), "thread", "client", "account-b", "gpt-5.6-sol", "xhigh", "", transportWebSocket, turnMetadata{RequestKind: "normal", ThreadID: "codex-thread", TurnID: "next-turn"})
+	switched := stats.snapshot().Threads[0]
+	if switched.Account != "account-b" || switched.Turns != 1 || !switched.Usage.empty() || !switched.LatestUsage.empty() || switched.TTFB != 0 || switched.Latency != 0 || switched.Compactions != 1 {
+		t.Fatalf("switched segment = %+v", switched)
+	}
+	if got := dashboardCacheRate(switched.Usage); got != "--" {
+		t.Fatalf("cache rate before target usage = %q, want --", got)
+	}
+
+	targetUsage := responseUsage{InputTokens: 100, OutputTokens: 20}
+	stats.applyUsageAt(now.Add(3*time.Second), "thread", "account-b", "gpt-5.6-sol", "default", targetUsage)
+	stats.applyUsageAt(now.Add(4*time.Second), "thread", "account-a", "gpt-5.6-sol", "default", sourceUsage)
+	current := stats.snapshot().Threads[0]
+	if current.Usage != targetUsage || current.LatestUsage != targetUsage {
+		t.Fatalf("current segment usage = %+v, want %+v", current.Usage, targetUsage)
+	}
+	if got := dashboardCacheRate(current.Usage); got != "0" {
+		t.Fatalf("cache rate after target usage = %q, want 0", got)
+	}
+}
+
+func TestCodexThreadsKeepSeparateTransportsWithinOneRoute(t *testing.T) {
+	stats := newStats()
+	now := time.Now()
+	httpMetadata := turnMetadata{RequestKind: "turn", ThreadID: "http-thread"}
+	webSocketMetadata := turnMetadata{RequestKind: "turn", ThreadID: "ws-thread", SubagentKind: "thread_spawn"}
+	stats.applyRouted(now, statsThreadKey("session", httpMetadata), "client", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, httpMetadata)
+	stats.applyRouted(now, statsThreadKey("session", webSocketMetadata), "client", "account", "gpt-5.6-sol", "xhigh", "", transportWebSocket, webSocketMetadata)
+
+	threads := stats.snapshot().Threads
+	if len(threads) != 2 || threads[0].Key != "http-thread" || threads[0].Via != transportHTTP || threads[1].Key != "ws-thread" || threads[1].Via != transportWebSocket {
+		t.Fatalf("threads = %+v", threads)
 	}
 }
 
@@ -107,12 +153,12 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	previousMonth := time.Date(2026, time.July, 31, 23, 59, 0, 0, time.UTC)
 	currentMonth := previousMonth.Add(time.Minute)
 	stats.usageMonth = calendarMonth(previousMonth)
-	stats.applyUsageAt(previousMonth, "", "unknown", "default", responseUsage{InputTokens: 1_000})
+	stats.applyUsageAt(previousMonth, "", "", "unknown", "default", responseUsage{InputTokens: 1_000})
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(currentMonth, "", "gpt-5.6-sol", "default", usage)
+	stats.applyUsageAt(currentMonth, "", "", "gpt-5.6-sol", "default", usage)
 	unpricedUsage := responseUsage{InputTokens: 400, OutputTokens: 50}
-	stats.applyUsageAt(currentMonth, "", "unknown", "default", unpricedUsage)
+	stats.applyUsageAt(currentMonth, "", "", "unknown", "default", unpricedUsage)
 	wantUsage := usage
 	wantUsage.InputTokens += unpricedUsage.InputTokens
 	wantUsage.OutputTokens += unpricedUsage.OutputTokens

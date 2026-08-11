@@ -98,7 +98,7 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStats()
 	stats.routed("019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{})
-	stats.recordUsage("019fe5c2private", "gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
+	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	stats.note(eventLegacyReconnect, "source", "019fe701-7a55-7760-8d38-d1cd74544ef8")
 	stats.note(eventLegacyRotated, "unused", "after compaction")
@@ -289,7 +289,7 @@ func TestDashboardOverview(t *testing.T) {
 	stats.usageMonth = calendarMonth(now)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(now, "", "gpt-5.6-sol", "default", usage)
+	stats.applyUsageAt(now, "", "", "gpt-5.6-sol", "default", usage)
 	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
 	wantValues := map[string]string{
@@ -349,9 +349,9 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, metadata)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300, TotalTokens: 2_300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(now, "thread", "gpt-5.6-sol", "default", usage)
-	stats.applyAnswered(now, "thread", 500*time.Millisecond)
-	stats.applyCompleted(now, "thread", metadata.RequestKind, 2*time.Second)
+	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "default", usage)
+	stats.applyAnswered(now, "thread", "account", 500*time.Millisecond)
+	stats.applyCompleted(now, "thread", "account", metadata.RequestKind, 2*time.Second)
 	catalog := newModelCatalog()
 	model := testModelEntry("gpt-5.6-sol")
 	model["context_window"] = 272_000

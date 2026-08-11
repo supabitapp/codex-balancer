@@ -42,3 +42,10 @@ func decodeTurnMetadata(value string) turnMetadata {
 	json.Unmarshal([]byte(value), &metadata)
 	return metadata
 }
+
+func statsThreadKey(route string, metadata turnMetadata) string {
+	if metadata.ThreadID != "" {
+		return metadata.ThreadID
+	}
+	return route
+}

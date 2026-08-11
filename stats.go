@@ -67,22 +67,23 @@ type accountStats struct {
 }
 
 type threadStats struct {
-	key         string
-	clientIP    string
-	account     string
-	model       string
-	effort      string
-	serviceTier string
-	metadata    turnMetadata
-	turns       int64
-	compactions int64
-	usage       responseUsage
-	latestUsage responseUsage
-	ttfb        time.Duration
-	latency     time.Duration
-	started     time.Time
-	last        time.Time
-	via         transport
+	key              string
+	clientIP         string
+	account          string
+	model            string
+	effort           string
+	serviceTier      string
+	metadata         turnMetadata
+	turns            int64
+	compactions      int64
+	usage            responseUsage
+	latestUsage      responseUsage
+	ttfb             time.Duration
+	latency          time.Duration
+	createdAt        time.Time
+	segmentStartedAt time.Time
+	last             time.Time
+	via              transport
 }
 
 type Event struct {
@@ -199,8 +200,15 @@ func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, eff
 	s.pruneInactiveThreads(now)
 	t := s.threads[thread]
 	if t == nil {
-		t = &threadStats{key: thread, started: now}
+		t = &threadStats{key: thread, createdAt: now, segmentStartedAt: now}
 		s.threads[thread] = t
+	} else if t.account != "" && t.account != account {
+		t.turns = 0
+		t.usage = responseUsage{}
+		t.latestUsage = responseUsage{}
+		t.ttfb = 0
+		t.latency = 0
+		t.segmentStartedAt = now
 	}
 	t.clientIP = clientIP
 	t.account = account
@@ -236,52 +244,55 @@ func (s *Stats) pruneInactiveThreads(now time.Time) {
 	}
 }
 
-func (s *Stats) answered(thread string, ttfb time.Duration) {
+func (s *Stats) answered(thread, account string, ttfb time.Duration) {
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventResponseAnswered, Thread: thread, Duration: ttfb})
+	s.persistEvent(storedEvent{At: now, Kind: eventResponseAnswered, Account: account, Thread: thread, Duration: ttfb})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applyAnswered(now, thread, ttfb)
+	s.applyAnswered(now, thread, account, ttfb)
 }
 
-func (s *Stats) applyAnswered(at time.Time, thread string, ttfb time.Duration) {
+func (s *Stats) applyAnswered(at time.Time, thread, account string, ttfb time.Duration) {
 	s.ttfbSum += ttfb
 	s.ttfbN++
-	if current := s.threads[thread]; current != nil && !at.Before(current.started) {
+	if current := s.threads[thread]; current != nil && current.account == account && !at.Before(current.segmentStartedAt) {
 		current.ttfb = ttfb
 	}
 }
 
-func (s *Stats) completed(thread string, metadata turnMetadata, latency time.Duration) {
+func (s *Stats) completed(thread, account string, metadata turnMetadata, latency time.Duration) {
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventResponseCompleted, Thread: thread, Detail: metadata.RequestKind, Duration: latency})
+	s.persistEvent(storedEvent{At: now, Kind: eventResponseCompleted, Account: account, Thread: thread, Detail: metadata.RequestKind, Duration: latency})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applyCompleted(now, thread, metadata.RequestKind, latency)
+	s.applyCompleted(now, thread, account, metadata.RequestKind, latency)
 }
 
-func (s *Stats) applyCompleted(at time.Time, thread, requestKind string, latency time.Duration) {
-	if current := s.threads[thread]; current != nil && !at.Before(current.started) {
-		current.latency = latency
+func (s *Stats) applyCompleted(at time.Time, thread, account, requestKind string, latency time.Duration) {
+	if current := s.threads[thread]; current != nil && !at.Before(current.createdAt) {
 		if requestKind == "compaction" {
 			current.compactions++
 		}
+		if current.account != account || at.Before(current.segmentStartedAt) {
+			return
+		}
+		current.latency = latency
 	}
 }
 
-func (s *Stats) recordUsage(thread, model, serviceTier string, usage responseUsage) {
+func (s *Stats) recordUsage(thread, account, model, serviceTier string, usage responseUsage) {
 	if usage.empty() {
 		return
 	}
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventResponseUsage, Thread: thread, Model: model, ServiceTier: serviceTier, Usage: usage})
-	s.applyUsageAt(now, thread, model, serviceTier, usage)
+	s.persistEvent(storedEvent{At: now, Kind: eventResponseUsage, Account: account, Thread: thread, Model: model, ServiceTier: serviceTier, Usage: usage})
+	s.applyUsageAt(now, thread, account, model, serviceTier, usage)
 }
 
-func (s *Stats) applyUsageAt(at time.Time, thread, model, serviceTier string, usage responseUsage) {
+func (s *Stats) applyUsageAt(at time.Time, thread, account, model, serviceTier string, usage responseUsage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if current := s.threads[thread]; current != nil && !at.Before(current.started) {
+	if current := s.threads[thread]; current != nil && current.account == account && !at.Before(current.segmentStartedAt) {
 		current.model = model
 		current.usage.add(usage)
 		current.latestUsage = usage

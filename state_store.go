@@ -418,13 +418,13 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 		event.Duration = time.Duration(duration)
 		switch event.Kind {
 		case eventResponseAnswered:
-			stats.applyAnswered(event.At, event.Thread, event.Duration)
+			stats.applyAnswered(event.At, event.Thread, event.Account, event.Duration)
 			continue
 		case eventResponseCompleted:
-			stats.applyCompleted(event.At, event.Thread, event.Detail, event.Duration)
+			stats.applyCompleted(event.At, event.Thread, event.Account, event.Detail, event.Duration)
 			continue
 		case eventResponseUsage:
-			stats.applyUsageAt(event.At, event.Thread, event.Model, event.ServiceTier, event.Usage)
+			stats.applyUsageAt(event.At, event.Thread, event.Account, event.Model, event.ServiceTier, event.Usage)
 			continue
 		case eventRateLimited:
 			stats.limited++

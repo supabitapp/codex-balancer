@@ -258,11 +258,11 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	stats.routed("thread", "203.0.113.42", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, transportWebSocket, metadata)
 	stats.failedOver("account-a", "unreachable")
 	stats.rateLimited("account-a")
-	stats.answered("thread", 2*time.Second)
-	stats.completed("thread", metadata, 3*time.Second)
+	stats.answered("thread", "account-a", 2*time.Second)
+	stats.completed("thread", "account-a", metadata, 3*time.Second)
 	usage := responseUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30}
 	usage.OutputDetails.ReasoningTokens = 5
-	stats.recordUsage("thread", "gpt-5.6-sol", serviceTierFast, usage)
+	stats.recordUsage("thread", "account-a", "gpt-5.6-sol", serviceTierFast, usage)
 	stats.note("account added", "account-a", "")
 	stats.compactionSwitched("codex-thread", "account-a", "account-b")
 	stats.websocketOpened("account-a")
@@ -301,6 +301,59 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	switchEvent := snapshot.Events[3]
 	if switchEvent.Kind != eventCompactionSwitch || switchEvent.Thread != "codex-thread" || switchEvent.SourceAccount != "account-a" || switchEvent.Account != "account-b" {
 		t.Fatalf("compaction switch = %+v", switchEvent)
+	}
+}
+
+func TestStatsRestoreKeepsLatestAccountSegment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err := newPersistentStats(store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "compact-turn"}
+	sourceUsage := responseUsage{InputTokens: 100, OutputTokens: 10}
+	sourceUsage.InputDetails.CachedTokens = 90
+	stats.routed("thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "default", transportWebSocket, compaction)
+	stats.answered("thread", "account-a", 100*time.Millisecond)
+	stats.completed("thread", "account-a", compaction, time.Second)
+	stats.recordUsage("thread", "account-a", "gpt-5.6-sol", "default", sourceUsage)
+
+	target := turnMetadata{RequestKind: "normal", ThreadID: "codex-thread", TurnID: "next-turn"}
+	targetUsage := responseUsage{InputTokens: 100, OutputTokens: 20}
+	stats.routed("thread", "client", "account-b", "gpt-5.6-sol", "xhigh", "default", transportWebSocket, target)
+	stats.compactionSwitched("codex-thread", "account-a", "account-b")
+	stats.answered("thread", "account-b", 200*time.Millisecond)
+	stats.completed("thread", "account-b", target, 2*time.Second)
+	stats.recordUsage("thread", "account-b", "gpt-5.6-sol", "default", targetUsage)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	restored, err := newPersistentStats(reopened, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := restored.snapshot()
+	if len(snapshot.Threads) != 1 {
+		t.Fatalf("threads = %+v", snapshot.Threads)
+	}
+	thread := snapshot.Threads[0]
+	if thread.Account != "account-b" || thread.Turns != 1 || thread.Usage != targetUsage || thread.LatestUsage != targetUsage || thread.Compactions != 1 || thread.TTFB != 200*time.Millisecond || thread.Latency != 2*time.Second {
+		t.Fatalf("restored segment = %+v", thread)
+	}
+	wantMonthly := sourceUsage
+	wantMonthly.add(targetUsage)
+	if snapshot.MonthlyUsage != wantMonthly {
+		t.Fatalf("monthly usage = %+v, want %+v", snapshot.MonthlyUsage, wantMonthly)
 	}
 }
 

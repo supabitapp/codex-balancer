@@ -220,13 +220,17 @@ func TestWebSocketCompletedResponseTracksAPIEstimate(t *testing.T) {
 	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Usage != wantUsage {
 		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads, wantUsage)
 	}
-	if snapshot.Threads[0].Metadata != metadata || snapshot.Threads[0].Compactions != 1 || snapshot.Threads[0].Latency <= 0 || snapshot.Threads[0].TTFB <= 0 {
+	if snapshot.Threads[0].Key != "codex-thread" || snapshot.Threads[0].Metadata != metadata || snapshot.Threads[0].Compactions != 1 || snapshot.Threads[0].Latency <= 0 || snapshot.Threads[0].TTFB <= 0 {
 		t.Fatalf("compaction thread = %+v", snapshot.Threads[0])
 	}
 }
 
 func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		cachedTokens := 800
+		if account == "account-b" {
+			cachedTokens = 0
+		}
 		writeWebSocketEvent(t, conn, map[string]any{
 			"type":     "response.created",
 			"response": map[string]any{"id": "resp_" + account},
@@ -240,7 +244,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 				"usage": map[string]any{
 					"input_tokens": 1_000,
 					"input_tokens_details": map[string]any{
-						"cached_tokens":      800,
+						"cached_tokens":      cachedTokens,
 						"cache_write_tokens": 100,
 					},
 					"output_tokens": 100,
@@ -354,6 +358,20 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	if len(events) != 1 || events[0].Kind != eventCompactionSwitch || events[0].Thread != "logical-thread" || events[0].SourceAccount != "account-a" || events[0].Account != "account-b" {
 		t.Fatalf("switch events = %+v", events)
 	}
+	threads := server.stats.snapshot().Threads
+	var switched ThreadSnapshot
+	for _, thread := range threads {
+		if thread.Key == "logical-thread" {
+			switched = thread
+			break
+		}
+	}
+	if switched.Key == "" || switched.Account != "account-b" || switched.Turns != 1 || switched.Usage.InputTokens != 1_000 || switched.Usage.InputDetails.CachedTokens != 0 || switched.Compactions != 1 {
+		t.Fatalf("switched route segment = %+v", threads)
+	}
+	if got := dashboardCacheRate(switched.Usage); got != "0" {
+		t.Fatalf("switched cache rate = %q, want 0", got)
+	}
 	records := logs.records(t)
 	requireLogRecord(t, records, "compaction rotation downstream restart requested", map[string]any{
 		"thread":       "session",
@@ -382,7 +400,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 		"model":              "gpt-5.6-sol",
 		"service_tier":       serviceTierFast,
 		"input_tokens":       float64(1_000),
-		"cached_tokens":      float64(800),
+		"cached_tokens":      float64(0),
 		"cache_write_tokens": float64(100),
 		"output_tokens":      float64(100),
 		"reasoning_tokens":   float64(60),
