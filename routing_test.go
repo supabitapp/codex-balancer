@@ -119,6 +119,66 @@ func TestPoolRouteBreaksTiesByAccountID(t *testing.T) {
 	}
 }
 
+func TestPoolRoutePrioritizesImminentResetsAfterAffinity(t *testing.T) {
+	now := time.Now()
+	resetting := testAccount("account-resetting", 80)
+	resetting.primary = window{usedPercent: 80, minutes: 300, resetsAt: now.Add(30 * time.Minute), seenAt: now}
+	roomier := testAccount("account-roomier", 10)
+	roomier.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(2 * time.Hour), seenAt: now}
+	pool := &Pool{accounts: []*Account{roomier, resetting}}
+
+	if got := pool.route("", "", nil, nil).account; got != resetting {
+		t.Fatalf("fresh route selected %s, want reset-soon account", got.id())
+	}
+	if got := pool.route("", roomier.id(), nil, nil).account; got != roomier {
+		t.Fatalf("soft route selected %s, want affinity owner", got.id())
+	}
+	if got := pool.route(roomier.id(), "", nil, nil).account; got != roomier {
+		t.Fatalf("hard route selected %s, want affinity owner", got.id())
+	}
+	resetting.primary.resetsAt = now.Add(2 * time.Hour)
+	if got := pool.route("", "", nil, nil).account; got != roomier {
+		t.Fatalf("route outside lead selected %s, want roomier account", got.id())
+	}
+}
+
+func TestPoolRoutePrioritizesEarliestImminentReset(t *testing.T) {
+	now := time.Now()
+	earlier := testAccount("account-earlier", 80)
+	earlier.primary = window{usedPercent: 80, minutes: 300, resetsAt: now.Add(15 * time.Minute), seenAt: now}
+	later := testAccount("account-later", 10)
+	later.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(45 * time.Minute), seenAt: now}
+	pool := &Pool{accounts: []*Account{later, earlier}}
+
+	if got := pool.route("", "", nil, nil).account; got != earlier {
+		t.Fatalf("account = %s, want earliest reset", got.id())
+	}
+}
+
+func TestAccountPriorityStatusUsesResetLeadWindow(t *testing.T) {
+	now := time.Now()
+	account := testAccount("account-a", 20)
+	account.primary = window{usedPercent: 20, minutes: 300, resetsAt: now.Add(30 * time.Minute), seenAt: now}
+
+	if got := account.status(now); got != accountPriority {
+		t.Fatalf("status = %s, want priority", got)
+	}
+	account.Paused = true
+	if got := account.status(now); got != accountPaused {
+		t.Fatalf("paused status = %s, want paused", got)
+	}
+	account.Paused = false
+	account.spent = true
+	if got := account.status(now); got != accountCooling {
+		t.Fatalf("spent status = %s, want cooling", got)
+	}
+	account.spent = false
+	account.primary.resetsAt = now.Add(time.Hour + time.Second)
+	if got := account.status(now); got != accountLive {
+		t.Fatalf("status = %s outside lead, want live", got)
+	}
+}
+
 func testAccount(id string, used float64) *Account {
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"email":"%s@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"%s","chatgpt_plan_type":"pro"}}`, id, id)))
 	account := accountFromState(accountState{

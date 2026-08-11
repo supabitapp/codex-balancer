@@ -474,18 +474,25 @@ type statsResponse struct {
 }
 
 type accountStatsResponse struct {
-	ID                     string                     `json:"id"`
-	Email                  string                     `json:"email,omitempty"`
-	Plan                   string                     `json:"plan"`
-	Status                 accountStatus              `json:"status"`
-	WeeklyRemainingPercent *float64                   `json:"weekly_remaining_percent"`
-	BankedResets           *int64                     `json:"banked_resets"`
-	ResetCredits           []resetCreditStatsResponse `json:"reset_credits,omitempty"`
-	ResetAt                *time.Time                 `json:"reset_at"`
-	Turns                  int64                      `json:"turns"`
-	OpenWebSockets         int64                      `json:"open_websockets"`
-	RateLimits             int64                      `json:"rate_limits"`
-	Activity               []int64                    `json:"activity"`
+	ID                     string                        `json:"id"`
+	Email                  string                        `json:"email,omitempty"`
+	Plan                   string                        `json:"plan"`
+	Status                 accountStatus                 `json:"status"`
+	RoutingPriority        *routingPriorityStatsResponse `json:"routing_priority,omitempty"`
+	WeeklyRemainingPercent *float64                      `json:"weekly_remaining_percent"`
+	BankedResets           *int64                        `json:"banked_resets"`
+	ResetCredits           []resetCreditStatsResponse    `json:"reset_credits,omitempty"`
+	ResetAt                *time.Time                    `json:"reset_at"`
+	Turns                  int64                         `json:"turns"`
+	OpenWebSockets         int64                         `json:"open_websockets"`
+	RateLimits             int64                         `json:"rate_limits"`
+	Activity               []int64                       `json:"activity"`
+}
+
+type routingPriorityStatsResponse struct {
+	ResetAt          time.Time `json:"reset_at"`
+	WindowMinutes    int       `json:"window_minutes"`
+	RemainingPercent float64   `json:"remaining_percent"`
 }
 
 type resetCreditStatsResponse struct {
@@ -514,7 +521,8 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 	}
 	for _, account := range s.pool.sorted() {
 		claims := account.claims()
-		primary, secondary, _, _ := account.health()
+		candidate := account.routingCandidate()
+		primary, secondary := candidate.primary, candidate.secondary
 		traffic := snapshot.Accounts[claims.Auth.AccountID]
 		weekly := longestWindow(primary, secondary)
 		var weeklyRemaining *float64
@@ -538,11 +546,21 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		if reset := nextReset(now, primary, secondary); !reset.IsZero() {
 			resetAt = &reset
 		}
+		var routingPriority *routingPriorityStatsResponse
+		status := candidate.status(now)
+		if priority, ok := candidate.routingPriority(now); ok && status == accountPriority {
+			routingPriority = &routingPriorityStatsResponse{
+				ResetAt:          priority.resetAt,
+				WindowMinutes:    priority.windowMinutes,
+				RemainingPercent: priority.remainingPercent,
+			}
+		}
 		out.Accounts = append(out.Accounts, accountStatsResponse{
 			ID:                     claims.Auth.AccountID,
 			Email:                  maskEmail(claims.Email),
 			Plan:                   claims.Auth.Plan,
-			Status:                 account.status(now),
+			Status:                 status,
+			RoutingPriority:        routingPriority,
 			WeeklyRemainingPercent: weeklyRemaining,
 			BankedResets:           bankedResets,
 			ResetCredits:           resetCredits,

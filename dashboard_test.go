@@ -255,6 +255,31 @@ func TestDashboardBankedResetTooltipShowsExpirations(t *testing.T) {
 	}
 }
 
+func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
+	now := time.Date(2026, time.August, 11, 9, 0, 0, 0, time.UTC)
+	account := testAccount("account-a", 80)
+	account.primary = window{usedPercent: 80, minutes: 300, resetsAt: now.Add(30 * time.Minute), seenAt: now}
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
+
+	payload, err := renderDashboard("dashboard", server.currentDashboard(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(payload)
+	for _, expected := range []string{
+		`<span>1 priority</span>`,
+		`class="status-mark status-priority"`,
+		`>◆</span> priority</span>`,
+		`data-tooltip="Prioritized for new routing: 20% remains before the 5h window resets in 30m."`,
+		`aria-describedby="dashboard-tooltip"`,
+		`tabindex="0"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("dashboard missing %q:\n%s", expected, body)
+		}
+	}
+}
+
 func TestDashboardOverview(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("BST", 60*60))
 	stats := newStats()

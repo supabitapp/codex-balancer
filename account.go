@@ -62,6 +62,7 @@ type accountStatus string
 
 const (
 	accountLive        accountStatus = "live"
+	accountPriority    accountStatus = "priority"
 	accountChecking    accountStatus = "checking"
 	accountCooling     accountStatus = "cooling"
 	accountPaused      accountStatus = "paused"
@@ -69,6 +70,13 @@ const (
 )
 
 func (w window) known() bool { return !w.seenAt.IsZero() }
+
+func remainingPercent(w window) (float64, bool) {
+	if !w.known() {
+		return 0, false
+	}
+	return min(max(100-w.usedPercent, 0), 100), true
+}
 
 func (a *Account) pressure() float64 {
 	return math.Max(a.primary.usedPercent, a.secondary.usedPercent)
@@ -81,9 +89,7 @@ func (a *Account) health() (primary, secondary window, cooldown time.Time, reaut
 }
 
 func (a *Account) status(now time.Time) accountStatus {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return accountStatusAt(a.Paused, a.dead, a.cooldown, a.spent, a.quotaKnown(), now)
+	return a.routingCandidate().status(now)
 }
 
 func accountStatusAt(paused bool, reauth string, cooldown time.Time, spent, known bool, now time.Time) accountStatus {

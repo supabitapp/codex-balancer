@@ -54,9 +54,13 @@ func (s *server) allowedAccounts(model, serviceTier string) map[string]bool {
 }
 
 func routingLogAttrs(candidate routingCandidate, now time.Time) []any {
-	return []any{
+	status := candidate.status(now)
+	priority, prioritized := candidate.routingPriority(now)
+	prioritized = prioritized && status == accountPriority
+	attrs := []any{
 		"account", candidate.id,
-		"status", candidate.status(now),
+		"status", status,
+		"reset_priority", prioritized,
 		"reported_limit_reached", candidate.spent,
 		"cooldown_until", candidate.cooldown,
 		"last_used_at", candidate.lastUsed,
@@ -64,6 +68,14 @@ func routingLogAttrs(candidate routingCandidate, now time.Time) []any {
 		"primary", windowLogValue(candidate.primary),
 		"secondary", windowLogValue(candidate.secondary),
 	}
+	if prioritized {
+		attrs = append(attrs,
+			"reset_priority_at", priority.resetAt,
+			"reset_priority_window_minutes", priority.windowMinutes,
+			"reset_priority_remaining_percent", priority.remainingPercent,
+		)
+	}
+	return attrs
 }
 
 func logResponseUsage(log *slog.Logger, via transport, thread, account, model, serviceTier string, metadata turnMetadata, rotationSource string, compactionReplay bool, duration time.Duration, usage responseUsage) {

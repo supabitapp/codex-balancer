@@ -158,7 +158,7 @@ func (d dashboard) render() string {
 }
 
 func (d dashboard) header() string {
-	live, checking, cooling, dead, held := 0, 0, 0, 0, 0
+	live, priority, checking, cooling, dead, held := 0, 0, 0, 0, 0, 0
 	now := time.Now()
 	for _, a := range d.pool.all() {
 		switch a.status(now) {
@@ -172,10 +172,15 @@ func (d dashboard) header() string {
 			checking++
 		case accountLive:
 			live++
+		case accountPriority:
+			priority++
 		}
 	}
 
 	parts := []string{sGood.Render(fmt.Sprintf("%d live", live))}
+	if priority > 0 {
+		parts = append(parts, sWarn.Render(fmt.Sprintf("%d priority", priority)))
+	}
 	if checking > 0 {
 		parts = append(parts, sDim.Render(fmt.Sprintf("%d checking", checking)))
 	}
@@ -223,7 +228,7 @@ func (d dashboard) accounts(limit int) string {
 
 	gap := 1
 	planW := 4
-	statusW := 9
+	statusW := 10
 	weeklyW := 6
 	bankedW := 6
 	resetW := 8
@@ -278,6 +283,8 @@ func (d dashboard) accounts(limit int) string {
 			status = sDim.Render(fit("◌ checking", statusW))
 		case accountLive:
 			status = sGood.Render(fit("● live", statusW))
+		case accountPriority:
+			status = sWarn.Render(fit("◆ priority", statusW))
 		}
 
 		turns := ""
@@ -362,13 +369,6 @@ func longestWindow(windows ...window) window {
 		}
 	}
 	return longest
-}
-
-func remainingPercent(w window) (float64, bool) {
-	if !w.known() {
-		return 0, false
-	}
-	return min(max(100-w.usedPercent, 0), 100), true
 }
 
 func formatDecimal(value float64) string {

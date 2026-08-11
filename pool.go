@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	minCooldown = 30 * time.Second
-	maxCooldown = time.Hour
+	minCooldown       = 30 * time.Second
+	maxCooldown       = time.Hour
+	resetPriorityLead = time.Hour
 )
 
 type Pool struct {
@@ -42,6 +43,12 @@ type routingDecision struct {
 	account    *Account
 	candidates []routingCandidate
 	now        time.Time
+}
+
+type routingPriority struct {
+	resetAt          time.Time
+	windowMinutes    int
+	remainingPercent float64
 }
 
 func indexOf(accounts []*Account, id string) int {
@@ -176,7 +183,7 @@ func (p *Pool) route(required, preferred string, skip, allowed map[string]bool) 
 		if skip[candidate.id] || !accountAllowed(allowed, candidate.id) || !candidate.available(now) {
 			continue
 		}
-		if best == nil || candidate.roomierThan(*best) {
+		if best == nil || candidate.routesBefore(*best, now) {
 			best = candidate
 		}
 	}
@@ -212,11 +219,48 @@ func (c routingCandidate) available(now time.Time) bool {
 }
 
 func (c routingCandidate) status(now time.Time) accountStatus {
-	return accountStatusAt(c.paused, c.reauth, c.cooldown, c.spent, c.quotaKnown(), now)
+	status := accountStatusAt(c.paused, c.reauth, c.cooldown, c.spent, c.quotaKnown(), now)
+	if status == accountLive {
+		if _, ok := c.routingPriority(now); ok {
+			return accountPriority
+		}
+	}
+	return status
 }
 
 func (c routingCandidate) quotaKnown() bool {
 	return c.primary.known() || c.secondary.known()
+}
+
+func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool) {
+	deadline := now.Add(resetPriorityLead)
+	var priority routingPriority
+	for _, candidate := range []window{c.primary, c.secondary} {
+		remaining, known := remainingPercent(candidate)
+		if !known || remaining <= 0 || !candidate.resetsAt.After(now) || candidate.resetsAt.After(deadline) {
+			continue
+		}
+		if priority.resetAt.IsZero() || candidate.resetsAt.Before(priority.resetAt) || candidate.resetsAt.Equal(priority.resetAt) && candidate.minutes > priority.windowMinutes {
+			priority = routingPriority{
+				resetAt:          candidate.resetsAt,
+				windowMinutes:    candidate.minutes,
+				remainingPercent: remaining,
+			}
+		}
+	}
+	return priority, !priority.resetAt.IsZero()
+}
+
+func (c routingCandidate) routesBefore(other routingCandidate, now time.Time) bool {
+	priority, prioritized := c.routingPriority(now)
+	otherPriority, otherPrioritized := other.routingPriority(now)
+	if prioritized != otherPrioritized {
+		return prioritized
+	}
+	if prioritized && !priority.resetAt.Equal(otherPriority.resetAt) {
+		return priority.resetAt.Before(otherPriority.resetAt)
+	}
+	return c.roomierThan(other)
 }
 
 func (c routingCandidate) roomierThan(other routingCandidate) bool {
