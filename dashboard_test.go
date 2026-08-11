@@ -50,7 +50,6 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		`hx-ext="ws"`,
 		`ws-connect="/dashboard/ws"`,
 		`id="dashboard"`,
-		`<h2>Resources</h2>`,
 		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
 		`no live threads`,
 	} {
@@ -59,10 +58,12 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		}
 	}
 	overview := strings.Index(body, `<h2>Overview</h2>`)
-	resources := strings.Index(body, `<h2>Resources</h2>`)
 	accounts := strings.Index(body, `<h2>Accounts <span id="summary">`)
-	if overview < 0 || resources < 0 || accounts < 0 || overview > resources || resources > accounts {
-		t.Fatalf("dashboard section order: overview = %d, resources = %d, accounts = %d", overview, resources, accounts)
+	if overview < 0 || accounts < 0 || overview > accounts {
+		t.Fatalf("dashboard section order: overview = %d, accounts = %d", overview, accounts)
+	}
+	if strings.Contains(body, `<h2>Resources</h2>`) || strings.Contains(body, `id="resources"`) {
+		t.Fatal("dashboard has a Resources section")
 	}
 }
 
@@ -130,7 +131,6 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	body := string(payload)
 	for _, expected := range []string{
 		`id="overview" hx-swap-oob="innerHTML"`,
-		`id="resources" hx-swap-oob="innerHTML"`,
 		`id="summary" hx-swap-oob="innerHTML"`,
 		`id="accounts" hx-swap-oob="innerHTML"`,
 		`id="routing-count" hx-swap-oob="innerHTML"`,
@@ -297,21 +297,30 @@ func TestDashboardOverview(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
 	wantValues := map[string]string{
+		"CPU":           "--",
+		"RAM":           "--",
+		"network in":    "--",
+		"network out":   "--",
 		"input tokens":  "2K",
 		"cached input":  "1.5K",
 		"output tokens": "300",
-		"turn rate":     "0.0 turns/min",
-		"estimated TPS": "--",
 		"uptime":        "28m",
+	}
+	wantNames := []string{"CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "API estimate"}
+	if len(view.Overview) != len(wantNames) {
+		t.Fatalf("overview metrics = %+v", view.Overview)
 	}
 	wantInfo := "Calculated from 1 August 2026, 00:00 BST"
 	apiEstimateFound := false
-	for _, metric := range view.Overview {
+	for i, metric := range view.Overview {
+		if metric.Name != wantNames[i] {
+			t.Fatalf("overview metric %d = %q, want %q", i, metric.Name, wantNames[i])
+		}
 		if wantValue, ok := wantValues[metric.Name]; ok {
 			if metric.Value != wantValue {
 				t.Fatalf("%s overview metric = %+v, want value %q", metric.Name, metric, wantValue)
 			}
-			if metric.Name != "turn rate" && metric.Name != "estimated TPS" && metric.Name != "uptime" && metric.Info != wantInfo {
+			if metric.Name != "CPU" && metric.Name != "RAM" && metric.Name != "network in" && metric.Name != "network out" && metric.Name != "uptime" && metric.Info != wantInfo {
 				t.Fatalf("%s overview info = %q, want %q", metric.Name, metric.Info, wantInfo)
 			}
 			delete(wantValues, metric.Name)
@@ -322,7 +331,7 @@ func TestDashboardOverview(t *testing.T) {
 			if metric.Info != wantInfo {
 				t.Fatalf("API estimate info = %q, want %q", metric.Info, wantInfo)
 			}
-		case "threads", "accounts", "failovers", "rate limits", "ttfb":
+		case "turns", "http", "ws turns", "ws open", "turn rate", "estimated TPS", "threads", "accounts", "failovers", "rate limits", "ttfb":
 			t.Fatalf("removed overview metric %q is still present", metric.Name)
 		}
 	}
@@ -331,18 +340,6 @@ func TestDashboardOverview(t *testing.T) {
 	}
 	if !apiEstimateFound {
 		t.Fatal("API estimate overview metric missing")
-	}
-}
-
-func TestEstimatedTPSWeightsLatestActiveResponses(t *testing.T) {
-	threads := []ThreadSnapshot{
-		{LatestUsage: responseUsage{OutputTokens: 100}, TTFB: time.Second, Latency: 3 * time.Second},
-		{LatestUsage: responseUsage{OutputTokens: 200}, TTFB: 500 * time.Millisecond, Latency: 2500 * time.Millisecond},
-		{LatestUsage: responseUsage{OutputTokens: 1_000}, TTFB: 2 * time.Second, Latency: time.Second},
-		{TTFB: time.Second, Latency: 2 * time.Second},
-	}
-	if got := estimatedTPS(threads); got != "75" {
-		t.Fatalf("estimated TPS = %q, want 75", got)
 	}
 }
 

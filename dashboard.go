@@ -29,12 +29,11 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 }).ParseFS(dashboardFiles, "web/dashboard.html"))
 
 type dashboardView struct {
-	Summary   []dashboardCount
-	Accounts  []dashboardAccountView
-	Overview  []dashboardMetric
-	Resources []dashboardMetric
-	Threads   []dashboardThreadView
-	Events    []dashboardEventView
+	Summary  []dashboardCount
+	Accounts []dashboardAccountView
+	Overview []dashboardMetric
+	Threads  []dashboardThreadView
+	Events   []dashboardEventView
 }
 
 type dashboardCount struct {
@@ -259,29 +258,24 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 
 	monthInfo := "Calculated from " + calendarMonthStart(now).Format("2 January 2006, 15:04 MST")
+	overview := dashboardResourceMetrics(s.resources.usage(now))
+	overview = append(overview,
+		dashboardMetric{Name: "uptime", Value: short(snapshot.Uptime)},
+		dashboardMetric{Name: "input tokens", Value: formatTokenCount(snapshot.MonthlyUsage.InputTokens), Info: monthInfo},
+		dashboardMetric{Name: "cached input", Value: formatTokenCount(snapshot.MonthlyUsage.InputDetails.CachedTokens), Info: monthInfo},
+		dashboardMetric{Name: "output tokens", Value: formatTokenCount(snapshot.MonthlyUsage.OutputTokens), Info: monthInfo},
+		dashboardMetric{
+			Name:  "API estimate",
+			Value: formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses),
+			Info:  monthInfo,
+		},
+	)
 	return dashboardView{
 		Summary:  summary,
 		Accounts: accounts,
-		Overview: []dashboardMetric{
-			{Name: "turns", Value: strconv.FormatInt(snapshot.Turns, 10)},
-			{Name: "http", Value: strconv.FormatInt(snapshot.Turns-snapshot.WSTurns, 10)},
-			{Name: "ws turns", Value: strconv.FormatInt(snapshot.WSTurns, 10)},
-			{Name: "ws open", Value: strconv.FormatInt(snapshot.WSOpen, 10)},
-			{Name: "turn rate", Value: rate(snapshot)},
-			{Name: "estimated TPS", Value: estimatedTPS(snapshot.Threads), Info: "Latest active-thread output tokens divided by time from first byte to completion"},
-			{Name: "uptime", Value: short(snapshot.Uptime)},
-			{Name: "input tokens", Value: formatTokenCount(snapshot.MonthlyUsage.InputTokens), Info: monthInfo},
-			{Name: "cached input", Value: formatTokenCount(snapshot.MonthlyUsage.InputDetails.CachedTokens), Info: monthInfo},
-			{Name: "output tokens", Value: formatTokenCount(snapshot.MonthlyUsage.OutputTokens), Info: monthInfo},
-			{
-				Name:  "API estimate",
-				Value: formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses),
-				Info:  monthInfo,
-			},
-		},
-		Resources: dashboardResourceMetrics(s.resources.usage(now)),
-		Threads:   threadViews,
-		Events:    events,
+		Overview: overview,
+		Threads:  threadViews,
+		Events:   events,
 	}
 }
 
@@ -341,23 +335,6 @@ func dashboardCacheRate(usage responseUsage) string {
 		return "--"
 	}
 	return formatDecimal(float64(usage.InputDetails.CachedTokens) * 100 / float64(usage.InputTokens))
-}
-
-func estimatedTPS(threads []ThreadSnapshot) string {
-	var outputTokens int64
-	var generationTime time.Duration
-	for _, thread := range threads {
-		duration := thread.Latency - thread.TTFB
-		if thread.LatestUsage.OutputTokens <= 0 || duration <= 0 {
-			continue
-		}
-		outputTokens += thread.LatestUsage.OutputTokens
-		generationTime += duration
-	}
-	if generationTime <= 0 {
-		return "--"
-	}
-	return formatDecimal(float64(outputTokens) / generationTime.Seconds())
 }
 
 func dashboardContext(used int64, limits modelContextLimits, compactions int64) string {
