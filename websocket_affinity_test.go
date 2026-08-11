@@ -232,8 +232,23 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 			"response": map[string]any{"id": "resp_" + account},
 		})
 		writeWebSocketEvent(t, conn, map[string]any{
-			"type":     "response.completed",
-			"response": map[string]any{"id": "resp_" + account},
+			"type": "response.completed",
+			"response": map[string]any{
+				"id":           "resp_" + account,
+				"model":        "gpt-5.6-sol",
+				"service_tier": serviceTierFast,
+				"usage": map[string]any{
+					"input_tokens": 1_000,
+					"input_tokens_details": map[string]any{
+						"cached_tokens":      800,
+						"cache_write_tokens": 100,
+					},
+					"output_tokens": 100,
+					"output_tokens_details": map[string]any{
+						"reasoning_tokens": 60,
+					},
+				},
+			},
 		})
 	})
 	defer upstream.Close()
@@ -291,7 +306,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
 		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
-		"input":           []any{},
+		"input":           []any{map[string]any{"type": "compaction", "id": "cmp_b"}},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -325,7 +340,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
 		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(next)},
-		"input":           []any{},
+		"input":           []any{map[string]any{"type": "compaction", "id": "cmp_b"}},
 	})
 	readWebSocketEvent(t, conn)
 	readWebSocketEvent(t, conn)
@@ -355,6 +370,22 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 		"hard_affinity":       true,
 		"hard_affinity_kinds": []any{"response"},
 		"compaction_replay":   true,
+	})
+	requireLogRecord(t, records, "response usage", map[string]any{
+		"transport":          "ws",
+		"thread":             "session",
+		"turn":               "turn-b",
+		"request_kind":       "normal",
+		"account":            "account-b",
+		"rotation_source":    "account-a",
+		"compaction_replay":  true,
+		"model":              "gpt-5.6-sol",
+		"service_tier":       serviceTierFast,
+		"input_tokens":       float64(1_000),
+		"cached_tokens":      float64(800),
+		"cache_write_tokens": float64(100),
+		"output_tokens":      float64(100),
+		"reasoning_tokens":   float64(60),
 	})
 }
 

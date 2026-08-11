@@ -857,6 +857,9 @@ func (s *server) relayResponsesWebSocket(
 						if serviceTier == "" {
 							serviceTier = turn.serviceTier
 						}
+						if !event.Response.Usage.empty() {
+							logResponseUsage(s.log, transportWebSocket, turn.thread, current.account.id(), model, serviceTier, turn.metadata, turn.rotationFrom, turn.compactReplay, time.Since(turn.sent), event.Response.Usage)
+						}
 						s.stats.recordUsage(turn.thread, model, serviceTier, event.Response.Usage)
 						if event.Type == "response.completed" {
 							s.stats.completed(turn.thread, turn.metadata, time.Since(turn.sent))

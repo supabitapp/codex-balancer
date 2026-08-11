@@ -835,9 +835,11 @@ func TestHTTPV2CompactionTracksMetadataAndUsage(t *testing.T) {
 	account := testAccount("account-a", 0)
 	server, _, closeServer := newAffinityHTTPServer(t, []*Account{account}, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		io.WriteString(w, `data: {"type":"response.completed","response":{"model":"gpt-5.6-sol","usage":{"input_tokens":1000,"output_tokens":100,"total_tokens":1100,"output_tokens_details":{"reasoning_tokens":60}}}}`+"\n\n")
+		io.WriteString(w, `data: {"type":"response.completed","response":{"model":"gpt-5.6-sol","usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":800,"cache_write_tokens":100},"output_tokens":100,"total_tokens":1100,"output_tokens_details":{"reasoning_tokens":60}}}}`+"\n\n")
 	})
 	defer closeServer()
+	logs := &testLogBuffer{}
+	server.log = slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "codex-turn", WindowID: "codex-window:1", SubagentKind: "compact"}
 	body, err := json.Marshal(map[string]any{
@@ -863,6 +865,22 @@ func TestHTTPV2CompactionTracksMetadataAndUsage(t *testing.T) {
 	if thread.LatestUsage.TotalTokens != 1_100 || thread.LatestUsage.OutputDetails.ReasoningTokens != 60 {
 		t.Fatalf("latest usage = %+v", thread.LatestUsage)
 	}
+	requireLogRecord(t, logs.records(t), "response usage", map[string]any{
+		"transport":          "http",
+		"thread":             "session",
+		"turn":               "codex-turn",
+		"request_kind":       "compaction",
+		"account":            "account-a",
+		"rotation_source":    "",
+		"compaction_replay":  false,
+		"model":              "gpt-5.6-sol",
+		"service_tier":       "",
+		"input_tokens":       float64(1_000),
+		"cached_tokens":      float64(800),
+		"cache_write_tokens": float64(100),
+		"output_tokens":      float64(100),
+		"reasoning_tokens":   float64(60),
+	})
 }
 
 func TestHTTPMissingPreviousResponseFailsBeforeUpstream(t *testing.T) {

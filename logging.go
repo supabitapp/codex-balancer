@@ -66,6 +66,26 @@ func routingLogAttrs(candidate routingCandidate, now time.Time) []any {
 	}
 }
 
+func logResponseUsage(log *slog.Logger, via transport, thread, account, model, serviceTier string, metadata turnMetadata, rotationSource string, compactionReplay bool, duration time.Duration, usage responseUsage) {
+	log.Debug("response usage",
+		"transport", via,
+		"thread", thread,
+		"turn", metadata.TurnID,
+		"request_kind", metadata.RequestKind,
+		"account", account,
+		"rotation_source", rotationSource,
+		"compaction_replay", compactionReplay,
+		"model", model,
+		"service_tier", serviceTier,
+		"duration", duration,
+		"input_tokens", usage.InputTokens,
+		"cached_tokens", usage.InputDetails.CachedTokens,
+		"cache_write_tokens", usage.InputDetails.CacheWriteTokens,
+		"output_tokens", usage.OutputTokens,
+		"reasoning_tokens", usage.OutputDetails.ReasoningTokens,
+	)
+}
+
 func windowLogValue(value window) slog.Value {
 	return slog.GroupValue(
 		slog.Bool("known", value.known()),

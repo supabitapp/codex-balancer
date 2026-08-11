@@ -354,7 +354,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 		attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
 		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 		s.log.Debug("http turn routed", attrs...)
-		s.relay(w, resp, sent, key, id, request, metadata)
+		s.relay(w, resp, sent, key, id, request, metadata, affinity.compactionReplay)
 		return
 	}
 	s.log.Warn("every account failed", "transport", transportHTTP, "thread", key, "attempts", maxAttempts)
@@ -513,22 +513,23 @@ func (b *prefixedResponseBody) Close() error {
 	return b.body.Close()
 }
 
-func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, thread, account string, request responseRequestData, metadata turnMetadata) {
+func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Time, thread, account string, request responseRequestData, metadata turnMetadata, compactionReplay bool) {
 	defer resp.Body.Close()
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
 	control := http.NewResponseController(w)
 	inspector := responseOwnerInspector{
-		store:       s.affinity,
-		stats:       s.stats,
-		thread:      thread,
-		account:     account,
-		model:       request.Model,
-		serviceTier: request.ServiceTier,
-		metadata:    metadata,
-		started:     sent,
-		log:         s.log,
+		store:            s.affinity,
+		stats:            s.stats,
+		thread:           thread,
+		account:          account,
+		model:            request.Model,
+		serviceTier:      request.ServiceTier,
+		metadata:         metadata,
+		compactionReplay: compactionReplay,
+		started:          sent,
+		log:              s.log,
 	}
 	first := true
 	buf := make([]byte, 32<<10)
@@ -556,22 +557,23 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Tim
 }
 
 type responseOwnerInspector struct {
-	store         *AffinityStore
-	stats         *Stats
-	thread        string
-	account       string
-	model         string
-	serviceTier   string
-	metadata      turnMetadata
-	started       time.Time
-	buffer        []byte
-	event         []byte
-	afterCR       bool
-	discardLine   bool
-	discardEvent  bool
-	usageRecorded bool
-	completed     bool
-	log           *slog.Logger
+	store            *AffinityStore
+	stats            *Stats
+	thread           string
+	account          string
+	model            string
+	serviceTier      string
+	metadata         turnMetadata
+	compactionReplay bool
+	started          time.Time
+	buffer           []byte
+	event            []byte
+	afterCR          bool
+	discardLine      bool
+	discardEvent     bool
+	usageRecorded    bool
+	completed        bool
+	log              *slog.Logger
 }
 
 func (i *responseOwnerInspector) write(data []byte) {
@@ -707,6 +709,7 @@ func (i *responseOwnerInspector) inspect(line []byte) {
 			serviceTier = i.serviceTier
 		}
 		i.stats.recordUsage(i.thread, model, serviceTier, payload.Usage)
+		logResponseUsage(i.log, transportHTTP, i.thread, i.account, model, serviceTier, i.metadata, "", i.compactionReplay, time.Since(i.started), payload.Usage)
 		i.usageRecorded = true
 	}
 	if !i.completed && (event.Type == "response.completed" || event.Object == "response" && payload.Status == "completed") {
