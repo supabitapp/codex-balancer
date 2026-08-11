@@ -64,3 +64,21 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 		}
 	}
 }
+
+func TestTotalsColumnsStayCompactOnWideTerminals(t *testing.T) {
+	dashboard := dashboard{}
+	positions := func(width int) [3]int {
+		line := strings.Split(dashboard.totals(width), "\n")[2]
+		return [3]int{
+			strings.Index(line, "turns"),
+			strings.Index(line, "http"),
+			strings.Index(line, "ws turns"),
+		}
+	}
+
+	narrow := positions(120)
+	wide := positions(300)
+	if narrow != wide {
+		t.Fatalf("totals columns moved from %v to %v when the terminal widened", narrow, wide)
+	}
+}

@@ -546,12 +546,18 @@ func (d dashboard) totals(width int) string {
 			stat("api estimate", formatAPIPrice(s.APICostNanoDollars, s.UnpricedResponses)),
 		},
 	}
-	cellWidth := (width - 2*columnGap) / 3
+	cellWidths := make([]int, len(stats[0]))
+	maxCellWidth := (width - (len(cellWidths)-1)*columnGap) / len(cellWidths)
+	for _, statRow := range stats {
+		for i, value := range statRow {
+			cellWidths[i] = min(max(cellWidths[i], lipgloss.Width(value)), maxCellWidth)
+		}
+	}
 	rows := make([]string, 0, len(stats))
 	for _, statRow := range stats {
 		cells := make([]string, 0, len(statRow))
-		for _, value := range statRow {
-			cells = append(cells, lipgloss.NewStyle().Width(cellWidth).MaxWidth(cellWidth).Render(value))
+		for i, value := range statRow {
+			cells = append(cells, lipgloss.NewStyle().Width(cellWidths[i]).MaxWidth(cellWidths[i]).Render(value))
 		}
 		rows = append(rows, strings.Join(cells, strings.Repeat(" ", columnGap)))
 	}
