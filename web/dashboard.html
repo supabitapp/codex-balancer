@@ -133,7 +133,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Turns</th>
 <th>WS</th>
 <th>Traffic 24h %</th>
-<th>Limits 24h</th>
 <th>Activity 24h</th>
 </tr></thead>
 <tbody>{{range .Accounts}}<tr>
@@ -146,7 +145,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.Turns}}</td>
 <td>{{.OpenWebSockets}}</td>
 <td class="dim">{{.Traffic}}</td>
-<td>{{.RateLimits}}</td>
 <td class="spark">{{.Activity}}</td>
 </tr>{{end}}</tbody>
 </table>{{else}}<div class="empty">(none)</div>{{end}}

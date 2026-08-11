@@ -203,10 +203,13 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>Traffic 24h %</th>", "<th>Limits 24h</th>", "<th>Activity 24h</th>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
+	}
+	if strings.Contains(body, "<th>Limits 24h</th>") {
+		t.Fatal("dashboard contains Limits 24h column")
 	}
 }
 

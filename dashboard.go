@@ -53,7 +53,6 @@ type dashboardAccountView struct {
 	Turns          string
 	OpenWebSockets string
 	Traffic        string
-	RateLimits     string
 	Activity       string
 }
 
@@ -219,7 +218,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Turns:          dashboardNumber(account.Turns),
 			OpenWebSockets: dashboardNumber(account.OpenWebSockets),
 			Traffic:        traffic,
-			RateLimits:     dashboardNumber(account.RateLimits),
 			Activity:       sparkline(account.Activity),
 		})
 	}
