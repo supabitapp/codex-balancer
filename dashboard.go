@@ -176,6 +176,10 @@ func renderDashboard(name string, view dashboardView) ([]byte, error) {
 func (s *server) currentDashboard(now time.Time) dashboardView {
 	snapshot := s.stats.snapshot()
 	stats := s.statsResponseAt(now, snapshot)
+	var trafficTurns int64
+	for _, account := range stats.Accounts {
+		trafficTurns += activityTotal(account.Activity)
+	}
 	counts := map[accountStatus]int{}
 	names := make(map[string]string, len(stats.Accounts))
 	accounts := make([]dashboardAccountView, 0, len(stats.Accounts))
@@ -200,8 +204,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			resetIn = short(account.ResetAt.Sub(now))
 		}
 		traffic := ""
-		if snapshot.Turns > 0 {
-			traffic = dashboardNumber(account.Turns * 100 / snapshot.Turns)
+		if trafficTurns > 0 {
+			traffic = dashboardNumber(activityTotal(account.Activity) * 100 / trafficTurns)
 		}
 		accounts = append(accounts, dashboardAccountView{
 			Name:           name,

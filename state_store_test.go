@@ -294,6 +294,10 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if snapshot.WSOpen != 0 || snapshot.Accounts["account-a"].WSOpen != 0 {
 		t.Fatalf("live sockets survived restart: %+v", snapshot)
 	}
+	account := snapshot.Accounts["account-a"]
+	if account.Turns != 2 || account.Limited != 1 || activityTotal(account.Activity) != 2 {
+		t.Fatalf("account stats = %+v", account)
+	}
 	if len(snapshot.Threads) != 0 {
 		t.Fatalf("restored inactive threads = %+v", snapshot.Threads)
 	}

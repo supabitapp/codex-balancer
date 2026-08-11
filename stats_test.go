@@ -52,6 +52,29 @@ func TestSnapshotKeepsThreadsUntilTheirLastLiveReferenceCloses(t *testing.T) {
 	}
 }
 
+func TestAccountSnapshotUsesLast24Hours(t *testing.T) {
+	stats := newStats()
+	now := time.Now()
+	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now.Add(-23*time.Hour-30*time.Minute), "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now.Add(-30*time.Minute), "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now.Add(-30*time.Minute), "", "", "account-b", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRateLimited(now.Add(-25*time.Hour), "account-a")
+	stats.applyRateLimited(now.Add(-time.Hour), "account-a")
+
+	snapshot := stats.snapshot()
+	account := snapshot.Accounts["account-a"]
+	if account.Turns != 3 || account.Limited != 1 {
+		t.Fatalf("account totals = %+v, want three lifetime turns and one recent limit", account)
+	}
+	if len(account.Activity) != 24 || account.Activity[0] != 1 || account.Activity[23] != 1 {
+		t.Fatalf("account activity = %v, want recent and oldest hourly buckets", account.Activity)
+	}
+	if snapshot.Turns != 4 || snapshot.Limited != 2 {
+		t.Fatalf("lifetime totals = %+v", snapshot)
+	}
+}
+
 func TestThreadUsageFollowsCurrentLiveRoute(t *testing.T) {
 	stats := newStats()
 	now := time.Now()

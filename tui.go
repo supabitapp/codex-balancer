@@ -203,9 +203,7 @@ func (d dashboard) header() string {
 func rate(s Snapshot) string {
 	var recent int64
 	for _, a := range s.Accounts {
-		for _, v := range a.Activity {
-			recent += v
-		}
+		recent += activityTotal(a.Activity)
 	}
 	span := float64(activityLen) * activitySpan.Minutes()
 	return fmt.Sprintf("%.1f turns/min", float64(recent)/span)
@@ -220,6 +218,10 @@ func (d dashboard) accounts(limit int) string {
 	cursor := min(max(d.cursor, 0), len(accounts)-1)
 	start := min(max(cursor-limit+1, 0), len(accounts)-limit)
 	end := start + limit
+	var trafficTurns int64
+	for _, account := range accounts {
+		trafficTurns += activityTotal(d.snap.Accounts[account.id()].Activity)
+	}
 
 	nameW := 9
 	for _, a := range accounts {
@@ -296,8 +298,8 @@ func (d dashboard) accounts(limit int) string {
 			websockets = fmt.Sprintf("%d", stat.WSOpen)
 		}
 		traffic := ""
-		if d.snap.Turns > 0 {
-			traffic = fmt.Sprintf("%d%%", stat.Turns*100/d.snap.Turns)
+		if trafficTurns > 0 {
+			traffic = fmt.Sprintf("%d%%", activityTotal(stat.Activity)*100/trafficTurns)
 		}
 		limits := ""
 		if stat.Limited > 0 {

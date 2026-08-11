@@ -17,8 +17,9 @@ import (
 const (
 	eventLog            = 200
 	threadHistoryWindow = 5 * time.Minute
+	accountStatsWindow  = 24 * time.Hour
 	activityLen         = 24
-	activitySpan        = 30 * time.Second
+	activitySpan        = accountStatsWindow / activityLen
 
 	eventRateLimited       = "rate limited"
 	eventFailover          = "failover"
@@ -64,10 +65,14 @@ type Stats struct {
 
 type accountStats struct {
 	turns    int64
-	limited  int64
+	limited  rollingCounter
 	wsOpen   int64
-	activity [activityLen]int64
-	bucket   int64
+	activity rollingCounter
+}
+
+type rollingCounter struct {
+	events []time.Time
+	start  int
 }
 
 type threadStats struct {
@@ -172,9 +177,13 @@ func (s *Stats) rateLimited(account string) {
 	s.persistEvent(storedEvent{At: now, Kind: eventRateLimited, Account: account})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.limited++
-	s.account(account).limited++
+	s.applyRateLimited(now, account)
 	s.appendEvent(Event{At: now, Kind: eventRateLimited, Account: account})
+}
+
+func (s *Stats) applyRateLimited(now time.Time, account string) {
+	s.limited++
+	s.account(account).limited.add(now)
 }
 
 func (s *Stats) failedOver(account, reason string) {
@@ -201,8 +210,7 @@ func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, eff
 	}
 	a := s.account(account)
 	a.turns++
-	advanceActivity(a, now)
-	a.activity[0]++
+	a.activity.add(now)
 
 	if thread == "" {
 		return
@@ -458,9 +466,6 @@ func (s *Stats) snapshot() Snapshot {
 	now := time.Now()
 	s.syncUsageMonth(calendarMonth(now))
 	s.pruneThreadHistory(now)
-	for _, account := range s.accounts {
-		advanceActivity(account, now)
-	}
 
 	out := Snapshot{
 		Uptime:             time.Since(s.started),
@@ -481,11 +486,13 @@ func (s *Stats) snapshot() Snapshot {
 		out.TTFB = s.ttfbSum / time.Duration(s.ttfbN)
 	}
 	for id, a := range s.accounts {
+		activity := a.activity.recent(now)
+		limited := a.limited.recent(now)
 		out.Accounts[id] = AccountSnapshot{
 			Turns:    a.turns,
-			Limited:  a.limited,
+			Limited:  int64(len(limited)),
 			WSOpen:   a.wsOpen,
-			Activity: append([]int64(nil), a.activity[:]...),
+			Activity: accountActivity(now, activity),
 		}
 	}
 	for _, t := range s.threads {
@@ -536,19 +543,47 @@ func (s *Stats) syncUsageMonth(month int) {
 	s.unpricedResponses = 0
 }
 
-func advanceActivity(account *accountStats, now time.Time) {
-	slot := now.UnixNano() / int64(activitySpan)
-	if account.bucket == 0 {
-		account.bucket = slot
-		return
+func (c *rollingCounter) add(at time.Time) {
+	c.events = append(c.events, at)
+	c.recent(at)
+}
+
+func (c *rollingCounter) recent(now time.Time) []time.Time {
+	cutoff := now.Add(-accountStatsWindow)
+	for c.start < len(c.events) && !c.events[c.start].After(cutoff) {
+		c.start++
 	}
-	if slot <= account.bucket {
-		return
+	if c.start == len(c.events) {
+		c.events = c.events[:0]
+		c.start = 0
+		return c.events
 	}
-	shift := min(slot-account.bucket, activityLen)
-	copy(account.activity[shift:], account.activity[:activityLen-shift])
-	clear(account.activity[:shift])
-	account.bucket = slot
+	recent := c.events[c.start:]
+	if c.start >= 1024 && c.start*2 >= len(c.events) {
+		copy(c.events, recent)
+		c.events = c.events[:len(recent)]
+		c.start = 0
+		return c.events
+	}
+	return recent
+}
+
+func accountActivity(now time.Time, events []time.Time) []int64 {
+	activity := make([]int64, activityLen)
+	for _, at := range events {
+		age := max(now.Sub(at), 0)
+		bucket := min(int(age/activitySpan), activityLen-1)
+		activity[bucket]++
+	}
+	return activity
+}
+
+func activityTotal(activity []int64) int64 {
+	var total int64
+	for _, count := range activity {
+		total += count
+	}
+	return total
 }
 
 type statsResponse struct {

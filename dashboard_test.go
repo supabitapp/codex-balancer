@@ -180,6 +180,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	account.adoptResetCredits(0, nil)
 	other := testAccount("account-b", 20)
 	stats := newStats()
+	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
 	stats.applyRouted(now, "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
 	for range 100 {
 		stats.applyRouted(now, "", "", "account-b", "", "", "", transportHTTP, turnMetadata{})
@@ -202,7 +203,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>Traffic %</th>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Traffic 24h %</th>", "<th>Limits 24h</th>", "<th>Activity 24h</th>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}

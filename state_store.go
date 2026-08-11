@@ -470,8 +470,7 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 			stats.applyUsageAt(event.At, event.Thread, event.Account, event.Model, event.ServiceTier, event.Usage)
 			continue
 		case eventRateLimited:
-			stats.limited++
-			stats.account(event.Account).limited++
+			stats.applyRateLimited(event.At, event.Account)
 		case eventFailover:
 			stats.failures++
 		}
