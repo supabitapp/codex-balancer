@@ -508,8 +508,9 @@ func (d dashboard) events(width, height int) string {
 		style   lipgloss.Style
 	}
 	names := d.shortNames()
-	views := make([]eventView, 0, len(d.snap.Events))
-	for i := len(d.snap.Events) - 1; i >= 0; i-- {
+	limit := max(height-3, 0)
+	views := make([]eventView, 0, min(len(d.snap.Events), limit))
+	for i := len(d.snap.Events) - 1; i >= 0 && len(views) < limit; i-- {
 		e := d.snap.Events[i]
 		account, detail, visible := eventText(e, names)
 		if !visible {

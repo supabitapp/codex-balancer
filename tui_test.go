@@ -105,14 +105,22 @@ func TestTotalsRenderLabelValueTable(t *testing.T) {
 func TestEventsRenderCompactTable(t *testing.T) {
 	dashboard := dashboard{
 		pool: &Pool{},
-		snap: Snapshot{Events: []Event{{
-			At:      time.Date(2026, time.August, 11, 9, 26, 15, 0, time.UTC),
-			Kind:    "automatic reset failed",
-			Account: "vuonghoainam.work",
-			Detail:  "reset credits returned 429 Too Many Requests",
-		}}},
+		snap: Snapshot{Events: []Event{
+			{
+				Kind:          eventCompactionSwitch,
+				Account:       "target-account",
+				SourceAccount: "source-account",
+				Thread:        "019feea0private",
+			},
+			{
+				At:      time.Date(2026, time.August, 11, 9, 26, 15, 0, time.UTC),
+				Kind:    "automatic reset failed",
+				Account: "vuonghoainam.work",
+				Detail:  "reset credits returned 429 Too Many Requests",
+			},
+		}},
 	}
-	lines := strings.Split(dashboard.events(120, 8), "\n")
+	lines := strings.Split(dashboard.events(120, 4), "\n")
 	header := lines[2]
 	row := lines[3]
 	for label, value := range map[string]string{
@@ -125,8 +133,11 @@ func TestEventsRenderCompactTable(t *testing.T) {
 			t.Fatalf("%s column starts at %d, want %d", label, got, want)
 		}
 	}
-	narrowHeader := strings.Split(dashboard.events(120, 8), "\n")[2]
-	wideHeader := strings.Split(dashboard.events(300, 8), "\n")[2]
+	if detailColumn := textColumn(t, header, "Detail"); detailColumn != 41 {
+		t.Fatalf("detail column starts at %d, want 41", detailColumn)
+	}
+	narrowHeader := strings.Split(dashboard.events(120, 4), "\n")[2]
+	wideHeader := strings.Split(dashboard.events(300, 4), "\n")[2]
 	for _, label := range []string{"Time", "Event", "Account", "Detail"} {
 		if narrow, wide := textColumn(t, narrowHeader, label), textColumn(t, wideHeader, label); narrow != wide {
 			t.Fatalf("%s column moved from %d to %d when the terminal widened", label, narrow, wide)
