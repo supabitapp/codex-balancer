@@ -20,7 +20,7 @@ const (
 	dashboardContextBaseline = 12_000
 )
 
-//go:embed web/dashboard.html web/dashboard.js web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
+//go:embed web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
 var dashboardFiles embed.FS
 
 var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.FuncMap{
@@ -103,14 +103,14 @@ func dashboardAssetURL(name string) string {
 	return fmt.Sprintf("/dashboard/assets/%s?v=%x", name, hash[:8])
 }
 
-func dashboardScript(path string) http.HandlerFunc {
+func webAsset(path, contentType, cacheControl string) http.HandlerFunc {
 	content, err := dashboardFiles.ReadFile(path)
 	if err != nil {
 		panic(err)
 	}
 	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", cacheControl)
+		w.Header().Set("Content-Type", contentType)
 		w.Write(content)
 	}
 }
@@ -122,7 +122,7 @@ func (s *server) dashboardPage(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

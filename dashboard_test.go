@@ -44,6 +44,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		t.Fatalf("status = %s, CSP = %q", response.Status, response.Header.Get("Content-Security-Policy"))
 	}
 	for _, expected := range []string{
+		`<link rel="icon" href="/favicon.svg" type="image/svg+xml">`,
 		`src="` + dashboardAssetURL("dashboard.js") + `"`,
 		`src="/dashboard/assets/htmx-2.0.10.min.js"`,
 		`src="/dashboard/assets/ws-2.0.4.min.js"`,
@@ -67,18 +68,21 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 	}
 }
 
-func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
+func TestWebAssetsAreServedFromBinary(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: newStats()}
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
 
 	for _, asset := range []struct {
-		path string
-		min  int
+		path         string
+		contentType  string
+		cacheControl string
+		min          int
 	}{
-		{"/dashboard/assets/dashboard.js", 500},
-		{"/dashboard/assets/htmx-2.0.10.min.js", 1_000},
-		{"/dashboard/assets/ws-2.0.4.min.js", 1_000},
+		{"/favicon.svg", "image/svg+xml", "public, max-age=3600", 100},
+		{"/dashboard/assets/dashboard.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 500},
+		{"/dashboard/assets/htmx-2.0.10.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
+		{"/dashboard/assets/ws-2.0.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
 	} {
 		response, err := http.Get(httpServer.URL + asset.path)
 		if err != nil {
@@ -89,10 +93,10 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
-		if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/javascript") || len(payload) < asset.min {
+		if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != asset.contentType || len(payload) < asset.min {
 			t.Fatalf("%s returned status %s, content type %q, length %d", asset.path, response.Status, response.Header.Get("Content-Type"), len(payload))
 		}
-		if response.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		if response.Header.Get("Cache-Control") != asset.cacheControl {
 			t.Fatalf("%s cache control = %q", asset.path, response.Header.Get("Cache-Control"))
 		}
 	}
