@@ -124,7 +124,7 @@ func TestPoolRoutePrioritizesImminentResetsAfterAffinity(t *testing.T) {
 	resetting := testAccount("account-resetting", 80)
 	resetting.primary = window{usedPercent: 80, minutes: 300, resetsAt: now.Add(30 * time.Minute), seenAt: now}
 	roomier := testAccount("account-roomier", 10)
-	roomier.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(2 * time.Hour), seenAt: now}
+	roomier.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(48 * time.Hour), seenAt: now}
 	pool := &Pool{accounts: []*Account{roomier, resetting}}
 
 	if got := pool.route("", "", nil, nil).account; got != resetting {
@@ -136,7 +136,7 @@ func TestPoolRoutePrioritizesImminentResetsAfterAffinity(t *testing.T) {
 	if got := pool.route(roomier.id(), "", nil, nil).account; got != roomier {
 		t.Fatalf("hard route selected %s, want affinity owner", got.id())
 	}
-	resetting.primary.resetsAt = now.Add(2 * time.Hour)
+	resetting.primary.resetsAt = now.Add(25 * time.Hour)
 	if got := pool.route("", "", nil, nil).account; got != roomier {
 		t.Fatalf("route outside lead selected %s, want roomier account", got.id())
 	}
@@ -173,7 +173,11 @@ func TestAccountPriorityStatusUsesResetLeadWindow(t *testing.T) {
 		t.Fatalf("spent status = %s, want cooling", got)
 	}
 	account.spent = false
-	account.primary.resetsAt = now.Add(time.Hour + time.Second)
+	account.primary.resetsAt = now.Add(24 * time.Hour)
+	if got := account.status(now); got != accountPriority {
+		t.Fatalf("status at lead boundary = %s, want priority", got)
+	}
+	account.primary.resetsAt = now.Add(24*time.Hour + time.Second)
 	if got := account.status(now); got != accountLive {
 		t.Fatalf("status = %s outside lead, want live", got)
 	}

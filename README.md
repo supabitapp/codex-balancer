@@ -40,7 +40,7 @@ The usage poll redeems the earliest available rate-limit reset credit once it
 is within one hour of expiry.
 
 Fresh routes keep hard and soft affinity, then prefer live accounts with a
-quota window that resets within one hour. The earliest reset wins. Remaining
+quota window that resets within 24 hours. The earliest reset wins. Remaining
 routes use the lowest limit use, then the account used least recently.
 
 `GET /stats` returns the same live account status as public JSON. Account emails

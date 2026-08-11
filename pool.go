@@ -16,7 +16,7 @@ import (
 const (
 	minCooldown       = 30 * time.Second
 	maxCooldown       = time.Hour
-	resetPriorityLead = time.Hour
+	resetPriorityLead = 24 * time.Hour
 )
 
 type Pool struct {
