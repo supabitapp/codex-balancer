@@ -158,28 +158,28 @@ func TestPoolRoutePrioritizesEarliestBankedResetExpiry(t *testing.T) {
 	}
 }
 
-func TestPoolRouteDemotesResetPriorityAtTenPercentWeeklyRemaining(t *testing.T) {
+func TestPoolRouteDemotesResetPriorityAtZeroWeeklyRemaining(t *testing.T) {
 	now := time.Now()
-	resetting := testAccount("account-resetting", 90)
+	resetting := testAccount("account-resetting", 100)
 	resetting.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(4 * time.Hour), seenAt: now}
-	resetting.secondary = window{usedPercent: 90, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+	resetting.secondary = window{usedPercent: 100, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
 	adoptTestResetCredit(resetting, now.Add(30*time.Minute))
 	roomier := testAccount("account-roomier", 10)
 	roomier.secondary = window{usedPercent: 10, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
 	pool := &Pool{accounts: []*Account{resetting, roomier}}
 
 	if got := pool.route("", "", nil, nil).account; got != roomier {
-		t.Fatalf("account = %s, want roomier account at priority threshold", got.id())
+		t.Fatalf("account = %s, want roomier account at zero remaining", got.id())
 	}
 	if got := resetting.status(now); got != accountLive {
-		t.Fatalf("status = %s, want live at priority threshold", got)
+		t.Fatalf("status = %s, want live at zero remaining", got)
 	}
-	resetting.secondary.usedPercent = 89.99
+	resetting.secondary.usedPercent = 99.99
 	if got := pool.route("", "", nil, nil).account; got != resetting {
-		t.Fatalf("account = %s, want reset account above priority threshold", got.id())
+		t.Fatalf("account = %s, want reset account above zero remaining", got.id())
 	}
 	if got := resetting.status(now); got != accountPriority {
-		t.Fatalf("status = %s, want priority above threshold", got)
+		t.Fatalf("status = %s, want priority above zero remaining", got)
 	}
 }
 

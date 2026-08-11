@@ -14,10 +14,9 @@ import (
 )
 
 const (
-	minCooldown                            = 30 * time.Second
-	maxCooldown                            = time.Hour
-	resetPriorityLead                      = 24 * time.Hour
-	resetPriorityRemainingPercentThreshold = 10
+	minCooldown       = 30 * time.Second
+	maxCooldown       = time.Hour
+	resetPriorityLead = 24 * time.Hour
 )
 
 type Pool struct {
@@ -240,7 +239,7 @@ func (c routingCandidate) quotaKnown() bool {
 
 func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool) {
 	remaining, known := remainingPercent(longestWindow(c.primary, c.secondary))
-	if !known || remaining <= resetPriorityRemainingPercentThreshold {
+	if !known || remaining == 0 {
 		return routingPriority{}, false
 	}
 	credit, ok := nextExpiringResetCredit(c.resetCredits.details, now, resetPriorityLead)

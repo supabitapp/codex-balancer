@@ -40,9 +40,9 @@ The usage poll redeems the earliest available rate-limit reset credit once it
 is within one hour of expiry.
 
 Fresh routes keep hard and soft affinity, then prefer live accounts with a
-banked reset that expires within 24 hours and more than 10% weekly capacity
-left. The earliest expiry wins. Remaining routes use the lowest limit use,
-then the account used least recently.
+banked reset that expires within 24 hours and weekly capacity left. The
+earliest expiry wins. Remaining routes use the lowest limit use, then the
+account used least recently.
 
 `GET /stats` returns the same live account status as public JSON. Account emails
 hide their domain and all but the first and last local-part characters, such as
