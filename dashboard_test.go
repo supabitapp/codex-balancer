@@ -103,7 +103,7 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 }
 
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
-	stats := newStats()
+	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("019fe5c2private")
 	stats.routed("019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{})
 	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
@@ -292,7 +292,7 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 
 func TestDashboardOverview(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("BST", 60*60))
-	stats := newStats()
+	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.started = time.Now().Add(-28 * time.Minute)
 	stats.usageMonth = calendarMonth(now)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
@@ -315,6 +315,7 @@ func TestDashboardOverview(t *testing.T) {
 		t.Fatalf("overview metrics = %+v", view.Overview)
 	}
 	wantInfo := "Calculated from 1 August 2026, 00:00 BST"
+	wantPriceInfo := wantInfo + ". Prices from models.dev, updated 11 August 2026, 16:00 BST"
 	apiEstimateFound := false
 	for i, metric := range view.Overview {
 		if metric.Name != wantNames[i] {
@@ -332,8 +333,8 @@ func TestDashboardOverview(t *testing.T) {
 		switch metric.Name {
 		case "API estimate":
 			apiEstimateFound = true
-			if metric.Info != wantInfo {
-				t.Fatalf("API estimate info = %q, want %q", metric.Info, wantInfo)
+			if metric.Info != wantPriceInfo {
+				t.Fatalf("API estimate info = %q, want %q", metric.Info, wantPriceInfo)
 			}
 		case "turns", "http", "ws turns", "ws open", "turn rate", "estimated TPS", "threads", "accounts", "failovers", "rate limits", "ttfb":
 			t.Fatalf("removed overview metric %q is still present", metric.Name)

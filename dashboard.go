@@ -258,6 +258,10 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 
 	monthInfo := "Calculated from " + calendarMonthStart(now).Format("2 January 2006, 15:04 MST")
+	priceInfo := monthInfo
+	if !snapshot.PriceFetchedAt.IsZero() {
+		priceInfo += ". Prices from models.dev, updated " + snapshot.PriceFetchedAt.In(now.Location()).Format("2 January 2006, 15:04 MST")
+	}
 	overview := dashboardResourceMetrics(s.resources.usage(now))
 	overview = append(overview,
 		dashboardMetric{Name: "uptime", Value: short(snapshot.Uptime)},
@@ -267,7 +271,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		dashboardMetric{
 			Name:  "API estimate",
 			Value: formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses),
-			Info:  monthInfo,
+			Info:  priceInfo,
 		},
 	)
 	return dashboardView{

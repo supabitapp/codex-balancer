@@ -84,8 +84,22 @@ func serverCmd(args []string) error {
 	if logFile != nil {
 		defer logFile.Close()
 	}
+	prices, err := newPriceCatalog(store)
+	if err != nil {
+		return fmt.Errorf("load price catalog: %w", err)
+	}
+	if prices.refreshIn(time.Now()) == 0 {
+		refreshCtx, cancelRefresh := context.WithTimeout(context.Background(), priceRefreshTimeout)
+		snapshot, refreshErr := prices.refresh(refreshCtx)
+		cancelRefresh()
+		if refreshErr != nil {
+			log.Warn("price refresh failed", "error", refreshErr)
+		} else {
+			prices.install(snapshot)
+		}
+	}
 	compactionRotation := newCompactionRotation(log)
-	stats, err := newPersistentStats(store, func(err error) {
+	stats, err := newPersistentStats(store, prices.current(), func(err error) {
 		log.Error("state write failed", "error", err)
 	})
 	if err != nil {
@@ -100,6 +114,7 @@ func serverCmd(args []string) error {
 		ctx:                ctx,
 		pool:               pool,
 		catalog:            newModelCatalog(),
+		prices:             prices,
 		affinity:           affinity,
 		compactionRotation: compactionRotation,
 		stats:              stats,
@@ -152,6 +167,7 @@ func serverCmd(args []string) error {
 
 	go srv.watchUsage(ctx, *poll)
 	go srv.watchModels(ctx)
+	go srv.watchPriceCatalog(ctx)
 
 	listener, err := net.Listen("tcp", *addr)
 	if err != nil {

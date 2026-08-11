@@ -78,6 +78,11 @@ var stateMigrations = []string{
 	`DROP TABLE IF EXISTS settings;`,
 	`ALTER TABLE attempts DROP COLUMN client_id;
 	ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';`,
+	`CREATE TABLE price_catalog (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		fetched_at_ns INTEGER NOT NULL CHECK (fetched_at_ns > 0),
+		payload BLOB NOT NULL CHECK (length(payload) > 0)
+	) STRICT;`,
 }
 
 type StateStore struct {
@@ -118,6 +123,24 @@ func (s *StateStore) clientIDKey() ([]byte, error) {
 		return nil, err
 	}
 	return key, nil
+}
+
+func (s *StateStore) loadPriceCatalog() (time.Time, []byte, error) {
+	var fetchedAt int64
+	var payload []byte
+	if err := s.db.QueryRow(`SELECT fetched_at_ns, payload FROM price_catalog WHERE id = 1`).Scan(&fetchedAt, &payload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return time.Time{}, nil, nil
+		}
+		return time.Time{}, nil, err
+	}
+	return time.Unix(0, fetchedAt), payload, nil
+}
+
+func (s *StateStore) savePriceCatalog(fetchedAt time.Time, payload []byte) error {
+	_, err := s.db.Exec(`INSERT INTO price_catalog (id, fetched_at_ns, payload) VALUES (1, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET fetched_at_ns = excluded.fetched_at_ns, payload = excluded.payload`, fetchedAt.UnixNano(), payload)
+	return err
 }
 
 func openStateStore(path string) (*StateStore, error) {
@@ -380,6 +403,26 @@ func (s *StateStore) recordEvent(event storedEvent) error {
 		event.Usage.InputTokens, event.Usage.InputDetails.CachedTokens, event.Usage.InputDetails.CacheWriteTokens, event.Usage.OutputTokens,
 		event.Usage.TotalTokens, event.Usage.OutputDetails.ReasoningTokens)
 	return err
+}
+
+func (s *StateStore) usageEventsSince(start time.Time) ([]storedEvent, error) {
+	rows, err := s.db.Query(`SELECT model, service_tier, input_tokens, cached_tokens, cache_write_tokens,
+		output_tokens, total_tokens, reasoning_tokens FROM events WHERE kind = ? AND at_ns >= ? ORDER BY id`, eventResponseUsage, start.UnixNano())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []storedEvent
+	for rows.Next() {
+		var event storedEvent
+		if err := rows.Scan(&event.Model, &event.ServiceTier, &event.Usage.InputTokens, &event.Usage.InputDetails.CachedTokens,
+			&event.Usage.InputDetails.CacheWriteTokens, &event.Usage.OutputTokens, &event.Usage.TotalTokens,
+			&event.Usage.OutputDetails.ReasoningTokens); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }
 
 func (s *StateStore) restoreStats(stats *Stats) error {

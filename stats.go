@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net"
 	"net/http"
 	"net/netip"
@@ -39,8 +40,10 @@ const (
 
 type Stats struct {
 	mu                 sync.Mutex
+	pricingMu          sync.Mutex
 	store              *StateStore
 	persistFailed      func(error)
+	prices             priceSnapshot
 	started            time.Time
 	turns              int64
 	failures           int64
@@ -97,18 +100,23 @@ type Event struct {
 }
 
 func newStats() *Stats {
+	return newStatsWithPrices(priceSnapshot{})
+}
+
+func newStatsWithPrices(prices priceSnapshot) *Stats {
 	now := time.Now()
 	return &Stats{
 		started:     now,
 		usageMonth:  calendarMonth(now),
+		prices:      prices,
 		accounts:    map[string]*accountStats{},
 		threads:     map[string]*threadStats{},
 		liveThreads: map[string]int{},
 	}
 }
 
-func newPersistentStats(store *StateStore, persistFailed func(error)) (*Stats, error) {
-	stats := newStats()
+func newPersistentStats(store *StateStore, prices priceSnapshot, persistFailed func(error)) (*Stats, error) {
+	stats := newStatsWithPrices(prices)
 	stats.store = store
 	stats.persistFailed = persistFailed
 	if err := store.restoreStats(stats); err != nil {
@@ -316,6 +324,8 @@ func (s *Stats) recordUsage(thread, account, model, serviceTier string, usage re
 	if usage.empty() {
 		return
 	}
+	s.pricingMu.Lock()
+	defer s.pricingMu.Unlock()
 	now := time.Now()
 	s.persistEvent(storedEvent{At: now, Kind: eventResponseUsage, Account: account, Thread: thread, Model: model, ServiceTier: serviceTier, Usage: usage})
 	s.applyUsageAt(now, thread, account, model, serviceTier, usage)
@@ -335,12 +345,44 @@ func (s *Stats) applyUsageAt(at time.Time, thread, account, model, serviceTier s
 	}
 	s.syncUsageMonth(month)
 	s.monthlyUsage.add(usage)
-	cost, known := estimateAPIPrice(model, serviceTier, usage)
+	cost, known := s.prices.estimate(model, serviceTier, usage)
 	if !known {
 		s.unpricedResponses++
 		return
 	}
 	s.apiCostNanoDollars += cost
+}
+
+func (s *Stats) reprice(prices priceSnapshot) error {
+	if s.store == nil {
+		return errors.New("price refresh needs state store")
+	}
+	s.pricingMu.Lock()
+	defer s.pricingMu.Unlock()
+	now := time.Now()
+	events, err := s.store.usageEventsSince(calendarMonthStart(now))
+	if err != nil {
+		return err
+	}
+	var usage responseUsage
+	var cost, unpriced int64
+	for _, event := range events {
+		usage.add(event.Usage)
+		price, known := prices.estimate(event.Model, event.ServiceTier, event.Usage)
+		if !known {
+			unpriced++
+			continue
+		}
+		cost += price
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.usageMonth = calendarMonth(now)
+	s.monthlyUsage = usage
+	s.apiCostNanoDollars = cost
+	s.unpricedResponses = unpriced
+	s.prices = prices
+	return nil
 }
 
 func (s *Stats) appendEvent(event Event) {
@@ -379,6 +421,7 @@ type Snapshot struct {
 	MonthlyUsage       responseUsage
 	APICostNanoDollars int64
 	UnpricedResponses  int64
+	PriceFetchedAt     time.Time
 	Accounts           map[string]AccountSnapshot
 	Threads            []ThreadSnapshot
 	Events             []Event
@@ -429,6 +472,7 @@ func (s *Stats) snapshot() Snapshot {
 		MonthlyUsage:       s.monthlyUsage,
 		APICostNanoDollars: s.apiCostNanoDollars,
 		UnpricedResponses:  s.unpricedResponses,
+		PriceFetchedAt:     s.prices.fetchedAt,
 		Accounts:           make(map[string]AccountSnapshot, len(s.accounts)),
 		Threads:            make([]ThreadSnapshot, 0, len(s.threads)),
 		Events:             append([]Event{}, s.events...),

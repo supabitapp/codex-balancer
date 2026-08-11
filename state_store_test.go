@@ -36,7 +36,7 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	want := []string{"accounts", "attempts", "bindings", "client_identity", "events"}
+	want := []string{"accounts", "attempts", "bindings", "client_identity", "events", "price_catalog"}
 	if !slices.Equal(tables, want) {
 		t.Fatalf("tables = %v, want %v", tables, want)
 	}
@@ -70,6 +70,7 @@ func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
 		rotate_after_compaction INTEGER NOT NULL CHECK (rotate_after_compaction IN (0, 1))
 	) STRICT;
 	INSERT INTO settings (id, rotate_after_compaction) VALUES (1, 0);
+	DROP TABLE price_catalog;
 	ALTER TABLE attempts DROP COLUMN client_ip;
 	ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 	PRAGMA user_version = 10;`); err != nil {
@@ -99,7 +100,8 @@ func TestStateStoreMigratesClientIDsToIPs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_ip;
+	if _, err := store.db.Exec(`DROP TABLE price_catalog;
+		ALTER TABLE attempts DROP COLUMN client_ip;
 		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, reasoning_effort, turn_metadata, client_id)
 		VALUES (1, 'thread', 'account', '', 'http', '', '', '52f3c1d8');
@@ -137,7 +139,8 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
+	if _, err := store.db.Exec(`DROP TABLE price_catalog;
+		ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
 		ALTER TABLE events DROP COLUMN thread_key;
 		ALTER TABLE events DROP COLUMN total_tokens;
@@ -174,7 +177,8 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`ALTER TABLE attempts DROP COLUMN client_ip;
+	if _, err := store.db.Exec(`DROP TABLE price_catalog;
+		ALTER TABLE attempts DROP COLUMN client_ip;
 		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 		INSERT INTO attempts (
 		at_ns, thread_key, account_id, service_tier, transport, client_id
@@ -249,7 +253,8 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stats, err := newPersistentStats(store, nil)
+	prices := testPriceSnapshot(t)
+	stats, err := newPersistentStats(store, prices, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +271,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	stats.note("account added", "account-a", "")
 	stats.compactionSwitched("codex-thread", "account-a", "account-b")
 	stats.websocketOpened("account-a")
-	wantCost, _ := estimateAPIPrice("gpt-5.6-sol", serviceTierFast, usage)
+	wantCost, _ := prices.estimate("gpt-5.6-sol", serviceTierFast, usage)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +280,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	restored, err := newPersistentStats(reopened, nil)
+	restored, err := newPersistentStats(reopened, prices, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +312,8 @@ func TestStatsRestoreDoesNotMarkHistoricalThreadsLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stats, err := newPersistentStats(store, nil)
+	prices := testPriceSnapshot(t)
+	stats, err := newPersistentStats(store, prices, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +341,7 @@ func TestStatsRestoreDoesNotMarkHistoricalThreadsLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	restored, err := newPersistentStats(reopened, nil)
+	restored, err := newPersistentStats(reopened, prices, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,17 +383,47 @@ func TestStatsRestoreUsesCurrentMonthUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	stats, err := newPersistentStats(reopened, nil)
+	prices := testPriceSnapshot(t)
+	stats, err := newPersistentStats(reopened, prices, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := estimateAPIPrice("gpt-5.6-sol", "", currentUsage)
+	want, _ := prices.estimate("gpt-5.6-sol", "", currentUsage)
 	snapshot := stats.snapshot()
 	if snapshot.MonthlyUsage != currentUsage {
 		t.Fatalf("monthly usage = %+v, want %+v", snapshot.MonthlyUsage, currentUsage)
 	}
 	if snapshot.APICostNanoDollars != want || snapshot.UnpricedResponses != 0 {
 		t.Fatalf("API estimate = %d with %d unpriced, want %d with none", snapshot.APICostNanoDollars, snapshot.UnpricedResponses, want)
+	}
+}
+
+func TestStatsRepricesCurrentMonthAfterCatalogRefresh(t *testing.T) {
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	stats, err := newPersistentStats(store, priceSnapshot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
+	stats.recordUsage("thread", "account", "gpt-5.4", "default", usage)
+	before := stats.snapshot()
+	if before.UnpricedResponses != 1 || before.APICostNanoDollars != 0 {
+		t.Fatalf("estimate before refresh = %d with %d unpriced", before.APICostNanoDollars, before.UnpricedResponses)
+	}
+	prices := testPriceSnapshot(t)
+	if err := stats.reprice(prices); err != nil {
+		t.Fatal(err)
+	}
+	after := stats.snapshot()
+	if after.APICostNanoDollars != 4_000_000 || after.UnpricedResponses != 0 {
+		t.Fatalf("estimate after refresh = %d with %d unpriced, want 4000000 with none", after.APICostNanoDollars, after.UnpricedResponses)
+	}
+	if after.MonthlyUsage != usage || !after.PriceFetchedAt.Equal(prices.fetchedAt) {
+		t.Fatalf("refreshed snapshot = %+v", after)
 	}
 }
 

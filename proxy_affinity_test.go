@@ -965,7 +965,7 @@ func newAffinityHTTPServer(
 		pool:         pool,
 		catalog:      newModelCatalog(),
 		affinity:     store,
-		stats:        newStats(),
+		stats:        newStatsWithPrices(testPriceSnapshot(t)),
 		upstream:     upstream.URL,
 		client:       newProxyClient(),
 		log:          log,

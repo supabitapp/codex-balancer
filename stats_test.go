@@ -168,7 +168,8 @@ func TestClientIDForIP(t *testing.T) {
 }
 
 func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
-	stats := newStats()
+	prices := testPriceSnapshot(t)
+	stats := newStatsWithPrices(prices)
 	previousMonth := time.Date(2026, time.July, 31, 23, 59, 0, 0, time.UTC)
 	currentMonth := previousMonth.Add(time.Minute)
 	stats.usageMonth = calendarMonth(previousMonth)
@@ -181,7 +182,7 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	wantUsage := usage
 	wantUsage.InputTokens += unpricedUsage.InputTokens
 	wantUsage.OutputTokens += unpricedUsage.OutputTokens
-	want, _ := estimateAPIPrice("gpt-5.6-sol", "default", usage)
+	want, _ := prices.estimate("gpt-5.6-sol", "default", usage)
 	if stats.monthlyUsage != wantUsage {
 		t.Fatalf("monthly usage = %+v, want %+v", stats.monthlyUsage, wantUsage)
 	}

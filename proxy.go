@@ -54,6 +54,7 @@ type server struct {
 	ctx                  context.Context
 	pool                 *Pool
 	catalog              *modelCatalog
+	prices               *priceCatalog
 	affinity             *AffinityStore
 	compactionRotation   *compactionRotation
 	stats                *Stats
