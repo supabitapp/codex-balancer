@@ -528,47 +528,51 @@ func (d dashboard) events(width, height int) string {
 }
 
 func (d dashboard) totals(width int) string {
+	type total struct {
+		label string
+		value string
+	}
 	s := d.snap
-	stats := [][]string{
+	stats := [3][3]total{
 		{
-			stat("turns", fmt.Sprintf("%d", s.Turns)),
-			stat("http", fmt.Sprintf("%d", s.Turns-s.WSTurns)),
-			stat("ws turns", fmt.Sprintf("%d", s.WSTurns)),
+			{"turns", fmt.Sprintf("%d", s.Turns)},
+			{"http", fmt.Sprintf("%d", s.Turns-s.WSTurns)},
+			{"ws turns", fmt.Sprintf("%d", s.WSTurns)},
 		},
 		{
-			stat("ws open", fmt.Sprintf("%d", s.WSOpen)),
-			stat("uptime", short(s.Uptime)),
-			stat("input tokens", formatTokenCount(s.MonthlyUsage.InputTokens)),
+			{"ws open", fmt.Sprintf("%d", s.WSOpen)},
+			{"uptime", short(s.Uptime)},
+			{"input tokens", formatTokenCount(s.MonthlyUsage.InputTokens)},
 		},
 		{
-			stat("cached input", formatTokenCount(s.MonthlyUsage.InputDetails.CachedTokens)),
-			stat("output tokens", formatTokenCount(s.MonthlyUsage.OutputTokens)),
-			stat("api estimate", formatAPIPrice(s.APICostNanoDollars, s.UnpricedResponses)),
+			{"cached input", formatTokenCount(s.MonthlyUsage.InputDetails.CachedTokens)},
+			{"output tokens", formatTokenCount(s.MonthlyUsage.OutputTokens)},
+			{"api estimate", formatAPIPrice(s.APICostNanoDollars, s.UnpricedResponses)},
 		},
 	}
-	cellWidths := make([]int, len(stats[0]))
-	maxCellWidth := (width - (len(cellWidths)-1)*columnGap) / len(cellWidths)
+	labelWidths := [3]int{}
+	valueWidths := [3]int{}
+	maxPairWidth := (width - (len(labelWidths)-1)*columnGap) / len(labelWidths)
 	for _, statRow := range stats {
-		for i, value := range statRow {
-			cellWidths[i] = min(max(cellWidths[i], lipgloss.Width(value)), maxCellWidth)
+		for i, stat := range statRow {
+			labelWidths[i] = max(labelWidths[i], lipgloss.Width(stat.label))
+			valueWidths[i] = max(valueWidths[i], lipgloss.Width(stat.value))
 		}
+	}
+	for i := range valueWidths {
+		valueWidths[i] = min(valueWidths[i], max(maxPairWidth-labelWidths[i]-1, 1))
 	}
 	rows := make([]string, 0, len(stats))
 	for _, statRow := range stats {
-		cells := make([]string, 0, len(statRow))
-		for i, value := range statRow {
-			cells = append(cells, lipgloss.NewStyle().Width(cellWidths[i]).MaxWidth(cellWidths[i]).Render(value))
+		pairs := make([]string, 0, len(statRow))
+		for i, stat := range statRow {
+			label := sDim.Width(labelWidths[i]).Render(stat.label)
+			value := sNum.Width(valueWidths[i]).MaxWidth(valueWidths[i]).Align(lipgloss.Right).Render(stat.value)
+			pairs = append(pairs, label+" "+value)
 		}
-		rows = append(rows, strings.Join(cells, strings.Repeat(" ", columnGap)))
+		rows = append(rows, strings.Join(pairs, strings.Repeat(" ", columnGap)))
 	}
 	return column("TOTALS", rows, width, len(rows)+2)
-}
-
-func stat(name, value string) string {
-	if name == "" {
-		return ""
-	}
-	return sDim.Render(pad(name, 12)) + sNum.Render(value)
 }
 
 func (d dashboard) shortNames() map[string]string {

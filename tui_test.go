@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"charm.land/lipgloss/v2"
 )
 
 func TestShortOmitsSecondsAfterOneMinute(t *testing.T) {
@@ -80,5 +82,29 @@ func TestTotalsColumnsStayCompactOnWideTerminals(t *testing.T) {
 	wide := positions(300)
 	if narrow != wide {
 		t.Fatalf("totals columns moved from %v to %v when the terminal widened", narrow, wide)
+	}
+}
+
+func TestTotalsRenderLabelValueTable(t *testing.T) {
+	dashboard := dashboard{snap: Snapshot{Turns: 70_600, WSTurns: 65_168, WSOpen: 777}}
+	dashboard.snap.MonthlyUsage.InputDetails.CachedTokens = 8_510_000_000
+	lines := strings.Split(dashboard.totals(120), "\n")
+	column := func(line, text string) int {
+		index := strings.Index(line, text)
+		if index < 0 {
+			t.Fatalf("totals row does not contain %q: %q", text, line)
+		}
+		return lipgloss.Width(line[:index])
+	}
+
+	turnsEnd := column(lines[2], "70600") + len("70600")
+	openEnd := column(lines[3], "777") + len("777")
+	cachedEnd := column(lines[4], "8.51B") + len("8.51B")
+	if turnsEnd != openEnd || openEnd != cachedEnd {
+		t.Fatalf("first value column is not right-aligned: %d, %d, %d", turnsEnd, openEnd, cachedEnd)
+	}
+	labelEnd := column(lines[4], "cached input") + len("cached input")
+	if valueStart := column(lines[4], "8.51B"); valueStart <= labelEnd {
+		t.Fatalf("cached input label ends at %d but value starts at %d", labelEnd, valueStart)
 	}
 }
