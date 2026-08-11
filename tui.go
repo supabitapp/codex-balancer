@@ -500,8 +500,15 @@ func (d dashboard) threads(width, height int) string {
 }
 
 func (d dashboard) events(width, height int) string {
+	type eventView struct {
+		at      string
+		kind    string
+		account string
+		detail  string
+		style   lipgloss.Style
+	}
 	names := d.shortNames()
-	rows := []string{}
+	views := make([]eventView, 0, len(d.snap.Events))
 	for i := len(d.snap.Events) - 1; i >= 0; i-- {
 		e := d.snap.Events[i]
 		account, detail, visible := eventText(e, names)
@@ -510,19 +517,54 @@ func (d dashboard) events(width, height int) string {
 		}
 		style := sDim
 		switch e.Kind {
-		case "failover":
+		case eventFailover:
 			style = sBad
-		case "rate limited":
+		case eventRateLimited:
 			style = sHot
 		}
-		rows = append(rows, fmt.Sprintf("%s %s %s %s",
-			sDim.Render(e.At.Format("15:04:05")),
-			style.Render(pad(e.Kind, 18)),
-			sText.Render(pad(account, 30)),
-			sDim.Render(detail)))
+		views = append(views, eventView{e.At.Format("15:04:05"), e.Kind, account, detail, style})
 	}
-	if len(rows) == 0 {
-		rows = []string{sDim.Render("quiet")}
+	timeWidth := len("Time")
+	kindWidth := len("Event")
+	accountWidth := len("Account")
+	detailWidth := len("Detail")
+	for _, view := range views {
+		timeWidth = max(timeWidth, lipgloss.Width(view.at))
+		kindWidth = max(kindWidth, lipgloss.Width(view.kind))
+		accountWidth = max(accountWidth, lipgloss.Width(view.account))
+		detailWidth = max(detailWidth, lipgloss.Width(view.detail))
+	}
+	kindWidth = min(kindWidth, 24)
+	accountWidth = min(accountWidth, 40)
+	overflow := max(timeWidth+kindWidth+accountWidth+detailWidth+3-width, 0)
+	for _, column := range []struct {
+		width   *int
+		minimum int
+	}{
+		{&detailWidth, len("Detail")},
+		{&accountWidth, len("Account")},
+		{&kindWidth, len("Event")},
+	} {
+		shrink := min(max(*column.width-column.minimum, 0), overflow)
+		*column.width -= shrink
+		overflow -= shrink
+	}
+	rows := []string{strings.Join([]string{
+		sSection.Render(fit("Time", timeWidth)),
+		sSection.Render(fit("Event", kindWidth)),
+		sSection.Render(fit("Account", accountWidth)),
+		sSection.Render(fit("Detail", detailWidth)),
+	}, " ")}
+	for _, view := range views {
+		rows = append(rows, strings.Join([]string{
+			sDim.Render(fit(view.at, timeWidth)),
+			view.style.Render(fit(view.kind, kindWidth)),
+			sText.Render(fit(view.account, accountWidth)),
+			sDim.Render(fit(view.detail, detailWidth)),
+		}, " "))
+	}
+	if len(views) == 0 {
+		rows = append(rows, sDim.Render("quiet"))
 	}
 	return column("EVENTS", rows, width, height)
 }

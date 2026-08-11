@@ -89,22 +89,56 @@ func TestTotalsRenderLabelValueTable(t *testing.T) {
 	dashboard := dashboard{snap: Snapshot{Turns: 70_600, WSTurns: 65_168, WSOpen: 777}}
 	dashboard.snap.MonthlyUsage.InputDetails.CachedTokens = 8_510_000_000
 	lines := strings.Split(dashboard.totals(120), "\n")
-	column := func(line, text string) int {
-		index := strings.Index(line, text)
-		if index < 0 {
-			t.Fatalf("totals row does not contain %q: %q", text, line)
-		}
-		return lipgloss.Width(line[:index])
-	}
 
-	turnsEnd := column(lines[2], "70600") + len("70600")
-	openEnd := column(lines[3], "777") + len("777")
-	cachedEnd := column(lines[4], "8.51B") + len("8.51B")
+	turnsEnd := textColumn(t, lines[2], "70600") + len("70600")
+	openEnd := textColumn(t, lines[3], "777") + len("777")
+	cachedEnd := textColumn(t, lines[4], "8.51B") + len("8.51B")
 	if turnsEnd != openEnd || openEnd != cachedEnd {
 		t.Fatalf("first value column is not right-aligned: %d, %d, %d", turnsEnd, openEnd, cachedEnd)
 	}
-	labelEnd := column(lines[4], "cached input") + len("cached input")
-	if valueStart := column(lines[4], "8.51B"); valueStart <= labelEnd {
+	labelEnd := textColumn(t, lines[4], "cached input") + len("cached input")
+	if valueStart := textColumn(t, lines[4], "8.51B"); valueStart <= labelEnd {
 		t.Fatalf("cached input label ends at %d but value starts at %d", labelEnd, valueStart)
 	}
+}
+
+func TestEventsRenderCompactTable(t *testing.T) {
+	dashboard := dashboard{
+		pool: &Pool{},
+		snap: Snapshot{Events: []Event{{
+			At:      time.Date(2026, time.August, 11, 9, 26, 15, 0, time.UTC),
+			Kind:    "automatic reset failed",
+			Account: "vuonghoainam.work",
+			Detail:  "reset credits returned 429 Too Many Requests",
+		}}},
+	}
+	lines := strings.Split(dashboard.events(120, 8), "\n")
+	header := lines[2]
+	row := lines[3]
+	for label, value := range map[string]string{
+		"Time":    "09:26:15",
+		"Event":   "automatic reset failed",
+		"Account": "vuonghoa",
+		"Detail":  "reset credits returned 429 Too Many Requests",
+	} {
+		if got, want := textColumn(t, row, value), textColumn(t, header, label); got != want {
+			t.Fatalf("%s column starts at %d, want %d", label, got, want)
+		}
+	}
+	narrowHeader := strings.Split(dashboard.events(120, 8), "\n")[2]
+	wideHeader := strings.Split(dashboard.events(300, 8), "\n")[2]
+	for _, label := range []string{"Time", "Event", "Account", "Detail"} {
+		if narrow, wide := textColumn(t, narrowHeader, label), textColumn(t, wideHeader, label); narrow != wide {
+			t.Fatalf("%s column moved from %d to %d when the terminal widened", label, narrow, wide)
+		}
+	}
+}
+
+func textColumn(t *testing.T, line, text string) int {
+	t.Helper()
+	index := strings.Index(line, text)
+	if index < 0 {
+		t.Fatalf("row does not contain %q: %q", text, line)
+	}
+	return lipgloss.Width(line[:index])
 }
