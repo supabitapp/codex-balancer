@@ -53,10 +53,10 @@ func TestHostResourceUsage(t *testing.T) {
 
 	metrics := dashboardResourceMetrics(usage)
 	want := []dashboardMetric{
-		{Name: "CPU", Value: "75%"},
-		{Name: "RAM", Value: "5 GiB / 8 GiB"},
-		{Name: "network in", Value: "2 KiB/s"},
-		{Name: "network out", Value: "1 KiB/s"},
+		{Name: "CPU", Value: "75.0%"},
+		{Name: "RAM", Value: "5.37 / 8.59 GB"},
+		{Name: "network in", Value: "0.02 Mbps"},
+		{Name: "network out", Value: "0.01 Mbps"},
 	}
 	if len(metrics) != len(want) {
 		t.Fatalf("resource metrics = %+v", metrics)

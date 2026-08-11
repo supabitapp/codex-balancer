@@ -194,17 +194,17 @@ func hostResourceUsage(previous, current hostCounters) resourceUsage {
 func dashboardResourceMetrics(usage resourceUsage) []dashboardMetric {
 	cpu := "--"
 	if usage.CPUReady {
-		cpu = formatPercent(usage.CPUPercent)
+		cpu = fmt.Sprintf("%.1f%%", usage.CPUPercent)
 	}
 	memory := "--"
 	if usage.MemoryTotal > 0 {
-		memory = formatBytes(float64(usage.MemoryUsed)) + " / " + formatBytes(float64(usage.MemoryTotal))
+		memory = fmt.Sprintf("%.2f / %.2f GB", float64(usage.MemoryUsed)/1e9, float64(usage.MemoryTotal)/1e9)
 	}
 	received := "--"
 	sent := "--"
 	if usage.NetworkReady {
-		received = formatBytes(usage.NetworkReceivedPerSecond) + "/s"
-		sent = formatBytes(usage.NetworkSentPerSecond) + "/s"
+		received = fmt.Sprintf("%.2f Mbps", usage.NetworkReceivedPerSecond*8/1e6)
+		sent = fmt.Sprintf("%.2f Mbps", usage.NetworkSentPerSecond*8/1e6)
 	}
 	return []dashboardMetric{
 		{Name: "CPU", Value: cpu},
@@ -212,14 +212,4 @@ func dashboardResourceMetrics(usage resourceUsage) []dashboardMetric {
 		{Name: "network in", Value: received},
 		{Name: "network out", Value: sent},
 	}
-}
-
-func formatBytes(value float64) string {
-	units := [...]string{"B", "KiB", "MiB", "GiB", "TiB"}
-	unit := 0
-	for unit < len(units)-1 && value >= 1024 {
-		value /= 1024
-		unit++
-	}
-	return formatDecimal(value) + " " + units[unit]
 }
