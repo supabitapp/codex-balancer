@@ -191,7 +191,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{if .LatencyInfo}}<span class="has-tooltip" data-tooltip="{{.LatencyInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Latency}}</span>{{else}}{{.Latency}}{{end}}</td>
 <td class="dim">{{.Requests}}</td>
 <td class="dim">{{.Last}}</td>
-</tr>{{end}}{{else}}<tr><td class="empty" colspan="13">nothing routed yet</td></tr>{{end}}</tbody>
+</tr>{{end}}{{else}}<tr><td class="empty" colspan="13">no live threads</td></tr>{{end}}</tbody>
 </table>
 {{end}}
 

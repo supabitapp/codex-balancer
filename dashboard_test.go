@@ -52,7 +52,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		`id="dashboard"`,
 		`<h2>Resources</h2>`,
 		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
-		`nothing routed yet`,
+		`no live threads`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
@@ -99,6 +99,7 @@ func TestDashboardScriptsAreServedFromBinary(t *testing.T) {
 
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStats()
+	stats.activateThread("019fe5c2private")
 	stats.routed("019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{})
 	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
@@ -349,6 +350,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	now := time.Now()
 	stats := newStats()
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "019fe5c2private", TurnID: "019fe730private", SubagentKind: "compact"}
+	stats.activateThread("thread")
 	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, metadata)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300, TotalTokens: 2_300}
 	usage.InputDetails.CachedTokens = 1_500

@@ -289,11 +289,8 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if snapshot.WSOpen != 0 || snapshot.Accounts["account-a"].WSOpen != 0 {
 		t.Fatalf("live sockets survived restart: %+v", snapshot)
 	}
-	if len(snapshot.Threads) != 1 || snapshot.Threads[0].ClientIP != "203.0.113.42" || snapshot.Threads[0].Model != "gpt-5.6-sol" || snapshot.Threads[0].Effort != "xhigh" || snapshot.Threads[0].Turns != 2 || snapshot.Threads[0].Via != transportWebSocket {
-		t.Fatalf("threads = %+v", snapshot.Threads)
-	}
-	if snapshot.Threads[0].Usage != usage || snapshot.Threads[0].LatestUsage != usage || snapshot.Threads[0].Metadata != metadata || snapshot.Threads[0].Compactions != 1 || snapshot.Threads[0].TTFB != 2*time.Second || snapshot.Threads[0].Latency != 3*time.Second {
-		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads[0].Usage, usage)
+	if len(snapshot.Threads) != 0 {
+		t.Fatalf("restored inactive threads = %+v", snapshot.Threads)
 	}
 	if len(snapshot.Events) != 4 {
 		t.Fatalf("events = %+v", snapshot.Events)
@@ -304,7 +301,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	}
 }
 
-func TestStatsRestoreKeepsLatestAccountSegment(t *testing.T) {
+func TestStatsRestoreDoesNotMarkHistoricalThreadsLive(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)
 	if err != nil {
@@ -343,12 +340,8 @@ func TestStatsRestoreKeepsLatestAccountSegment(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := restored.snapshot()
-	if len(snapshot.Threads) != 1 {
-		t.Fatalf("threads = %+v", snapshot.Threads)
-	}
-	thread := snapshot.Threads[0]
-	if thread.Account != "account-b" || thread.Turns != 1 || thread.Usage != targetUsage || thread.LatestUsage != targetUsage || thread.Compactions != 1 || thread.TTFB != 200*time.Millisecond || thread.Latency != 2*time.Second {
-		t.Fatalf("restored segment = %+v", thread)
+	if len(snapshot.Threads) != 0 {
+		t.Fatalf("restored inactive threads = %+v", snapshot.Threads)
 	}
 	wantMonthly := sourceUsage
 	wantMonthly.add(targetUsage)

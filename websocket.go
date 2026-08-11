@@ -398,6 +398,12 @@ func (s *server) relayResponsesWebSocket(
 	messages := make(chan websocketMessage, 8)
 	readWebSocketMessages(ctx, downstream, true, 0, messages)
 	readWebSocketMessages(ctx, current.conn, false, generation, messages)
+	liveThreads := map[string]struct{}{}
+	defer func() {
+		for thread := range liveThreads {
+			s.stats.deactivateThread(thread)
+		}
+	}()
 	s.websocketOpened(thread, current.account)
 	defer func() {
 		current.conn.CloseNow()
@@ -797,6 +803,10 @@ func (s *server) relayResponsesWebSocket(
 						}
 					}
 					if turns[index].counted {
+						if _, live := liveThreads[turns[index].statsThread]; !live {
+							s.stats.activateThread(turns[index].statsThread)
+							liveThreads[turns[index].statsThread] = struct{}{}
+						}
 						s.stats.routed(turns[index].statsThread, requestIP(r), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket, turns[index].metadata)
 						s.stats.answered(turns[index].statsThread, current.account.id(), time.Since(turns[index].sent))
 					}

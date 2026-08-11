@@ -352,6 +352,8 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			s.log.Warn("affinity save failed", "thread", key, "account", id, "error", err)
 		}
 		statsThread := statsThreadKey(key, metadata)
+		s.stats.activateThread(statsThread)
+		defer s.stats.deactivateThread(statsThread)
 		s.stats.routed(statsThread, requestIP(r), id, request.Model, request.Reasoning.Effort, request.ServiceTier, transportHTTP, metadata)
 		attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1, "status", resp.StatusCode}
 		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)

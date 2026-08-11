@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	eventLog           = 200
-	threadActiveWindow = 5 * time.Minute
-	activityLen        = 24
-	activitySpan       = 30 * time.Second
+	eventLog            = 200
+	threadHistoryWindow = 5 * time.Minute
+	activityLen         = 24
+	activitySpan        = 30 * time.Second
 
 	eventRateLimited       = "rate limited"
 	eventFailover          = "failover"
@@ -55,6 +55,7 @@ type Stats struct {
 	unpricedResponses  int64
 	accounts           map[string]*accountStats
 	threads            map[string]*threadStats
+	liveThreads        map[string]int
 	events             []Event
 }
 
@@ -98,10 +99,11 @@ type Event struct {
 func newStats() *Stats {
 	now := time.Now()
 	return &Stats{
-		started:    now,
-		usageMonth: calendarMonth(now),
-		accounts:   map[string]*accountStats{},
-		threads:    map[string]*threadStats{},
+		started:     now,
+		usageMonth:  calendarMonth(now),
+		accounts:    map[string]*accountStats{},
+		threads:     map[string]*threadStats{},
+		liveThreads: map[string]int{},
 	}
 }
 
@@ -197,7 +199,7 @@ func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, eff
 	if thread == "" {
 		return
 	}
-	s.pruneInactiveThreads(now)
+	s.pruneThreadHistory(now)
 	t := s.threads[thread]
 	if t == nil {
 		t = &threadStats{key: thread, createdAt: now, segmentStartedAt: now}
@@ -221,6 +223,45 @@ func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, eff
 	t.via = via
 }
 
+func (s *Stats) activateThread(thread string) {
+	if thread == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.liveThreads[thread] == 0 {
+		if history := s.threads[thread]; history != nil && !history.last.After(time.Now().Add(-threadHistoryWindow)) {
+			delete(s.threads, thread)
+		}
+	}
+	s.liveThreads[thread]++
+}
+
+func (s *Stats) deactivateThread(thread string) {
+	if thread == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	refs := s.liveThreads[thread]
+	if refs > 1 {
+		s.liveThreads[thread] = refs - 1
+		return
+	}
+	if refs == 1 {
+		delete(s.liveThreads, thread)
+	}
+}
+
+func (s *Stats) pruneThreadHistory(now time.Time) {
+	cutoff := now.Add(-threadHistoryWindow)
+	for key, thread := range s.threads {
+		if s.liveThreads[key] == 0 && !thread.last.After(cutoff) {
+			delete(s.threads, key)
+		}
+	}
+}
+
 func (s *Stats) websocketOpened(account string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -233,15 +274,6 @@ func (s *Stats) websocketClosed(account string) {
 	defer s.mu.Unlock()
 	s.wsOpen--
 	s.account(account).wsOpen--
-}
-
-func (s *Stats) pruneInactiveThreads(now time.Time) {
-	cutoff := now.Add(-threadActiveWindow)
-	for key, t := range s.threads {
-		if !t.last.After(cutoff) {
-			delete(s.threads, key)
-		}
-	}
 }
 
 func (s *Stats) answered(thread, account string, ttfb time.Duration) {
@@ -382,7 +414,7 @@ func (s *Stats) snapshot() Snapshot {
 	defer s.mu.Unlock()
 	now := time.Now()
 	s.syncUsageMonth(calendarMonth(now))
-	s.pruneInactiveThreads(now)
+	s.pruneThreadHistory(now)
 	for _, account := range s.accounts {
 		advanceActivity(account, now)
 	}
@@ -413,6 +445,9 @@ func (s *Stats) snapshot() Snapshot {
 		}
 	}
 	for _, t := range s.threads {
+		if s.liveThreads[t.key] == 0 {
+			continue
+		}
 		out.Threads = append(out.Threads, ThreadSnapshot{
 			Key:         t.key,
 			ClientIP:    t.clientIP,

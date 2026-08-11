@@ -10,9 +10,11 @@ import (
 func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
-	stats.applyRouted(now.Add(-threadActiveWindow-time.Second), "inactive", "", "account", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now, "inactive", "", "account", "", "", "", transportHTTP, turnMetadata{})
 	for i := range 150 {
-		stats.applyRouted(now, fmt.Sprintf("active-%d", i), "", "account", "", "", "", transportHTTP, turnMetadata{})
+		thread := fmt.Sprintf("active-%d", i)
+		stats.activateThread(thread)
+		stats.applyRouted(now, thread, "", "account", "", "", "", transportHTTP, turnMetadata{})
 	}
 
 	snapshot := stats.snapshot()
@@ -26,25 +28,39 @@ func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
 	}
 }
 
-func TestSnapshotSortsThreadsByIDAndExpiresAfterFiveMinutes(t *testing.T) {
+func TestSnapshotKeepsThreadsUntilTheirLastLiveReferenceCloses(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
-	stats.applyRouted(now.Add(-5*time.Minute), "019f03", "", "account", "", "", "", transportHTTP, turnMetadata{})
-	stats.applyRouted(now.Add(-4*time.Minute), "019f02", "", "account", "", "", "", transportHTTP, turnMetadata{})
+	stats.activateThread("019f02")
+	stats.activateThread("019f02")
+	stats.activateThread("019f01")
+	stats.applyRouted(now.Add(-24*time.Hour), "019f02", "", "account", "", "", "", transportWebSocket, turnMetadata{})
 	stats.applyRouted(now, "019f01", "", "account", "", "", "", transportHTTP, turnMetadata{})
 
 	snapshot := stats.snapshot()
 	if len(snapshot.Threads) != 2 || snapshot.Threads[0].Key != "019f01" || snapshot.Threads[1].Key != "019f02" {
 		t.Fatalf("threads = %+v", snapshot.Threads)
 	}
+	stats.deactivateThread("019f01")
+	stats.deactivateThread("019f02")
+	if threads := stats.snapshot().Threads; len(threads) != 1 || threads[0].Key != "019f02" {
+		t.Fatalf("threads after first closes = %+v", threads)
+	}
+	stats.deactivateThread("019f02")
+	if threads := stats.snapshot().Threads; len(threads) != 0 {
+		t.Fatalf("threads after all close = %+v", threads)
+	}
 }
 
-func TestThreadUsageFollowsActiveRoutingWindow(t *testing.T) {
+func TestThreadUsageFollowsCurrentLiveRoute(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
-	old := now.Add(-threadActiveWindow - time.Second)
+	old := now.Add(-time.Hour)
+	stats.activateThread("thread")
 	stats.applyRouted(old, "thread", "", "account", "old", "medium", "", transportHTTP, turnMetadata{})
 	stats.applyUsageAt(old, "thread", "account", "unknown", "default", responseUsage{InputTokens: 100})
+	stats.deactivateThread("thread")
+	stats.activateThread("thread")
 	stats.applyRouted(now, "thread", "", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, turnMetadata{})
 	routed := stats.snapshot()
 	if len(routed.Threads) != 1 || routed.Threads[0].Model != "gpt-5.6-sol" || routed.Threads[0].Effort != "xhigh" {
@@ -64,6 +80,7 @@ func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "compact-turn"}
+	stats.activateThread("thread")
 	stats.applyRouted(now, "thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "", transportWebSocket, metadata)
 	sourceUsage := responseUsage{InputTokens: 100, OutputTokens: 10}
 	sourceUsage.InputDetails.CachedTokens = 90
@@ -97,6 +114,8 @@ func TestCodexThreadsKeepSeparateTransportsWithinOneRoute(t *testing.T) {
 	now := time.Now()
 	httpMetadata := turnMetadata{RequestKind: "turn", ThreadID: "http-thread"}
 	webSocketMetadata := turnMetadata{RequestKind: "turn", ThreadID: "ws-thread", SubagentKind: "thread_spawn"}
+	stats.activateThread("http-thread")
+	stats.activateThread("ws-thread")
 	stats.applyRouted(now, statsThreadKey("session", httpMetadata), "client", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, httpMetadata)
 	stats.applyRouted(now, statsThreadKey("session", webSocketMetadata), "client", "account", "gpt-5.6-sol", "xhigh", "", transportWebSocket, webSocketMetadata)
 

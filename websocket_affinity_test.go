@@ -178,6 +178,14 @@ func TestWebSocketFollowUpsKeepStableSessionStats(t *testing.T) {
 	if thread.Key != "session" || thread.ClientIP != "203.0.113.42" || thread.Model != "gpt-5.6-terra" || thread.Effort != "xhigh" || thread.Turns != 2 || thread.Via != transportWebSocket {
 		t.Fatalf("thread = %+v, want session with two WebSocket turns", thread)
 	}
+	conn.CloseNow()
+	deadline := time.Now().Add(time.Second)
+	for len(server.stats.snapshot().Threads) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("closed WebSocket thread remained live")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func TestWebSocketCompletedResponseTracksAPIEstimate(t *testing.T) {

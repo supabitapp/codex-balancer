@@ -659,7 +659,7 @@ func TestHTTPZstdBodyPreservesAffinityAndForwardedBytes(t *testing.T) {
 	}
 }
 
-func TestHTTPFollowUpsKeepStableSessionStats(t *testing.T) {
+func TestHTTPCompletedFollowUpsLeaveNoLiveThreads(t *testing.T) {
 	account := testAccount("account", 0)
 	calls := 0
 	server, _, closeServer := newAffinityHTTPServer(t, []*Account{account}, func(w http.ResponseWriter, r *http.Request) {
@@ -681,12 +681,54 @@ func TestHTTPFollowUpsKeepStableSessionStats(t *testing.T) {
 	if snapshot.Turns != 2 {
 		t.Fatalf("turns = %d, want 2", snapshot.Turns)
 	}
-	if len(snapshot.Threads) != 1 {
-		t.Fatalf("threads = %+v, want one session", snapshot.Threads)
+	if len(snapshot.Threads) != 0 {
+		t.Fatalf("completed HTTP threads = %+v", snapshot.Threads)
 	}
-	thread := snapshot.Threads[0]
-	if thread.Key != "session" || thread.ClientIP != "192.0.2.1" || thread.Model != "gpt-5.6-terra" || thread.Effort != "xhigh" || thread.Turns != 2 || thread.Via != transportHTTP {
-		t.Fatalf("thread = %+v, want session with two HTTP turns", thread)
+}
+
+func TestHTTPThreadLivesOnlyWhileResponseIsOpen(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseResponse := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseResponse()
+	account := testAccount("account", 0)
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{account}, func(w http.ResponseWriter, r *http.Request) {
+		writeResponseCreated(w, "resp")
+		w.(http.Flusher).Flush()
+		close(started)
+		<-release
+		io.WriteString(w, "data: {\"type\":\"response.completed\"}\n\n")
+	})
+	defer closeServer()
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- serveHTTPResponse(t, server, "session", "", `{"model":"gpt-5.6-sol","input":[]}`)
+	}()
+	<-started
+	deadline := time.Now().Add(time.Second)
+	for {
+		threads := server.stats.snapshot().Threads
+		if len(threads) == 1 {
+			if threads[0].Key != "session" || threads[0].Via != transportHTTP {
+				t.Fatalf("live HTTP thread = %+v", threads[0])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("HTTP thread did not become live")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	releaseResponse()
+	response := <-done
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if threads := server.stats.snapshot().Threads; len(threads) != 0 {
+		t.Fatalf("completed HTTP threads = %+v", threads)
 	}
 }
 
@@ -824,10 +866,8 @@ func TestHTTPCompletedResponseTracksAPIEstimate(t *testing.T) {
 	if snapshot.APICostNanoDollars != 4_400_000 || snapshot.UnpricedResponses != 0 {
 		t.Fatalf("API estimate = %d with %d unpriced, want 4400000 with none", snapshot.APICostNanoDollars, snapshot.UnpricedResponses)
 	}
-	wantUsage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
-	wantUsage.InputDetails.CachedTokens = 800
-	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Usage != wantUsage {
-		t.Fatalf("thread usage = %+v, want %+v", snapshot.Threads, wantUsage)
+	if len(snapshot.Threads) != 0 {
+		t.Fatalf("completed HTTP threads = %+v", snapshot.Threads)
 	}
 }
 
@@ -854,16 +894,8 @@ func TestHTTPV2CompactionTracksMetadataAndUsage(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	snapshot := server.stats.snapshot()
-	if len(snapshot.Threads) != 1 {
-		t.Fatalf("threads = %+v", snapshot.Threads)
-	}
-	thread := snapshot.Threads[0]
-	if thread.Key != "codex-thread" || thread.Metadata != metadata || thread.Compactions != 1 || thread.Latency <= 0 || thread.TTFB <= 0 {
-		t.Fatalf("compaction thread = %+v", thread)
-	}
-	if thread.LatestUsage.TotalTokens != 1_100 || thread.LatestUsage.OutputDetails.ReasoningTokens != 60 {
-		t.Fatalf("latest usage = %+v", thread.LatestUsage)
+	if threads := server.stats.snapshot().Threads; len(threads) != 0 {
+		t.Fatalf("completed HTTP threads = %+v", threads)
 	}
 	requireLogRecord(t, logs.records(t), "response usage", map[string]any{
 		"transport":          "http",

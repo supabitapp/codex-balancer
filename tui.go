@@ -425,7 +425,7 @@ func (d dashboard) threads(width, height int) string {
 		})
 	}
 	if len(views) == 0 {
-		return column("ROUTING  0", []string{sDim.Render("nothing routed yet")}, width, height)
+		return column("ROUTING  0", []string{sDim.Render("no live threads")}, width, height)
 	}
 
 	accountWidth := len("Account")
