@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	minCooldown       = 30 * time.Second
-	maxCooldown       = time.Hour
-	resetPriorityLead = 24 * time.Hour
+	minCooldown                          = 30 * time.Second
+	maxCooldown                          = time.Hour
+	resetPriorityLead                    = 24 * time.Hour
+	resetPriorityMinimumRemainingPercent = 20
 )
 
 type Pool struct {
@@ -237,7 +238,7 @@ func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool)
 	var priority routingPriority
 	for _, candidate := range []window{c.primary, c.secondary} {
 		remaining, known := remainingPercent(candidate)
-		if !known || remaining <= 0 || !candidate.resetsAt.After(now) || candidate.resetsAt.After(deadline) {
+		if !known || remaining < resetPriorityMinimumRemainingPercent || !candidate.resetsAt.After(now) || candidate.resetsAt.After(deadline) {
 			continue
 		}
 		if priority.resetAt.IsZero() || candidate.resetsAt.Before(priority.resetAt) || candidate.resetsAt.Equal(priority.resetAt) && candidate.minutes > priority.windowMinutes {

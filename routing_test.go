@@ -155,6 +155,29 @@ func TestPoolRoutePrioritizesEarliestImminentReset(t *testing.T) {
 	}
 }
 
+func TestPoolRouteRequiresTwentyPercentRemainingForResetPriority(t *testing.T) {
+	now := time.Now()
+	resetting := testAccount("account-resetting", 80.01)
+	resetting.primary = window{usedPercent: 80.01, minutes: 300, resetsAt: now.Add(30 * time.Minute), seenAt: now}
+	roomier := testAccount("account-roomier", 10)
+	roomier.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(48 * time.Hour), seenAt: now}
+	pool := &Pool{accounts: []*Account{resetting, roomier}}
+
+	if got := pool.route("", "", nil, nil).account; got != roomier {
+		t.Fatalf("account = %s, want roomier account below priority threshold", got.id())
+	}
+	if got := resetting.status(now); got != accountLive {
+		t.Fatalf("status = %s, want live below priority threshold", got)
+	}
+	resetting.primary.usedPercent = 80
+	if got := pool.route("", "", nil, nil).account; got != resetting {
+		t.Fatalf("account = %s, want reset account at priority threshold", got.id())
+	}
+	if got := resetting.status(now); got != accountPriority {
+		t.Fatalf("status = %s, want priority at threshold", got)
+	}
+}
+
 func TestAccountPriorityStatusUsesResetLeadWindow(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
