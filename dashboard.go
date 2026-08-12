@@ -484,10 +484,9 @@ func funCostEquivalents(nanoDollars int64) string {
 		plural       string
 		priceDollars int64
 	}{
-		{"🧊☕", "iced latte", "iced lattes", 6},
+		{"☕", "iced latte", "iced lattes", 6},
 		{"🌮", "taco", "tacos", 12},
 		{"🦆", "rubber duck", "rubber ducks", 1},
-		{"🔥🌲", "tree bonfire", "tree bonfires", 100},
 	}
 	lines := make([]string, 0, len(equivalents))
 	for _, equivalent := range equivalents {
