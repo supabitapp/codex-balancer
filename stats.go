@@ -80,6 +80,7 @@ type threadStats struct {
 	clientIP           string
 	account            string
 	model              string
+	models             []string
 	effort             string
 	serviceTier        string
 	metadata           turnMetadata
@@ -226,6 +227,7 @@ func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, eff
 		t.turns = 0
 		t.usage = responseUsage{}
 		t.latestUsage = responseUsage{}
+		t.models = nil
 		t.apiCostNanoDollars = 0
 		t.unpricedResponses = 0
 		t.ttfb = 0
@@ -349,6 +351,9 @@ func (s *Stats) applyUsageAt(at time.Time, thread, account, model, serviceTier s
 	cost, known := s.prices.estimate(model, serviceTier, usage)
 	if current := s.threads[thread]; current != nil && current.account == account && !at.Before(current.segmentStartedAt) {
 		current.model = model
+		if model != "" && !slices.Contains(current.models, model) {
+			current.models = append(current.models, model)
+		}
 		current.usage.add(usage)
 		current.latestUsage = usage
 		if known {
@@ -489,6 +494,7 @@ type ThreadSnapshot struct {
 	ClientIP           string `json:"-"`
 	Account            string `json:"account"`
 	Model              string `json:"model"`
+	models             []string
 	Effort             string `json:"reasoning_effort"`
 	ServiceTier        string `json:"service_tier"`
 	Metadata           turnMetadata
@@ -548,6 +554,7 @@ func (s *Stats) snapshot() Snapshot {
 			ClientIP:           t.clientIP,
 			Account:            t.account,
 			Model:              t.model,
+			models:             append([]string(nil), t.models...),
 			Effort:             t.effort,
 			ServiceTier:        t.serviceTier,
 			Metadata:           t.metadata,

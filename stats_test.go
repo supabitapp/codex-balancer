@@ -153,7 +153,7 @@ func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
 
 	stats.applyRouted(now.Add(2*time.Second), "thread", "client", "account-b", "gpt-5.6-sol", "xhigh", "", transportWebSocket, turnMetadata{RequestKind: "normal", ThreadID: "codex-thread", TurnID: "next-turn"})
 	switched := stats.snapshot().Threads[0]
-	if switched.Account != "account-b" || switched.Turns != 1 || !switched.Usage.empty() || !switched.LatestUsage.empty() || switched.TTFB != 0 || switched.Latency != 0 || switched.Compactions != 1 {
+	if switched.Account != "account-b" || switched.Turns != 1 || !switched.Usage.empty() || !switched.LatestUsage.empty() || len(switched.models) != 0 || switched.TTFB != 0 || switched.Latency != 0 || switched.Compactions != 1 {
 		t.Fatalf("switched segment = %+v", switched)
 	}
 	if got := dashboardCacheRate(switched.Usage); got != "--" {
@@ -164,7 +164,7 @@ func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
 	stats.applyUsageAt(now.Add(3*time.Second), "thread", "account-b", "gpt-5.6-sol", "default", targetUsage)
 	stats.applyUsageAt(now.Add(4*time.Second), "thread", "account-a", "gpt-5.6-sol", "default", sourceUsage)
 	current := stats.snapshot().Threads[0]
-	if current.Usage != targetUsage || current.LatestUsage != targetUsage {
+	if current.Usage != targetUsage || current.LatestUsage != targetUsage || len(current.models) != 1 || current.models[0] != "gpt-5.6-sol" {
 		t.Fatalf("current segment usage = %+v, want %+v", current.Usage, targetUsage)
 	}
 	if got := dashboardCacheRate(current.Usage); got != "0" {

@@ -74,6 +74,7 @@ type dashboardThreadView struct {
 	ClientID      string
 	Account       string
 	Model         string
+	ModelInfo     string
 	Via           string
 	Fast          bool
 	UncachedInput string
@@ -355,12 +356,14 @@ func newDashboardThreadView(thread ThreadSnapshot, account, clientName string, l
 	if !thread.Usage.empty() {
 		cost = formatAPIPrice(thread.apiCostNanoDollars, thread.unpricedResponses)
 	}
+	model, modelInfo := dashboardThreadModel(thread)
 	return dashboardThreadView{
 		KeyPrefix:     shortKey(thread.Key),
 		Info:          dashboardThreadInfo(thread.Metadata),
 		ClientID:      clientName,
 		Account:       account,
-		Model:         dashboardModel(thread.Model, thread.Effort),
+		Model:         model,
+		ModelInfo:     modelInfo,
 		Via:           strings.ToUpper(string(thread.Via)),
 		Fast:          isFastServiceTier(thread.ServiceTier),
 		UncachedInput: formatTokenCount(thread.Usage.nonCachedInput()),
@@ -374,6 +377,13 @@ func newDashboardThreadView(thread ThreadSnapshot, account, clientName string, l
 		Cost:          cost,
 		Last:          agoAt(now, thread.Last),
 	}
+}
+
+func dashboardThreadModel(thread ThreadSnapshot) (string, string) {
+	if len(thread.models) < 2 {
+		return dashboardModel(thread.Model, thread.Effort), ""
+	}
+	return "mixed", strings.Join(thread.models, "\n")
 }
 
 func dashboardModel(model, effort string) string {
