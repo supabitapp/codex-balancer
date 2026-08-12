@@ -113,6 +113,7 @@ func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
 	INSERT INTO settings (id, rotate_after_compaction) VALUES (1, 0);
 	DROP TABLE price_catalog;
 	ALTER TABLE accounts DROP COLUMN routing_mode;
+	ALTER TABLE events DROP COLUMN reasoning_effort;
 	ALTER TABLE attempts DROP COLUMN client_ip;
 	ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 	PRAGMA user_version = 10;`); err != nil {
@@ -144,6 +145,7 @@ func TestStateStoreMigratesClientIDsToIPs(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`DROP TABLE price_catalog;
 		ALTER TABLE accounts DROP COLUMN routing_mode;
+		ALTER TABLE events DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN client_ip;
 		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, reasoning_effort, turn_metadata, client_id)
@@ -189,6 +191,7 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 		ALTER TABLE events DROP COLUMN thread_key;
 		ALTER TABLE events DROP COLUMN total_tokens;
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
+		ALTER TABLE events DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN turn_metadata;
 		ALTER TABLE attempts DROP COLUMN client_ip;
@@ -235,6 +238,7 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 		ALTER TABLE events DROP COLUMN thread_key;
 		ALTER TABLE events DROP COLUMN total_tokens;
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
+		ALTER TABLE events DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN turn_metadata;
 		PRAGMA user_version = 4;`); err != nil {
@@ -312,7 +316,14 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	stats.completed("thread", "account-a", metadata, 3*time.Second)
 	usage := responseUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30}
 	usage.OutputDetails.ReasoningTokens = 5
-	stats.recordUsage("thread", "account-a", "gpt-5.6-sol", serviceTierFast, usage)
+	stats.recordUsage("thread", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, usage)
+	var effort string
+	if err := store.db.QueryRow(`SELECT reasoning_effort FROM events WHERE kind = ? ORDER BY id DESC LIMIT 1`, eventResponseUsage).Scan(&effort); err != nil {
+		t.Fatal(err)
+	}
+	if effort != "xhigh" {
+		t.Fatalf("stored reasoning effort = %q, want xhigh", effort)
+	}
 	stats.note("account added", "account-a", "")
 	stats.compactionSwitched("codex-thread", "account-a", "account-b")
 	stats.websocketOpened("account-a")
@@ -372,7 +383,7 @@ func TestStatsRestoreDoesNotMarkHistoricalThreadsLive(t *testing.T) {
 	stats.routed("thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "default", transportWebSocket, compaction)
 	stats.answered("thread", "account-a", 100*time.Millisecond)
 	stats.completed("thread", "account-a", compaction, time.Second)
-	stats.recordUsage("thread", "account-a", "gpt-5.6-sol", "default", sourceUsage)
+	stats.recordUsage("thread", "account-a", "gpt-5.6-sol", "xhigh", "default", sourceUsage)
 
 	target := turnMetadata{RequestKind: "normal", ThreadID: "codex-thread", TurnID: "next-turn"}
 	targetUsage := responseUsage{InputTokens: 100, OutputTokens: 20}
@@ -380,7 +391,7 @@ func TestStatsRestoreDoesNotMarkHistoricalThreadsLive(t *testing.T) {
 	stats.compactionSwitched("codex-thread", "account-a", "account-b")
 	stats.answered("thread", "account-b", 200*time.Millisecond)
 	stats.completed("thread", "account-b", target, 2*time.Second)
-	stats.recordUsage("thread", "account-b", "gpt-5.6-sol", "default", targetUsage)
+	stats.recordUsage("thread", "account-b", "gpt-5.6-sol", "xhigh", "default", targetUsage)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +469,7 @@ func TestStatsRepricesCurrentMonthAfterCatalogRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
-	stats.recordUsage("thread", "account", "gpt-5.4", "default", usage)
+	stats.recordUsage("thread", "account", "gpt-5.4", "", "default", usage)
 	before := stats.snapshot()
 	if before.UnpricedResponses != 1 || before.APICostNanoDollars != 0 {
 		t.Fatalf("estimate before refresh = %d with %d unpriced", before.APICostNanoDollars, before.UnpricedResponses)

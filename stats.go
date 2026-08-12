@@ -80,7 +80,7 @@ type threadStats struct {
 	clientIP           string
 	account            string
 	model              string
-	models             []string
+	models             []threadModel
 	effort             string
 	serviceTier        string
 	metadata           turnMetadata
@@ -96,6 +96,11 @@ type threadStats struct {
 	segmentStartedAt   time.Time
 	last               time.Time
 	via                transport
+}
+
+type threadModel struct {
+	name    string
+	efforts []string
 }
 
 type Event struct {
@@ -334,25 +339,32 @@ func (s *Stats) applyCompleted(at time.Time, thread, account, requestKind string
 	}
 }
 
-func (s *Stats) recordUsage(thread, account, model, serviceTier string, usage responseUsage) {
+func (s *Stats) recordUsage(thread, account, model, effort, serviceTier string, usage responseUsage) {
 	if usage.empty() {
 		return
 	}
 	s.pricingMu.Lock()
 	defer s.pricingMu.Unlock()
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventResponseUsage, Account: account, Thread: thread, Model: model, ServiceTier: serviceTier, Usage: usage})
-	s.applyUsageAt(now, thread, account, model, serviceTier, usage)
+	s.persistEvent(storedEvent{At: now, Kind: eventResponseUsage, Account: account, Thread: thread, Model: model, Effort: effort, ServiceTier: serviceTier, Usage: usage})
+	s.applyUsageAt(now, thread, account, model, effort, serviceTier, usage)
 }
 
-func (s *Stats) applyUsageAt(at time.Time, thread, account, model, serviceTier string, usage responseUsage) {
+func (s *Stats) applyUsageAt(at time.Time, thread, account, model, effort, serviceTier string, usage responseUsage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cost, known := s.prices.estimate(model, serviceTier, usage)
 	if current := s.threads[thread]; current != nil && current.account == account && !at.Before(current.segmentStartedAt) {
 		current.model = model
-		if model != "" && !slices.Contains(current.models, model) {
-			current.models = append(current.models, model)
+		if model != "" {
+			index := slices.IndexFunc(current.models, func(item threadModel) bool { return item.name == model })
+			if index < 0 {
+				current.models = append(current.models, threadModel{name: model})
+				index = len(current.models) - 1
+			}
+			if effort != "" && !slices.Contains(current.models[index].efforts, effort) {
+				current.models[index].efforts = append(current.models[index].efforts, effort)
+			}
 		}
 		current.usage.add(usage)
 		current.latestUsage = usage
@@ -494,7 +506,7 @@ type ThreadSnapshot struct {
 	ClientIP           string `json:"-"`
 	Account            string `json:"account"`
 	Model              string `json:"model"`
-	models             []string
+	models             []threadModel
 	Effort             string `json:"reasoning_effort"`
 	ServiceTier        string `json:"service_tier"`
 	Metadata           turnMetadata
@@ -549,12 +561,16 @@ func (s *Stats) snapshot() Snapshot {
 		if s.liveThreads[t.key] == 0 {
 			continue
 		}
+		models := make([]threadModel, len(t.models))
+		for index, model := range t.models {
+			models[index] = threadModel{name: model.name, efforts: append([]string(nil), model.efforts...)}
+		}
 		out.Threads = append(out.Threads, ThreadSnapshot{
 			Key:                t.key,
 			ClientIP:           t.clientIP,
 			Account:            t.account,
 			Model:              t.model,
-			models:             append([]string(nil), t.models...),
+			models:             models,
 			Effort:             t.effort,
 			ServiceTier:        t.serviceTier,
 			Metadata:           t.metadata,

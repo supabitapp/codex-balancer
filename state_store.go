@@ -84,6 +84,7 @@ var stateMigrations = []string{
 		payload BLOB NOT NULL CHECK (length(payload) > 0)
 	) STRICT;`,
 	`ALTER TABLE accounts ADD COLUMN routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (routing_mode IN ('normal', 'priority', 'draining'));`,
+	`ALTER TABLE events ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT '';`,
 }
 
 type StateStore struct {
@@ -110,6 +111,7 @@ type storedEvent struct {
 	Detail      string
 	Duration    time.Duration
 	Model       string
+	Effort      string
 	ServiceTier string
 	Usage       responseUsage
 }
@@ -399,10 +401,10 @@ func (s *StateStore) recordAttempt(attempt storedAttempt) error {
 
 func (s *StateStore) recordEvent(event storedEvent) error {
 	_, err := s.db.Exec(`INSERT INTO events (
-		at_ns, kind, account_id, thread_key, detail, duration_ns, model, service_tier,
+		at_ns, kind, account_id, thread_key, detail, duration_ns, model, reasoning_effort, service_tier,
 		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.At.UnixNano(), event.Kind, event.Account, event.Thread, event.Detail, event.Duration.Nanoseconds(), event.Model, event.ServiceTier,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.At.UnixNano(), event.Kind, event.Account, event.Thread, event.Detail, event.Duration.Nanoseconds(), event.Model, event.Effort, event.ServiceTier,
 		event.Usage.InputTokens, event.Usage.InputDetails.CachedTokens, event.Usage.InputDetails.CacheWriteTokens, event.Usage.OutputTokens,
 		event.Usage.TotalTokens, event.Usage.OutputDetails.ReasoningTokens)
 	return err
@@ -446,7 +448,7 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 	if err := attempts.Close(); err != nil {
 		return err
 	}
-	events, err := s.db.Query(`SELECT at_ns, kind, account_id, thread_key, detail, duration_ns, model, service_tier,
+	events, err := s.db.Query(`SELECT at_ns, kind, account_id, thread_key, detail, duration_ns, model, reasoning_effort, service_tier,
 		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens FROM events ORDER BY id`)
 	if err != nil {
 		return err
@@ -455,7 +457,7 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 	for events.Next() {
 		var event storedEvent
 		var at, duration int64
-		if err := events.Scan(&at, &event.Kind, &event.Account, &event.Thread, &event.Detail, &duration, &event.Model, &event.ServiceTier,
+		if err := events.Scan(&at, &event.Kind, &event.Account, &event.Thread, &event.Detail, &duration, &event.Model, &event.Effort, &event.ServiceTier,
 			&event.Usage.InputTokens, &event.Usage.InputDetails.CachedTokens, &event.Usage.InputDetails.CacheWriteTokens, &event.Usage.OutputTokens,
 			&event.Usage.TotalTokens, &event.Usage.OutputDetails.ReasoningTokens); err != nil {
 			return err
@@ -470,7 +472,7 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 			stats.applyCompleted(event.At, event.Thread, event.Account, event.Detail, event.Duration)
 			continue
 		case eventResponseUsage:
-			stats.applyUsageAt(event.At, event.Thread, event.Account, event.Model, event.ServiceTier, event.Usage)
+			stats.applyUsageAt(event.At, event.Thread, event.Account, event.Model, event.Effort, event.ServiceTier, event.Usage)
 			continue
 		case eventRateLimited:
 			stats.applyRateLimited(event.At, event.Account)

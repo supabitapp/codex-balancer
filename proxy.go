@@ -564,6 +564,7 @@ func (s *server) relay(w http.ResponseWriter, resp *http.Response, sent time.Tim
 		statsThread:      statsThread,
 		account:          account,
 		model:            request.Model,
+		effort:           request.Reasoning.Effort,
 		serviceTier:      request.ServiceTier,
 		metadata:         metadata,
 		compactionReplay: compactionReplay,
@@ -602,6 +603,7 @@ type responseOwnerInspector struct {
 	statsThread      string
 	account          string
 	model            string
+	effort           string
 	serviceTier      string
 	metadata         turnMetadata
 	compactionReplay bool
@@ -748,7 +750,7 @@ func (i *responseOwnerInspector) inspect(line []byte) {
 		if serviceTier == "" {
 			serviceTier = i.serviceTier
 		}
-		i.stats.recordUsage(i.statsThread, i.account, model, serviceTier, payload.Usage)
+		i.stats.recordUsage(i.statsThread, i.account, model, i.effort, serviceTier, payload.Usage)
 		logResponseUsage(i.log, transportHTTP, i.thread, i.account, model, serviceTier, i.metadata, "", i.compactionReplay, time.Since(i.started), payload.Usage)
 		i.usageRecorded = true
 	}

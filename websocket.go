@@ -928,7 +928,7 @@ func (s *server) relayResponsesWebSocket(
 						if !event.Response.Usage.empty() {
 							logResponseUsage(s.log, transportWebSocket, turn.thread, current.account.id(), model, serviceTier, turn.metadata, turn.rotationFrom, turn.compactReplay, time.Since(turn.sent), event.Response.Usage)
 						}
-						s.stats.recordUsage(turn.statsThread, current.account.id(), model, serviceTier, event.Response.Usage)
+						s.stats.recordUsage(turn.statsThread, current.account.id(), model, turn.effort, serviceTier, event.Response.Usage)
 						if event.Type == "response.completed" {
 							s.stats.completed(turn.statsThread, current.account.id(), turn.metadata, time.Since(turn.sent))
 							s.compactionRotation.arm(turn.thread, current.account.id(), turn.metadata)

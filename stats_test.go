@@ -121,7 +121,7 @@ func TestThreadUsageFollowsCurrentLiveRoute(t *testing.T) {
 	old := now.Add(-time.Hour)
 	stats.activateThread("thread")
 	stats.applyRouted(old, "thread", "", "account", "old", "medium", "", transportHTTP, turnMetadata{})
-	stats.applyUsageAt(old, "thread", "account", "unknown", "default", responseUsage{InputTokens: 100})
+	stats.applyUsageAt(old, "thread", "account", "unknown", "medium", "default", responseUsage{InputTokens: 100})
 	stats.deactivateThread("thread")
 	stats.activateThread("thread")
 	stats.applyRouted(now, "thread", "", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, turnMetadata{})
@@ -131,7 +131,7 @@ func TestThreadUsageFollowsCurrentLiveRoute(t *testing.T) {
 	}
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(now, "thread", "account", "unknown", "default", usage)
+	stats.applyUsageAt(now, "thread", "account", "unknown", "xhigh", "default", usage)
 
 	snapshot := stats.snapshot()
 	if len(snapshot.Threads) != 1 || snapshot.Threads[0].Model != "unknown" || snapshot.Threads[0].Turns != 1 || snapshot.Threads[0].Usage != usage {
@@ -147,7 +147,7 @@ func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
 	stats.applyRouted(now, "thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "", transportWebSocket, metadata)
 	sourceUsage := responseUsage{InputTokens: 100, OutputTokens: 10}
 	sourceUsage.InputDetails.CachedTokens = 90
-	stats.applyUsageAt(now.Add(time.Second), "thread", "account-a", "gpt-5.6-sol", "default", sourceUsage)
+	stats.applyUsageAt(now.Add(time.Second), "thread", "account-a", "gpt-5.6-sol", "xhigh", "default", sourceUsage)
 	stats.applyAnswered(now.Add(time.Second), "thread", "account-a", 100*time.Millisecond)
 	stats.applyCompleted(now.Add(time.Second), "thread", "account-a", metadata.RequestKind, time.Second)
 
@@ -161,10 +161,10 @@ func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
 	}
 
 	targetUsage := responseUsage{InputTokens: 100, OutputTokens: 20}
-	stats.applyUsageAt(now.Add(3*time.Second), "thread", "account-b", "gpt-5.6-sol", "default", targetUsage)
-	stats.applyUsageAt(now.Add(4*time.Second), "thread", "account-a", "gpt-5.6-sol", "default", sourceUsage)
+	stats.applyUsageAt(now.Add(3*time.Second), "thread", "account-b", "gpt-5.6-sol", "xhigh", "default", targetUsage)
+	stats.applyUsageAt(now.Add(4*time.Second), "thread", "account-a", "gpt-5.6-sol", "xhigh", "default", sourceUsage)
 	current := stats.snapshot().Threads[0]
-	if current.Usage != targetUsage || current.LatestUsage != targetUsage || len(current.models) != 1 || current.models[0] != "gpt-5.6-sol" {
+	if current.Usage != targetUsage || current.LatestUsage != targetUsage || len(current.models) != 1 || current.models[0].name != "gpt-5.6-sol" || len(current.models[0].efforts) != 1 || current.models[0].efforts[0] != "xhigh" {
 		t.Fatalf("current segment usage = %+v, want %+v", current.Usage, targetUsage)
 	}
 	if got := dashboardCacheRate(current.Usage); got != "0" {
@@ -237,8 +237,8 @@ func TestThreadCostPricesEachResponse(t *testing.T) {
 	now := time.Now()
 	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "xhigh", "default", transportWebSocket, turnMetadata{})
 	usage := responseUsage{InputTokens: 200_000, OutputTokens: 1_000}
-	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "default", usage)
-	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "default", usage)
+	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "xhigh", "default", usage)
+	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "xhigh", "default", usage)
 
 	want, known := prices.estimate("gpt-5.6-sol", "default", usage)
 	if !known {
@@ -263,7 +263,7 @@ func TestThreadCostRepricesAfterCatalogRefresh(t *testing.T) {
 	stats.activateThread("thread")
 	stats.routed("thread", "client", "account", "gpt-5.4", "high", "default", transportWebSocket, turnMetadata{})
 	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
-	stats.recordUsage("thread", "account", "gpt-5.4", "default", usage)
+	stats.recordUsage("thread", "account", "gpt-5.4", "high", "default", usage)
 	before := stats.snapshot().Threads[0]
 	if before.apiCostNanoDollars != 0 || before.unpricedResponses != 1 {
 		t.Fatalf("thread cost before refresh = %d with %d unpriced", before.apiCostNanoDollars, before.unpricedResponses)
@@ -286,12 +286,12 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	previousMonth := time.Date(2026, time.July, 31, 23, 59, 0, 0, time.UTC)
 	currentMonth := previousMonth.Add(time.Minute)
 	stats.usageMonth = calendarMonth(previousMonth)
-	stats.applyUsageAt(previousMonth, "", "", "unknown", "default", responseUsage{InputTokens: 1_000})
+	stats.applyUsageAt(previousMonth, "", "", "unknown", "", "default", responseUsage{InputTokens: 1_000})
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(currentMonth, "", "", "gpt-5.6-sol", "default", usage)
+	stats.applyUsageAt(currentMonth, "", "", "gpt-5.6-sol", "", "default", usage)
 	unpricedUsage := responseUsage{InputTokens: 400, OutputTokens: 50}
-	stats.applyUsageAt(currentMonth, "", "", "unknown", "default", unpricedUsage)
+	stats.applyUsageAt(currentMonth, "", "", "unknown", "", "default", unpricedUsage)
 	wantUsage := usage
 	wantUsage.InputTokens += unpricedUsage.InputTokens
 	wantUsage.OutputTokens += unpricedUsage.OutputTokens

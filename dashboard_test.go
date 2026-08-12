@@ -106,7 +106,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("019fe5c2private")
 	stats.routed("019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{})
-	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "default", responseUsage{OutputTokens: 1_000_000})
+	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "high", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	stats.note(eventLegacyReconnect, "source", "019fe701-7a55-7760-8d38-d1cd74544ef8")
 	stats.note(eventLegacyRotated, "unused", "after compaction")
@@ -367,7 +367,7 @@ func TestDashboardOverview(t *testing.T) {
 	stats.usageMonth = calendarMonth(now)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(now, "", "", "gpt-5.6-sol", "default", usage)
+	stats.applyUsageAt(now, "", "", "gpt-5.6-sol", "", "default", usage)
 	stats.apiCostNanoDollars = 7_746_820_000_000
 	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
@@ -442,7 +442,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	stats.applyRouted(now, "thread", "203.0.113.42", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, metadata)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300, TotalTokens: 2_300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "default", usage)
+	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "xhigh", "default", usage)
 	stats.applyAnswered(now, "thread", "account", 500*time.Millisecond)
 	stats.applyCompleted(now, "thread", "account", metadata.RequestKind, 2*time.Second)
 	catalog := newModelCatalog()
@@ -501,9 +501,9 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("thread")
 	stats.applyRouted(now, "thread", "203.0.113.42", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, turnMetadata{})
-	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "default", responseUsage{InputTokens: 1_000})
 	stats.applyRouted(now.Add(time.Second), "thread", "203.0.113.42", "account", "gpt-5.6-luna", "low", "", transportHTTP, turnMetadata{})
-	stats.applyUsageAt(now.Add(time.Second), "thread", "account", "gpt-5.6-luna", "default", responseUsage{InputTokens: 1_000})
+	stats.applyUsageAt(now.Add(2*time.Second), "thread", "account", "gpt-5.6-sol", "xhigh", "default", responseUsage{InputTokens: 1_000})
+	stats.applyUsageAt(now.Add(3*time.Second), "thread", "account", "gpt-5.6-luna", "low", "default", responseUsage{InputTokens: 1_000})
 	server := &server{
 		pool:        &Pool{},
 		stats:       stats,
@@ -511,12 +511,12 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 		clientIDKey: []byte("secret"),
 	}
 
-	view := server.currentDashboard(now.Add(time.Second))
+	view := server.currentDashboard(now.Add(3 * time.Second))
 	if len(view.Threads) != 1 {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "mixed" || thread.ModelInfo != "gpt-5.6-sol\ngpt-5.6-luna" {
+	if thread.Model != "mixed" || thread.ModelInfo != "gpt-5.6-sol (xhigh)\ngpt-5.6-luna (low)" {
 		t.Fatalf("mixed model = %q with info %q", thread.Model, thread.ModelInfo)
 	}
 	payload, err := renderDashboard("dashboard", view)
@@ -524,7 +524,7 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	if !strings.Contains(body, "data-tooltip=\"gpt-5.6-sol\ngpt-5.6-luna\"") || !strings.Contains(body, `>mixed</span>`) {
+	if !strings.Contains(body, "data-tooltip=\"gpt-5.6-sol (xhigh)\ngpt-5.6-luna (low)\"") || !strings.Contains(body, `>mixed</span>`) {
 		t.Fatalf("mixed model tooltip missing from dashboard: %s", body)
 	}
 }

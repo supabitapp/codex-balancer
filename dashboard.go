@@ -383,7 +383,14 @@ func dashboardThreadModel(thread ThreadSnapshot) (string, string) {
 	if len(thread.models) < 2 {
 		return dashboardModel(thread.Model, thread.Effort), ""
 	}
-	return "mixed", strings.Join(thread.models, "\n")
+	models := make([]string, len(thread.models))
+	for index, model := range thread.models {
+		models[index] = model.name
+		if len(model.efforts) > 0 {
+			models[index] += " (" + strings.Join(model.efforts, ", ") + ")"
+		}
+	}
+	return "mixed", strings.Join(models, "\n")
 }
 
 func dashboardModel(model, effort string) string {
