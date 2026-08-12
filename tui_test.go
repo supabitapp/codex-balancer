@@ -79,11 +79,14 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 	view := dashboard.threads(220, 8)
 	for _, expected := range []string{
 		"Thread", "Client", "IP", "Country", "Account", "Model", "Via", "Fast", "Uncached", "Cache%", "Output", "Ctx/Cmp", "Latency", "Reqs", "Active",
-		"019fe5c2", "52f3c1d8", "203.0.113.42", "🇺🇸 US", "account-a@example.com", "gpt-5.6-sol (xhigh)", "HTTP", "FAST", "500", "75", "300", "-- (2)", "5.42s", "39",
+		"019fe5c2", "52f3c1d8", "203.0.113.42", "🇺🇸 US", "account-a@example.com", "gpt-5.6-sol (xhigh)", "HTTP", "⚡", "500", "75", "300", "-- (2)", "5.42s", "39",
 	} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("routing missing %q:\n%s", expected, view)
 		}
+	}
+	if strings.Contains(view, "FAST") {
+		t.Fatalf("routing still shows FAST text:\n%s", view)
 	}
 	clientColumn := strings.Index(view, "Client")
 	ipColumn := strings.Index(view, "IP")

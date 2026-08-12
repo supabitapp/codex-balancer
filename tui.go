@@ -469,9 +469,9 @@ func (d dashboard) threads(width, height int) string {
 		{"Account", accountWidth, styles.spark, func(view routingThreadView) string { return view.Account }},
 		{"Model", modelWidth, styles.text, func(view routingThreadView) string { return view.Model }},
 		{"Via", 4, styles.good, func(view routingThreadView) string { return view.Via }},
-		{"Fast", 4, styles.hot, func(view routingThreadView) string {
+		{"Fast", 4, styles.warn, func(view routingThreadView) string {
 			if view.Fast {
-				return "FAST"
+				return "⚡"
 			}
 			return ""
 		}},
