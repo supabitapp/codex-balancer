@@ -386,7 +386,7 @@ func TestDashboardOverview(t *testing.T) {
 		t.Fatalf("overview metrics = %+v", view.Overview)
 	}
 	wantInfo := "From Aug 1"
-	wantPriceInfo := "☕ 1291 iced lattes ($6 each)\n🌮 646 tacos ($12 each)\n🦆 7747 rubber ducks ($1 each)\n" + wantInfo + ". Prices from models.dev, updated 11 August 2026, 16:00 BST"
+	wantPriceInfo := "☕ 1291 iced lattes ($6 each)\n🌮 646 tacos ($12 each)\n" + wantInfo + ". Prices from models.dev, updated 11 August 2026, 16:00 BST"
 	apiEstimateFound := false
 	for i, metric := range view.Overview {
 		if metric.Name != wantNames[i] {
@@ -424,9 +424,9 @@ func TestFunCostEquivalents(t *testing.T) {
 		cost int64
 		want string
 	}{
-		{0, "☕ 0 iced lattes ($6 each)\n🌮 0 tacos ($12 each)\n🦆 0 rubber ducks ($1 each)"},
-		{3_000_000_000, "☕ 1 iced latte ($6 each)\n🌮 0 tacos ($12 each)\n🦆 3 rubber ducks ($1 each)"},
-		{9_000_000_000, "☕ 2 iced lattes ($6 each)\n🌮 1 taco ($12 each)\n🦆 9 rubber ducks ($1 each)"},
+		{0, "☕ 0 iced lattes ($6 each)\n🌮 0 tacos ($12 each)"},
+		{3_000_000_000, "☕ 1 iced latte ($6 each)\n🌮 0 tacos ($12 each)"},
+		{9_000_000_000, "☕ 2 iced lattes ($6 each)\n🌮 1 taco ($12 each)"},
 	} {
 		if got := funCostEquivalents(test.cost); got != test.want {
 			t.Fatalf("fun cost equivalents for %d = %q, want %q", test.cost, got, test.want)
