@@ -150,7 +150,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
 		`🇺🇸 US-1`,
-		`<td>gpt-5.6-sol (high)</td>`,
+		`<td>☀️ (high)</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<span>1 checking</span>`,
 		`<td>WS</td>`,
@@ -463,7 +463,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.ClientID != "🇺🇸 US-1" || thread.Model != "gpt-5.6-sol (xhigh)" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextLeft != "100% (1)" || thread.Latency != "2s" || thread.Requests != "1" || thread.Cost != "$0.012" {
+	if thread.ClientID != "🇺🇸 US-1" || thread.Model != "☀️ (xhigh)" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextLeft != "100% (1)" || thread.Latency != "2s" || thread.Requests != "1" || thread.Cost != "$0.012" {
 		t.Fatalf("routing row = %+v", thread)
 	}
 	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Context window: 258.4K") || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Used: 2.3K") || !strings.Contains(thread.ContextInfo, "Left: 100%") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
@@ -474,7 +474,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<td class=\"dim\">🇺🇸 US-1</td>", "<th>Model (thinking mode)</th>", "<td>gpt-5.6-sol (xhigh)</td>", "<th>Cache %</th>", "<th>Context left<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1"} {
+	for _, expected := range []string{"<td class=\"dim\">🇺🇸 US-1</td>", "<th>Model (thinking mode)</th>", "<td>☀️ (xhigh)</td>", "<th>Cache %</th>", "<th>Context left<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -529,9 +529,21 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 	}
 }
 
-func TestDashboardModelOmitsEmptyThinkingMode(t *testing.T) {
-	if got := dashboardModel("gpt-5.6-sol", ""); got != "gpt-5.6-sol" {
-		t.Fatalf("model = %q", got)
+func TestDashboardModel(t *testing.T) {
+	for _, test := range []struct {
+		model  string
+		effort string
+		want   string
+	}{
+		{"gpt-5.6-sol", "xhigh", "☀️ (xhigh)"},
+		{"gpt-5.6-terra", "medium", "🌍 (medium)"},
+		{"gpt-5.6-luna", "low", "🌙 (low)"},
+		{"gpt-5.6-luna-2026-08-01", "", "🌙"},
+		{"gpt-5.4", "", "gpt-5.4"},
+	} {
+		if got := dashboardModel(test.model, test.effort); got != test.want {
+			t.Errorf("dashboardModel(%q, %q) = %q, want %q", test.model, test.effort, got, test.want)
+		}
 	}
 }
 

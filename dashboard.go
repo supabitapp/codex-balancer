@@ -387,10 +387,23 @@ func dashboardThreadModel(thread ThreadSnapshot) (string, string) {
 }
 
 func dashboardModel(model, effort string) string {
+	model = dashboardModelName(model)
 	if effort == "" {
 		return model
 	}
 	return model + " (" + effort + ")"
+}
+
+func dashboardModelName(model string) string {
+	switch {
+	case model == "gpt-5.6-sol" || strings.HasPrefix(model, "gpt-5.6-sol-"):
+		return "☀️"
+	case model == "gpt-5.6-terra" || strings.HasPrefix(model, "gpt-5.6-terra-"):
+		return "🌍"
+	case model == "gpt-5.6-luna" || strings.HasPrefix(model, "gpt-5.6-luna-"):
+		return "🌙"
+	}
+	return model
 }
 
 func dashboardThreadInfo(metadata turnMetadata) string {
