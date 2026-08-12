@@ -45,6 +45,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`<link rel="icon" href="/favicon.svg" type="image/svg+xml">`,
+		`<script src="` + dashboardAssetURL("theme.js") + `"></script>`,
 		`<link rel="stylesheet" href="` + dashboardAssetURL("webtui-0.1.9.css") + `">`,
 		`src="` + dashboardAssetURL("dashboard.js") + `"`,
 		`src="/dashboard/assets/htmx-2.0.10.min.js"`,
@@ -86,6 +87,7 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 		{"/favicon.svg", "image/svg+xml", "public, max-age=3600", 100},
 		{"/dashboard/assets/dashboard.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 500},
 		{"/dashboard/assets/htmx-2.0.10.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
+		{"/dashboard/assets/theme.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 100},
 		{"/dashboard/assets/webtui-0.1.9.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable", 7_500},
 		{"/dashboard/assets/ws-2.0.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
 	} {
@@ -150,7 +152,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`019fe5c2`,
 		`52f3c1d8`,
 		`<td>gpt-5.6-sol (high)</td>`,
-		`<span is-="badge" cap-="slant-top" class="status-badge status-checking">◌ checking</span>`,
+		`<span is-="badge" cap-="slant-top">◌ checking</span>`,
 		`<span is-="badge" variant-="background1">1 checking</span>`,
 		`<td>WS</td>`,
 		`class="fast-icon"`,
@@ -287,7 +289,7 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 	body := string(payload)
 	for _, expected := range []string{
 		`<span is-="badge" variant-="background1">1 priority</span>`,
-		`class="status-badge status-priority"`,
+		`<span is-="badge" cap-="slant-top">`,
 		`>◆ priority</span></span>`,
 		`data-tooltip="Prioritized for new routing: a banked reset expires in 30m; 20% weekly capacity remains."`,
 		`aria-describedby="dashboard-tooltip"`,

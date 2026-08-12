@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Codex Balancer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script src="{{dashboardAssetURL "theme.js"}}"></script>
 <link rel="stylesheet" href="{{dashboardAssetURL "webtui-0.1.9.css"}}">
 <script src="{{dashboardAssetURL "dashboard.js"}}" defer></script>
 <script src="/dashboard/assets/htmx-2.0.10.min.js" defer></script>
@@ -13,25 +14,6 @@
 @layer base, utils, components, dashboard;
 
 @layer dashboard {
-  :root {
-    color-scheme: light dark;
-    --background0: #f7f7f4;
-    --background1: #e9e9e4;
-    --background2: #c9c9c1;
-    --background3: #96968d;
-    --foreground0: #1b1b19;
-    --foreground1: #51514b;
-    --foreground2: #74746c;
-    --font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    --font-size: 14px;
-    --line-height: 1.35;
-    --font-weight-bold: 650;
-    --box-border-color: var(--foreground2);
-    --green: #18794e;
-    --amber: #ad5700;
-    --red: #cd2b31;
-  }
-
   html,
   body {
     min-height: 100%;
@@ -111,24 +93,6 @@
 
   [is-~="badge"] {
     font-weight: var(--font-weight-bold);
-  }
-
-  .status-badge {
-    --badge-color: var(--foreground2);
-    --badge-text: var(--background0);
-  }
-
-  .status-live {
-    --badge-color: var(--green);
-  }
-
-  .status-priority,
-  .status-cooling {
-    --badge-color: var(--amber);
-  }
-
-  .status-needs_reauth {
-    --badge-color: var(--red);
   }
 
   .has-tooltip {
@@ -219,7 +183,6 @@
     display: block;
     width: 1rem;
     height: 1rem;
-    color: var(--amber);
     fill: currentColor;
   }
 
@@ -247,21 +210,6 @@
 
   dd {
     font-weight: var(--font-weight-bold);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --background0: #11110f;
-      --background1: #242420;
-      --background2: #45453e;
-      --background3: #696960;
-      --foreground0: #f1f1ec;
-      --foreground1: #c6c6bd;
-      --foreground2: #999990;
-      --green: #30a46c;
-      --amber: #f5a623;
-      --red: #e5484d;
-    }
   }
 
   @media (max-width: 760px) {
@@ -363,7 +311,7 @@
 <tbody>{{range .Accounts}}<tr>
 <td>{{.Name}}</td>
 <td class="dim">{{.Plan}}</td>
-{{$status := dashboardStatus .Status}}<td>{{if .StatusInfo}}<span class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span is-="badge" cap-="slant-top" class="status-badge status-{{.Status}}">{{$status.Mark}} {{$status.Label}}</span></span>{{else}}<span is-="badge" cap-="slant-top" class="status-badge status-{{.Status}}">{{$status.Mark}} {{$status.Label}}</span>{{end}}</td>
+{{$status := dashboardStatus .Status}}<td>{{if .StatusInfo}}<span class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span is-="badge" cap-="slant-top">{{$status.Mark}} {{$status.Label}}</span></span>{{else}}<span is-="badge" cap-="slant-top">{{$status.Mark}} {{$status.Label}}</span>{{end}}</td>
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>

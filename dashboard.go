@@ -20,7 +20,7 @@ const (
 	dashboardContextBaseline = 12_000
 )
 
-//go:embed web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/webtui-0.1.9.css web/ws-2.0.4.min.js
+//go:embed web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/theme.js web/webtui-0.1.9.css web/ws-2.0.4.min.js
 var dashboardFiles embed.FS
 
 var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.FuncMap{
