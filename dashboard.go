@@ -80,7 +80,7 @@ type dashboardThreadView struct {
 	UncachedInput string
 	CacheRate     string
 	Output        string
-	ContextLeft   string
+	ContextUsed   string
 	ContextInfo   string
 	Latency       string
 	LatencyInfo   string
@@ -369,7 +369,7 @@ func newDashboardThreadView(thread ThreadSnapshot, account, clientName string, l
 		UncachedInput: formatTokenCount(thread.Usage.nonCachedInput()),
 		CacheRate:     dashboardCacheRate(thread.Usage),
 		Output:        formatTokenCount(thread.Usage.OutputTokens),
-		ContextLeft:   dashboardContext(used, limits, thread.Compactions),
+		ContextUsed:   dashboardContextUsed(used, limits, thread.Compactions),
 		ContextInfo:   dashboardContextInfo(used, limits, thread.Compactions),
 		Latency:       formatLatency(thread.Latency),
 		LatencyInfo:   dashboardLatencyInfo(thread.TTFB, thread.Latency),
@@ -442,10 +442,10 @@ func dashboardCacheRate(usage responseUsage) string {
 	return formatDecimal(float64(usage.InputDetails.CachedTokens) * 100 / float64(usage.InputTokens))
 }
 
-func dashboardContext(used int64, limits modelContextLimits, compactions int64) string {
+func dashboardContextUsed(used int64, limits modelContextLimits, compactions int64) string {
 	context := "--"
 	if limits.Window > 0 {
-		context = fmt.Sprintf("%.0f%%", dashboardContextRemaining(used, limits.Window))
+		context = fmt.Sprintf("%.0f%%", dashboardContextUsedPercent(used, limits.Window))
 	}
 	if compactions > 0 {
 		context += " (" + strconv.FormatInt(compactions, 10) + ")"
@@ -462,22 +462,22 @@ func dashboardContextInfo(used int64, limits modelContextLimits, compactions int
 		lines = append(lines, "Auto compact at: "+formatTokenCount(limits.AutoCompact))
 	}
 	if used > 0 {
-		lines = append(lines, "Used: "+formatTokenCount(used))
+		lines = append(lines, "Tokens used: "+formatTokenCount(used))
 	}
 	if limits.Window > 0 {
-		lines = append(lines, "Left: "+formatPercent(dashboardContextRemaining(used, limits.Window)))
+		lines = append(lines, "Context used: "+formatPercent(dashboardContextUsedPercent(used, limits.Window)))
 	}
 	lines = append(lines, "Compactions: "+strconv.FormatInt(compactions, 10))
 	return strings.Join(lines, "\n")
 }
 
-func dashboardContextRemaining(used, window int64) float64 {
+func dashboardContextUsedPercent(used, window int64) float64 {
 	if window <= dashboardContextBaseline {
 		return 0
 	}
 	available := window - dashboardContextBaseline
 	consumed := max(used-dashboardContextBaseline, 0)
-	return float64(max(available-consumed, 0)) * 100 / float64(available)
+	return float64(min(consumed, available)) * 100 / float64(available)
 }
 
 func formatLatency(value time.Duration) string {

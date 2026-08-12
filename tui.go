@@ -501,7 +501,7 @@ func (d dashboard) threads(width, height int) string {
 		{"Uncached", 8, styles.num, func(view routingThreadView) string { return view.UncachedInput }},
 		{"Cache%", 6, styles.dim, func(view routingThreadView) string { return view.CacheRate }},
 		{"Output", 7, styles.num, func(view routingThreadView) string { return view.Output }},
-		{"Ctx/Cmp", 8, styles.dim, func(view routingThreadView) string { return view.ContextLeft }},
+		{"Used/Cmp", 8, styles.dim, func(view routingThreadView) string { return view.ContextUsed }},
 		{"Latency", 7, styles.dim, func(view routingThreadView) string { return view.Latency }},
 		{"Reqs", 4, styles.num, func(view routingThreadView) string { return view.Requests }},
 		{"Cost", 8, styles.num, func(view routingThreadView) string { return view.Cost }},
