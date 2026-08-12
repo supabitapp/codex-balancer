@@ -12,12 +12,90 @@ import (
 	"time"
 )
 
+func TestUsagePollLimitReachedDoesNotRemoveAccountFromRouting(t *testing.T) {
+	account := testAccount("account-a", 50)
+	roomier := testAccount("account-b", 20)
+	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/usage" {
+			http.NotFound(w, r)
+			return
+		}
+		used := 100.0
+		json.NewEncoder(w).Encode(map[string]any{
+			"rate_limit": map[string]any{
+				"limit_reached":    true,
+				"primary_window":   map[string]any{"used_percent": used, "limit_window_seconds": 300},
+				"secondary_window": map[string]any{"used_percent": used, "limit_window_seconds": 604800},
+			},
+		})
+	}))
+	defer usage.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = usage.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{roomier, account}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp")
+	})
+	defer closeServer()
+	if err := server.pollUsage(context.Background(), account); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !reflect.DeepEqual(calls, []string{"account-a"}) {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestUsagePollPositiveCapacityReturnsSpentAccountToRouting(t *testing.T) {
+	account := testAccount("account-a", 100)
+	account.markSpent()
+	account.cooldown = time.Now().Add(time.Hour)
+	roomier := testAccount("account-b", 20)
+	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"rate_limit": map[string]any{
+				"primary_window":   map[string]any{"used_percent": 99, "limit_window_seconds": 300},
+				"secondary_window": map[string]any{"used_percent": 99, "limit_window_seconds": 604800},
+			},
+		})
+	}))
+	defer usage.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = usage.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{roomier, account}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp")
+	})
+	defer closeServer()
+	if err := server.pollUsage(context.Background(), account); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !reflect.DeepEqual(calls, []string{"account-a"}) {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
 func TestExpiringResetCreditChoosesEarliestEligibleCredit(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
 	expired := now.Add(-time.Minute)
 	soon := now.Add(2 * time.Minute)
-	threshold := now.Add(time.Hour)
-	later := now.Add(time.Hour + time.Second)
+	threshold := now.Add(24 * time.Hour)
+	later := now.Add(24*time.Hour + time.Second)
 	credits := []resetCredit{
 		{ID: "future", ResetType: "codex_rate_limits", Status: "available", ExpiresAt: &later},
 		{ID: "wrong-type", ResetType: "other", Status: "available", ExpiresAt: &soon},
@@ -39,9 +117,8 @@ func TestExpiringResetCreditChoosesEarliestEligibleCredit(t *testing.T) {
 	}
 }
 
-func TestPollAllUsageConsumesExpiringResetCredit(t *testing.T) {
+func TestPollAllUsageRefreshesResetCreditsWithoutConsuming(t *testing.T) {
 	now := time.Now().UTC()
-	usageCalls := 0
 	calls := []string{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
@@ -54,17 +131,12 @@ func TestPollAllUsageConsumesExpiringResetCredit(t *testing.T) {
 
 		switch r.Method + " " + r.URL.Path {
 		case "GET /usage":
-			usageCalls++
-			used, banked := 100.0, 1
-			if usageCalls > 1 {
-				used, banked = 0, 0
-			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"rate_limit": map[string]any{
-					"primary_window":   map[string]any{"used_percent": used, "limit_window_seconds": 300},
-					"secondary_window": map[string]any{"used_percent": used, "limit_window_seconds": 604800},
+					"primary_window":   map[string]any{"used_percent": 80, "limit_window_seconds": 300},
+					"secondary_window": map[string]any{"used_percent": 80, "limit_window_seconds": 604800},
 				},
-				"rate_limit_reset_credits": map[string]any{"available_count": banked},
+				"rate_limit_reset_credits": map[string]any{"available_count": 1},
 			})
 		case "GET /rate-limit-reset-credits":
 			json.NewEncoder(w).Encode(map[string]any{
@@ -112,16 +184,8 @@ func TestPollAllUsageConsumesExpiringResetCredit(t *testing.T) {
 	wantCalls := []string{
 		"GET /usage",
 		"GET /rate-limit-reset-credits",
-		"POST /rate-limit-reset-credits/consume",
-		"GET /usage",
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", calls, wantCalls)
-	}
-	if got := account.status(time.Now()); got != accountLive {
-		t.Fatalf("status = %s, want %s", got, accountLive)
-	}
-	if count, credits, known := account.bankedResets(); !known || count != 0 || len(credits) != 0 {
-		t.Fatalf("banked resets = %d, %v", count, known)
 	}
 }

@@ -150,7 +150,7 @@ func TestEventsRenderCompactTable(t *testing.T) {
 			},
 			{
 				At:      time.Date(2026, time.August, 11, 9, 26, 15, 0, time.UTC),
-				Kind:    "automatic reset failed",
+				Kind:    "account reset failed",
 				Account: "vuonghoainam.work",
 				Detail:  "reset credits returned 429 Too Many Requests",
 			},
@@ -161,7 +161,7 @@ func TestEventsRenderCompactTable(t *testing.T) {
 	row := lines[3]
 	for label, value := range map[string]string{
 		"Time":    "09:26:15",
-		"Event":   "automatic reset failed",
+		"Event":   "account reset failed",
 		"Account": "vuonghoa",
 		"Detail":  "reset credits returned 429 Too Many Requests",
 	} {
@@ -169,8 +169,8 @@ func TestEventsRenderCompactTable(t *testing.T) {
 			t.Fatalf("%s column starts at %d, want %d", label, got, want)
 		}
 	}
-	if detailColumn := textColumn(t, header, "Detail"); detailColumn != 41 {
-		t.Fatalf("detail column starts at %d, want 41", detailColumn)
+	if detailColumn := textColumn(t, header, "Detail"); detailColumn != 39 {
+		t.Fatalf("detail column starts at %d, want 39", detailColumn)
 	}
 	narrowHeader := strings.Split(dashboard.events(120, 4), "\n")[2]
 	wideHeader := strings.Split(dashboard.events(300, 4), "\n")[2]

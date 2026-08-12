@@ -17,6 +17,7 @@ const (
 	minCooldown       = 30 * time.Second
 	maxCooldown       = time.Hour
 	resetPriorityLead = 24 * time.Hour
+	drainBelowPercent = 5.0
 )
 
 type Pool struct {
@@ -239,7 +240,7 @@ func (c routingCandidate) quotaKnown() bool {
 
 func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool) {
 	remaining, known := remainingPercent(longestWindow(c.primary, c.secondary))
-	if !known || remaining == 0 {
+	if !known {
 		return routingPriority{}, false
 	}
 	credit, ok := nextExpiringResetCredit(c.resetCredits.details, now, resetPriorityLead)
@@ -260,6 +261,14 @@ func (c routingCandidate) routesBefore(other routingCandidate, now time.Time) bo
 	}
 	if prioritized && !priority.expiresAt.Equal(otherPriority.expiresAt) {
 		return priority.expiresAt.Before(otherPriority.expiresAt)
+	}
+	drain := c.quotaKnown() && c.pressure > 100-drainBelowPercent
+	otherDrain := other.quotaKnown() && other.pressure > 100-drainBelowPercent
+	if drain != otherDrain {
+		return drain
+	}
+	if drain && c.pressure != other.pressure {
+		return c.pressure > other.pressure
 	}
 	return c.roomierThan(other)
 }

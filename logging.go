@@ -63,7 +63,7 @@ func routingLogAttrs(candidate routingCandidate, now time.Time) []any {
 		"reset_priority", prioritized,
 		"banked_resets_known", candidate.resetCredits.known,
 		"banked_resets", candidate.resetCredits.count,
-		"reported_limit_reached", candidate.spent,
+		"usage_limit_reached", candidate.spent,
 		"cooldown_until", candidate.cooldown,
 		"last_used_at", candidate.lastUsed,
 		"reauth", candidate.reauth,

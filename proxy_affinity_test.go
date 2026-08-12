@@ -18,6 +18,102 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+func TestHTTPNewWorkUsesZeroRemainingAccountWithExpiringReset(t *testing.T) {
+	now := time.Now()
+	resetting := testAccount("account-resetting", 100)
+	resetting.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(4 * time.Hour), seenAt: now}
+	resetting.secondary = window{usedPercent: 100, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+	adoptTestResetCredit(resetting, now.Add(30*time.Minute))
+	roomier := testAccount("account-roomier", 10)
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{roomier, resetting}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp_resetting")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-resetting]" {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestHTTPNewWorkUsesEarliestExpiringResetBeforeDrainMode(t *testing.T) {
+	now := time.Now()
+	earlier := testAccount("account-earlier-reset", 40)
+	adoptTestResetCredit(earlier, now.Add(time.Hour))
+	later := testAccount("account-later-reset", 20)
+	adoptTestResetCredit(later, now.Add(2*time.Hour))
+	drain := testAccount("account-drain", 99)
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{drain, later, earlier}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-earlier-reset]" {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestHTTPNewWorkDrainsOnlyAccountsBelowFivePercent(t *testing.T) {
+	tests := []struct {
+		name        string
+		usedPercent float64
+		want        string
+	}{
+		{name: "below", usedPercent: 95.01, want: "account-drain"},
+		{name: "equal", usedPercent: 95, want: "account-roomier"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			drain := testAccount("account-drain", tt.usedPercent)
+			roomier := testAccount("account-roomier", 50)
+			calls := []string{}
+			server, _, closeServer := newAffinityHTTPServer(t, []*Account{roomier, drain}, func(w http.ResponseWriter, r *http.Request) {
+				calls = append(calls, r.Header.Get("chatgpt-account-id"))
+				writeResponseCreated(w, "resp")
+			})
+			defer closeServer()
+
+			response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			if fmt.Sprint(calls) != fmt.Sprintf("[%s]", tt.want) {
+				t.Fatalf("calls = %v", calls)
+			}
+		})
+	}
+}
+
+func TestHTTPNewWorkDrainsLowestRemainingAccountFirst(t *testing.T) {
+	onePercent := testAccount("account-one-percent", 99)
+	oneAndHalfPercent := testAccount("account-one-half-percent", 98.5)
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{oneAndHalfPercent, onePercent}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-one-percent]" {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
 func TestHTTPSoftSessionMovesFromSpentAccount(t *testing.T) {
 	a := testAccount("account-a", 99)
 	b := testAccount("account-b", 0)
@@ -76,6 +172,371 @@ func TestHTTPSoftSessionRetriesRateLimitOnAnotherAccount(t *testing.T) {
 	}
 	if got := store.lookup(affinityRef{kind: affinitySession, value: "session"}); got != "account-b" {
 		t.Fatalf("session owner = %q, want account-b", got)
+	}
+}
+
+func TestHTTPGenericRateLimitDoesNotSpendAccount(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	apiCalls := 0
+	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCalls++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer usage.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = usage.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		accountID := r.Header.Get("chatgpt-account-id")
+		calls = append(calls, accountID)
+		if len(calls) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "rate_limit_exceeded"}})
+			return
+		}
+		writeResponseCreated(w, "resp")
+	})
+	defer closeServer()
+
+	for range 2 {
+		response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+	if fmt.Sprint(calls) != "[account-a account-b account-a]" {
+		t.Fatalf("calls = %v", calls)
+	}
+	if apiCalls != 0 {
+		t.Fatalf("account API calls = %d", apiCalls)
+	}
+}
+
+func TestHTTPUsageLimitRemovesAccountFromLaterRouting(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	resetCreditCalls := useNoResetCreditsAPI(t)
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		account := r.Header.Get("chatgpt-account-id")
+		calls = append(calls, account)
+		if account == "account-a" {
+			w.Header().Set("Retry-After", "0")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "usage_limit_reached"}})
+			return
+		}
+		writeResponseCreated(w, "resp_b")
+	})
+	defer closeServer()
+
+	for range 2 {
+		response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+	if fmt.Sprint(calls) != "[account-a account-b account-b]" {
+		t.Fatalf("calls = %v", calls)
+	}
+	if got := resetCreditCalls(); got != 1 {
+		t.Fatalf("reset credit calls = %d", got)
+	}
+}
+
+func TestHTTPHardUsageLimitNeverMovesAccount(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	resetCreditCalls := useNoResetCreditsAPI(t)
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "usage_limit_reached"}})
+	})
+	defer closeServer()
+	if err := store.bind(affinityRef{kind: affinityResponse, value: "resp_a"}, "account-a"); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","previous_response_id":"resp_a","input":[]}`)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-a]" {
+		t.Fatalf("calls = %v", calls)
+	}
+	if got := resetCreditCalls(); got != 1 {
+		t.Fatalf("reset credit calls = %d", got)
+	}
+}
+
+func TestHTTPWorkspaceUsageLimitDoesNotRedeemReset(t *testing.T) {
+	now := time.Now().UTC()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	adoptTestResetCredit(a, now.Add(time.Hour))
+	apiCalls := 0
+	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCalls++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer usage.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = usage.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+
+	calls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+		account := r.Header.Get("chatgpt-account-id")
+		calls = append(calls, account)
+		if account == "account-a" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("x-codex-rate-limit-reached-type", "workspace_member_usage_limit_reached")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "usage_limit_reached"}})
+			return
+		}
+		writeResponseCreated(w, "resp_b")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-a account-b]" {
+		t.Fatalf("calls = %v", calls)
+	}
+	if apiCalls != 0 {
+		t.Fatalf("account API calls = %d", apiCalls)
+	}
+}
+
+func TestHTTPUsageLimitRedeemsResetWithinTwentyFourHoursAndRetriesSameAccount(t *testing.T) {
+	account := testAccount("account-a", 99)
+	api := useResetAPI(t, 23*time.Hour, 0, http.StatusOK)
+
+	upstreamCalls := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{account}, func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls = append(upstreamCalls, r.Header.Get("chatgpt-account-id"))
+		if len(upstreamCalls) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "usage_limit_reached"}})
+			return
+		}
+		writeResponseCreated(w, "resp_a")
+	})
+	defer closeServer()
+
+	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(upstreamCalls) != "[account-a account-a]" {
+		t.Fatalf("upstream calls = %v", upstreamCalls)
+	}
+	wantAPICalls := []string{
+		"GET /rate-limit-reset-credits",
+		"POST /rate-limit-reset-credits/consume",
+		"GET /usage",
+	}
+	if calls := api.calls(); fmt.Sprint(calls) != fmt.Sprint(wantAPICalls) {
+		t.Fatalf("API calls = %v, want %v", calls, wantAPICalls)
+	}
+}
+
+func TestHTTPUsageLimitResetFailureFallsBackAndKeepsAccountSpent(t *testing.T) {
+	tests := []struct {
+		name          string
+		expiresAfter  time.Duration
+		usedPercent   float64
+		consumeStatus int
+		wantAPICalls  []string
+	}{
+		{
+			name:          "credit expires after twenty four hours",
+			expiresAfter:  24*time.Hour + time.Minute,
+			usedPercent:   0,
+			consumeStatus: http.StatusOK,
+			wantAPICalls:  []string{"GET /rate-limit-reset-credits"},
+		},
+		{
+			name:          "redemption fails",
+			expiresAfter:  time.Hour,
+			usedPercent:   0,
+			consumeStatus: http.StatusInternalServerError,
+			wantAPICalls: []string{
+				"GET /rate-limit-reset-credits",
+				"POST /rate-limit-reset-credits/consume",
+			},
+		},
+		{
+			name:          "redemption restores no quota",
+			expiresAfter:  time.Hour,
+			usedPercent:   100,
+			consumeStatus: http.StatusOK,
+			wantAPICalls: []string{
+				"GET /rate-limit-reset-credits",
+				"POST /rate-limit-reset-credits/consume",
+				"GET /usage",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			a := testAccount("account-a", 0)
+			b := testAccount("account-b", 20)
+			api := useResetAPI(t, test.expiresAfter, test.usedPercent, test.consumeStatus)
+			upstreamCalls := []string{}
+			server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(w http.ResponseWriter, r *http.Request) {
+				account := r.Header.Get("chatgpt-account-id")
+				upstreamCalls = append(upstreamCalls, account)
+				if account == "account-a" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusTooManyRequests)
+					json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "usage_limit_reached"}})
+					return
+				}
+				writeResponseCreated(w, "resp_b")
+			})
+			defer closeServer()
+
+			for range 2 {
+				response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+				if response.Code != http.StatusOK {
+					t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+				}
+			}
+			if fmt.Sprint(upstreamCalls) != "[account-a account-b account-b]" {
+				t.Fatalf("upstream calls = %v", upstreamCalls)
+			}
+			if calls := api.calls(); fmt.Sprint(calls) != fmt.Sprint(test.wantAPICalls) {
+				t.Fatalf("API calls = %v, want %v", calls, test.wantAPICalls)
+			}
+		})
+	}
+}
+
+func TestHTTPConcurrentUsageLimitsRedeemOneReset(t *testing.T) {
+	account := testAccount("account-a", 99)
+	api := useResetAPI(t, time.Hour, 0, http.StatusOK)
+
+	var upstreamMu sync.Mutex
+	upstreamCalls := 0
+	failures := 0
+	failuresReady := make(chan struct{})
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{account}, func(w http.ResponseWriter, r *http.Request) {
+		upstreamMu.Lock()
+		upstreamCalls++
+		if failures < 2 {
+			failures++
+			if failures == 2 {
+				close(failuresReady)
+			}
+			upstreamMu.Unlock()
+			<-failuresReady
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "usage_limit_reached"}})
+			return
+		}
+		upstreamMu.Unlock()
+		writeResponseCreated(w, "resp_a")
+	})
+	defer closeServer()
+
+	start := make(chan struct{})
+	results := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() {
+			<-start
+			results <- serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+		}()
+	}
+	close(start)
+	for range 2 {
+		response := <-results
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+	if got := api.consumeCalls(); got != 1 {
+		t.Fatalf("consume calls = %d", got)
+	}
+	upstreamMu.Lock()
+	gotUpstreamCalls := upstreamCalls
+	upstreamMu.Unlock()
+	if gotUpstreamCalls != 4 {
+		t.Fatalf("upstream calls = %d", gotUpstreamCalls)
+	}
+}
+
+func TestHTTPLateConcurrentUsageLimitUsesCompletedReset(t *testing.T) {
+	account := testAccount("account-a", 99)
+	api := useResetAPI(t, time.Hour, 0, http.StatusOK)
+
+	var upstreamMu sync.Mutex
+	upstreamCalls := 0
+	bothStarted := make(chan struct{})
+	releaseLateFailure := make(chan struct{})
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{account}, func(w http.ResponseWriter, r *http.Request) {
+		upstreamMu.Lock()
+		upstreamCalls++
+		call := upstreamCalls
+		if call == 2 {
+			close(bothStarted)
+		}
+		upstreamMu.Unlock()
+		if call <= 2 {
+			<-bothStarted
+			if call == 2 {
+				<-releaseLateFailure
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "usage_limit_reached"}})
+			return
+		}
+		if call == 3 {
+			close(releaseLateFailure)
+		}
+		writeResponseCreated(w, "resp_a")
+	})
+	defer closeServer()
+
+	start := make(chan struct{})
+	results := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() {
+			<-start
+			results <- serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
+		}()
+	}
+	close(start)
+	for range 2 {
+		response := <-results
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+	if got := api.consumeCalls(); got != 1 {
+		t.Fatalf("consume calls = %d", got)
+	}
+	upstreamMu.Lock()
+	gotUpstreamCalls := upstreamCalls
+	upstreamMu.Unlock()
+	if gotUpstreamCalls != 4 {
+		t.Fatalf("upstream calls = %d", gotUpstreamCalls)
 	}
 }
 
@@ -1004,4 +1465,91 @@ func requireNoFailedAccounts(t *testing.T, server *server, accounts ...*Account)
 			t.Fatalf("account %s cooldown = %s, want none", account.id(), cooldown)
 		}
 	}
+}
+
+func useNoResetCreditsAPI(t *testing.T) func() int {
+	t.Helper()
+	api := useResetAPI(t, 0, 100, http.StatusOK)
+	return func() int { return len(api.calls()) }
+}
+
+type resetAPI struct {
+	mu            sync.Mutex
+	requests      []string
+	expiresAfter  time.Duration
+	usedPercent   float64
+	consumeStatus int
+}
+
+func useResetAPI(t *testing.T, expiresAfter time.Duration, usedPercent float64, consumeStatus int) *resetAPI {
+	t.Helper()
+	api := &resetAPI{
+		expiresAfter:  expiresAfter,
+		usedPercent:   usedPercent,
+		consumeStatus: consumeStatus,
+	}
+	server := httptest.NewServer(http.HandlerFunc(api.serveHTTP))
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = server.URL
+	t.Cleanup(func() {
+		accountAPIBaseURL = oldBaseURL
+		server.Close()
+	})
+	return api
+}
+
+func (a *resetAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	request := r.Method + " " + r.URL.Path
+	a.mu.Lock()
+	a.requests = append(a.requests, request)
+	a.mu.Unlock()
+	switch request {
+	case "GET /rate-limit-reset-credits":
+		if a.expiresAfter <= 0 {
+			json.NewEncoder(w).Encode(map[string]any{"available_count": 0, "credits": []any{}})
+			return
+		}
+		expiresAt := time.Now().UTC().Add(a.expiresAfter)
+		json.NewEncoder(w).Encode(map[string]any{
+			"available_count": 1,
+			"credits": []map[string]any{{
+				"id":         "credit-a",
+				"reset_type": "codex_rate_limits",
+				"status":     "available",
+				"expires_at": expiresAt.Format(time.RFC3339),
+			}},
+		})
+	case "POST /rate-limit-reset-credits/consume":
+		if a.consumeStatus != http.StatusOK {
+			http.Error(w, "reset failed", a.consumeStatus)
+			return
+		}
+		json.NewEncoder(w).Encode(consumeResetCreditResponse{Code: "reset", WindowsReset: 2})
+	case "GET /usage":
+		json.NewEncoder(w).Encode(map[string]any{
+			"rate_limit": map[string]any{
+				"primary_window":   map[string]any{"used_percent": a.usedPercent, "limit_window_seconds": 300},
+				"secondary_window": map[string]any{"used_percent": a.usedPercent, "limit_window_seconds": 604800},
+			},
+			"rate_limit_reset_credits": map[string]any{"available_count": 0},
+		})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (a *resetAPI) calls() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.requests...)
+}
+
+func (a *resetAPI) consumeCalls() int {
+	calls := 0
+	for _, request := range a.calls() {
+		if request == "POST /rate-limit-reset-credits/consume" {
+			calls++
+		}
+	}
+	return calls
 }

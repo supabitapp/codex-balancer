@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const resetCreditLead = time.Hour
-
 var accountAPIBaseURL = "https://chatgpt.com/backend-api/wham"
 
 type usagePayload struct {
@@ -22,14 +20,6 @@ type usagePayload struct {
 	RateLimitResetCredits *struct {
 		AvailableCount int64 `json:"available_count"`
 	} `json:"rate_limit_reset_credits"`
-}
-
-func (p usagePayload) spent() bool {
-	if p.RateLimit.LimitReached != nil {
-		return *p.RateLimit.LimitReached
-	}
-	return p.RateLimit.PrimaryWindow.window().usedPercent >= 100 ||
-		p.RateLimit.SecondaryWindow.window().usedPercent >= 100
 }
 
 func (p usagePayload) bankedResets() *int64 {
@@ -107,7 +97,6 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 		payload.RateLimit.PrimaryWindow.window(),
 		payload.RateLimit.SecondaryWindow.window(),
 		payload.bankedResets(),
-		payload.spent(),
 	)
 	var limitReached any
 	if payload.RateLimit.LimitReached != nil {
@@ -116,6 +105,23 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 	attrs := []any{"reported_limit_reached", limitReached}
 	attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 	s.log.Debug("usage polled", attrs...)
+	return nil
+}
+
+func (s *server) pollResetCredits(ctx context.Context, account *Account) error {
+	resp, err := s.doAccountRequest(ctx, account, http.MethodGet, accountAPIBaseURL+"/rate-limit-reset-credits", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("reset credits returned %s", resp.Status)
+	}
+	var payload resetCreditsPayload
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+	account.adoptResetCredits(payload.AvailableCount, payload.Credits)
 	return nil
 }
 
@@ -168,14 +174,10 @@ func nextExpiringResetCredit(credits []resetCredit, now time.Time, lead time.Dur
 }
 
 func expiringResetCredit(credits []resetCredit, now time.Time) (resetCredit, bool) {
-	return nextExpiringResetCredit(credits, now, resetCreditLead)
+	return nextExpiringResetCredit(credits, now, resetPriorityLead)
 }
 
 func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Account, now time.Time) (consumeResetCreditResponse, string, error) {
-	if count, _, known := account.bankedResets(); !known || count <= 0 {
-		return consumeResetCreditResponse{}, "", nil
-	}
-
 	resp, err := s.doAccountRequest(ctx, account, http.MethodGet, accountAPIBaseURL+"/rate-limit-reset-credits", nil)
 	if err != nil {
 		return consumeResetCreditResponse{}, "", err
@@ -223,6 +225,35 @@ func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Accoun
 	}
 }
 
+func (s *server) recoverUsageLimit(ctx context.Context, account *Account, requestSent time.Time) bool {
+	account.resetMu.Lock()
+	defer account.resetMu.Unlock()
+	if account.restoreFromUsageAfter(requestSent) {
+		return true
+	}
+	if !account.routingCandidate().spent {
+		return true
+	}
+	result, creditID, err := s.consumeExpiringResetCredit(ctx, account, time.Now())
+	if err != nil {
+		s.log.Warn("account reset failed", "account", account.id(), "credit", creditID, "error", err)
+		s.stats.note("account reset failed", account.id(), err.Error())
+		return false
+	}
+	if creditID == "" {
+		return false
+	}
+	if err := s.pollUsage(ctx, account); err != nil {
+		s.log.Warn("usage refresh after reset failed", "account", account.id(), "error", err)
+		s.stats.note("usage refresh after reset failed", account.id(), err.Error())
+		return false
+	}
+	s.log.Info("account reset", "account", account.id(), "credit", creditID, "outcome", result.Code, "windows_reset", result.WindowsReset)
+	s.stats.note("account reset", account.id(), result.Code)
+	restored := !account.routingCandidate().spent
+	return restored
+}
+
 func (s *server) reauthorize(account *Account) error {
 	if !s.refreshed(account, account.id()) {
 		return fmt.Errorf("account %s needs reauth", account.id())
@@ -230,7 +261,7 @@ func (s *server) reauthorize(account *Account) error {
 	return nil
 }
 
-func (a *Account) adopt(primary, secondary window, banked *int64, spent bool) {
+func (a *Account) adopt(primary, secondary window, banked *int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if primary.known() {
@@ -244,9 +275,11 @@ func (a *Account) adopt(primary, secondary window, banked *int64, spent bool) {
 	} else if !a.resetCredits.known || a.resetCredits.count != *banked {
 		a.resetCredits = resetCreditState{known: true, count: *banked}
 	}
-	a.spent = spent
-	if a.dead == "" && !spent {
-		a.cooldown = time.Time{}
+	if (a.primary.known() || a.secondary.known()) && a.pressure() < 100 {
+		a.spent = false
+		if a.dead == "" {
+			a.cooldown = time.Time{}
+		}
 	}
 }
 
@@ -268,34 +301,13 @@ func (s *server) pollAllUsage(ctx context.Context) {
 			}
 			s.log.Warn("usage poll failed", "account", account.id(), "error", err)
 			s.stats.note("usage poll failed", account.id(), err.Error())
-			continue
 		}
-
-		result, creditID, err := s.consumeExpiringResetCredit(ctx, account, time.Now())
-		if err != nil {
+		if err := s.pollResetCredits(ctx, account); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			s.log.Warn("automatic reset failed", "account", account.id(), "credit", creditID, "error", err)
-			s.stats.note("automatic reset failed", account.id(), err.Error())
-			continue
-		}
-		if creditID == "" {
-			continue
-		}
-
-		attrs := []any{"account", account.id(), "credit", creditID, "outcome", result.Code, "windows_reset", result.WindowsReset}
-		if result.Code == "reset" || result.Code == "already_redeemed" {
-			s.log.Info("expiring reset credit redeemed", attrs...)
-			s.stats.note("account reset", account.id(), result.Code)
-		} else {
-			s.log.Debug("expiring reset credit kept", attrs...)
-		}
-		if result.Code != "nothing_to_reset" {
-			if err := s.pollUsage(ctx, account); err != nil && ctx.Err() == nil {
-				s.log.Warn("usage refresh after reset failed", "account", account.id(), "error", err)
-				s.stats.note("usage refresh after reset failed", account.id(), err.Error())
-			}
+			s.log.Warn("reset credits poll failed", "account", account.id(), "error", err)
+			s.stats.note("reset credits poll failed", account.id(), err.Error())
 		}
 	}
 }

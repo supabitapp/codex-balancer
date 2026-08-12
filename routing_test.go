@@ -158,7 +158,7 @@ func TestPoolRoutePrioritizesEarliestBankedResetExpiry(t *testing.T) {
 	}
 }
 
-func TestPoolRouteDemotesResetPriorityAtZeroWeeklyRemaining(t *testing.T) {
+func TestPoolRouteKeepsResetPriorityAtZeroWeeklyRemaining(t *testing.T) {
 	now := time.Now()
 	resetting := testAccount("account-resetting", 100)
 	resetting.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(4 * time.Hour), seenAt: now}
@@ -168,11 +168,11 @@ func TestPoolRouteDemotesResetPriorityAtZeroWeeklyRemaining(t *testing.T) {
 	roomier.secondary = window{usedPercent: 10, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
 	pool := &Pool{accounts: []*Account{resetting, roomier}}
 
-	if got := pool.route("", "", nil, nil).account; got != roomier {
-		t.Fatalf("account = %s, want roomier account at zero remaining", got.id())
+	if got := pool.route("", "", nil, nil).account; got != resetting {
+		t.Fatalf("account = %s, want reset account at zero remaining", got.id())
 	}
-	if got := resetting.status(now); got != accountLive {
-		t.Fatalf("status = %s, want live at zero remaining", got)
+	if got := resetting.status(now); got != accountPriority {
+		t.Fatalf("status = %s, want priority at zero remaining", got)
 	}
 	resetting.secondary.usedPercent = 99.99
 	if got := pool.route("", "", nil, nil).account; got != resetting {

@@ -44,6 +44,7 @@ type websocketTurn struct {
 	created       bool
 	visible       bool
 	modelRetried  bool
+	resetRetried  bool
 	resolution    affinityResolution
 	hardKinds     []string
 	compactReplay bool
@@ -67,12 +68,14 @@ type websocketEnvelope struct {
 	ClientMetadata map[string]string          `json:"client_metadata"`
 	Headers        map[string]json.RawMessage `json:"headers"`
 	Error          struct {
+		Type    string `json:"type"`
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
 	Response struct {
 		responsePayload
 		Error struct {
+			Type    string `json:"type"`
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
@@ -223,6 +226,7 @@ func (s *server) dialResponsesWebSocket(
 		skip = map[string]bool{}
 	}
 	reauthed := map[string]bool{}
+	resetRetried := map[string]bool{}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		account := s.pickAccount(thread, resolution.required, resolution.preferred, model, serviceTier, skip, attempt, transportWebSocket)
@@ -242,8 +246,10 @@ func (s *server) dialResponsesWebSocket(
 		var conn *websocket.Conn
 		var resp *http.Response
 		var err error
+		var sent time.Time
 		upstreamRetries := 0
 		for {
+			sent = time.Now()
 			ctx, cancel := context.WithTimeout(r.Context(), upstreamWait)
 			conn, resp, err = websocket.Dial(ctx, upstream, &websocket.DialOptions{
 				HTTPClient: s.client,
@@ -307,7 +313,21 @@ func (s *server) dialResponsesWebSocket(
 		if status == http.StatusTooManyRequests || status == http.StatusUnauthorized || status >= 500 {
 			if status == http.StatusTooManyRequests {
 				account.observe(resp.Header)
-				account.rateLimited(resp.Header, attempt)
+				usageLimit := responseUsageLimitReached(resp)
+				if usageLimit {
+					account.markSpent()
+					resettableUsageLimit := !workspaceUsageLimitReached(resp.Header)
+					if resettableUsageLimit && !resetRetried[id] && s.recoverUsageLimit(r.Context(), account, sent) {
+						resetRetried[id] = true
+						resolution.required = id
+						resolution.preferred = ""
+						resp.Body.Close()
+						attempt--
+						continue
+					}
+				} else {
+					account.rateLimited(resp.Header, attempt)
+				}
 				s.stats.rateLimited(id)
 				attrs := []any{"transport", transportWebSocket, "thread", thread, "attempt", attempt + 1}
 				attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
@@ -741,7 +761,25 @@ func (s *server) relayResponsesWebSocket(
 			retryReason := ""
 			rateLimited := websocketRateLimited(event)
 			if rateLimited {
-				current.account.rateLimited(headers, 0)
+				usageLimit := websocketUsageLimitReached(event)
+				if usageLimit {
+					current.account.markSpent()
+					resettableUsageLimit := !workspaceUsageLimitReached(headers)
+					if resettableUsageLimit && len(turns) > 0 && !turns[0].resetRetried {
+						turn := &turns[0]
+						turn.resetRetried = true
+						if s.recoverUsageLimit(ctx, current.account, turn.sent) && previsible {
+							resolution := turn.resolution
+							resolution.required = current.account.id()
+							resolution.preferred = ""
+							if redialTurn(turn, resolution, nil, "account reset") {
+								continue
+							}
+						}
+					}
+				} else {
+					current.account.rateLimited(headers, 0)
+				}
 				s.stats.rateLimited(current.account.id())
 				attrs := []any{"transport", transportWebSocket, "thread", thread, "status", websocketStatus(event), "code", websocketErrorCode(event)}
 				attrs = append(attrs, routingLogAttrs(current.account.routingCandidate(), time.Now())...)
@@ -959,8 +997,14 @@ func websocketStatus(event websocketEnvelope) int {
 }
 
 func websocketErrorCode(event websocketEnvelope) string {
+	if event.Error.Type != "" {
+		return event.Error.Type
+	}
 	if event.Error.Code != "" {
 		return event.Error.Code
+	}
+	if event.Response.Error.Type != "" {
+		return event.Response.Error.Type
 	}
 	return event.Response.Error.Code
 }
@@ -979,6 +1023,10 @@ func websocketAccountModelUnsupported(event websocketEnvelope, model string) boo
 func websocketRateLimited(event websocketEnvelope) bool {
 	code := websocketErrorCode(event)
 	return websocketStatus(event) == http.StatusTooManyRequests || code == "rate_limit_exceeded" || code == "usage_limit_reached"
+}
+
+func websocketUsageLimitReached(event websocketEnvelope) bool {
+	return websocketErrorCode(event) == "usage_limit_reached"
 }
 
 func websocketInvalidEncryptedContent(event websocketEnvelope) bool {

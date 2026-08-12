@@ -59,13 +59,14 @@ func TestWebSocketSoftRateLimitReplaysOnAnotherAccount(t *testing.T) {
 }
 
 func TestWebSocketPrecreatedUsageLimitReplaysOnAnotherAccount(t *testing.T) {
+	resetCreditCalls := useNoResetCreditsAPI(t)
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		if account == "account-a" {
 			writeWebSocketEvent(t, conn, map[string]any{
 				"type": "response.failed",
 				"response": map[string]any{
 					"id":    "resp_limited",
-					"error": map[string]any{"code": "usage_limit_reached"},
+					"error": map[string]any{"type": "usage_limit_reached"},
 				},
 			})
 			return
@@ -93,6 +94,145 @@ func TestWebSocketPrecreatedUsageLimitReplaysOnAnotherAccount(t *testing.T) {
 	}
 	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-b]" {
 		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	if got := resetCreditCalls(); got != 1 {
+		t.Fatalf("reset credit calls = %d", got)
+	}
+}
+
+func TestWebSocketUsageLimitRedeemsResetAndRetriesSameAccount(t *testing.T) {
+	account := testAccount("account-a", 99)
+	other := testAccount("account-b", 98.5)
+	api := useResetAPI(t, 23*time.Hour, 0, http.StatusOK)
+
+	requests := 0
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		requests++
+		if requests == 1 {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":   "error",
+				"status": http.StatusTooManyRequests,
+				"error":  map[string]any{"type": "usage_limit_reached"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_a"},
+		})
+	})
+	defer upstream.Close()
+	proxy, _, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{other, account})
+	defer closeProxy()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_a" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-a]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	wantAPICalls := []string{
+		"GET /rate-limit-reset-credits",
+		"POST /rate-limit-reset-credits/consume",
+		"GET /usage",
+	}
+	if calls := api.calls(); fmt.Sprint(calls) != fmt.Sprint(wantAPICalls) {
+		t.Fatalf("API calls = %v, want %v", calls, wantAPICalls)
+	}
+}
+
+func TestWebSocketUsageLimitAfterVisibleOutputRedeemsWithoutReplay(t *testing.T) {
+	account := testAccount("account-a", 99)
+	api := useResetAPI(t, time.Hour, 0, http.StatusOK)
+
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":  "response.output_text.delta",
+			"delta": "visible",
+		})
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":   "error",
+			"status": http.StatusTooManyRequests,
+			"error":  map[string]any{"type": "usage_limit_reached"},
+		})
+	})
+	defer upstream.Close()
+	proxy, _, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{account})
+	defer closeProxy()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	visible := readWebSocketEvent(t, conn)
+	failed := readWebSocketEvent(t, conn)
+	if visible.Type != "response.output_text.delta" || failed.Type != "error" {
+		t.Fatalf("events = %+v, %+v", visible, failed)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	wantAPICalls := []string{
+		"GET /rate-limit-reset-credits",
+		"POST /rate-limit-reset-credits/consume",
+		"GET /usage",
+	}
+	if calls := api.calls(); fmt.Sprint(calls) != fmt.Sprint(wantAPICalls) {
+		t.Fatalf("API calls = %v, want %v", calls, wantAPICalls)
+	}
+}
+
+func TestWebSocketWorkspaceUsageLimitDoesNotRedeemReset(t *testing.T) {
+	now := time.Now().UTC()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	adoptTestResetCredit(a, now.Add(time.Hour))
+	apiCalls := 0
+	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCalls++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer usage.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = usage.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		if account == "account-a" {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":   "error",
+				"status": http.StatusTooManyRequests,
+				"headers": map[string]any{
+					"x-codex-rate-limit-reached-type": "workspace_member_usage_limit_reached",
+				},
+				"error": map[string]any{"type": "usage_limit_reached"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_b"},
+		})
+	})
+	defer upstream.Close()
+	proxy, _, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{a, b})
+	defer closeProxy()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_b" {
+		t.Fatalf("event = %+v", event)
+	}
+	if fmt.Sprint(upstream.RequestAccounts()) != "[account-a account-b]" {
+		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+	if apiCalls != 0 {
+		t.Fatalf("account API calls = %d", apiCalls)
 	}
 }
 
@@ -966,7 +1106,7 @@ func TestWebSocketReplaySafetyRequiresNoResponseIdentity(t *testing.T) {
 
 func TestWebSocketRateLimitClassification(t *testing.T) {
 	topLevel := websocketEnvelope{}
-	topLevel.Error.Code = "usage_limit_reached"
+	topLevel.Error.Type = "usage_limit_reached"
 	nested := websocketEnvelope{}
 	nested.Response.Error.Code = "rate_limit_exceeded"
 	tests := []struct {
@@ -1361,6 +1501,67 @@ func TestWebSocketSoftHandshakeRateLimitUsesAnotherAccount(t *testing.T) {
 	}
 	if fmt.Sprint(upstream.RequestAccounts()) != "[account-b]" {
 		t.Fatalf("request accounts = %v", upstream.RequestAccounts())
+	}
+}
+
+func TestWebSocketHandshakeUsageLimitRedeemsResetAndRetriesSameAccount(t *testing.T) {
+	account := testAccount("account-a", 99)
+	other := testAccount("account-b", 98.5)
+	api := useResetAPI(t, 23*time.Hour, 0, http.StatusOK)
+
+	var upstreamMu sync.Mutex
+	connections := []string{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accountID := r.Header.Get("chatgpt-account-id")
+		upstreamMu.Lock()
+		connections = append(connections, accountID)
+		attempt := len(connections)
+		upstreamMu.Unlock()
+		if attempt == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "usage_limit_reached"}})
+			return
+		}
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.CloseNow()
+		_, _, err = conn.Read(r.Context())
+		if err != nil {
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_a"},
+		})
+	}))
+	defer upstream.Close()
+	proxy, _, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{other, account})
+	defer closeProxy()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	event := readWebSocketEvent(t, conn)
+	if event.Type != "response.created" || event.Response.ID != "resp_a" {
+		t.Fatalf("event = %+v", event)
+	}
+	upstreamMu.Lock()
+	gotConnections := fmt.Sprint(connections)
+	upstreamMu.Unlock()
+	if gotConnections != "[account-a account-a account-b]" {
+		t.Fatalf("connections = %s", gotConnections)
+	}
+	wantAPICalls := []string{
+		"GET /rate-limit-reset-credits",
+		"POST /rate-limit-reset-credits/consume",
+		"GET /usage",
+	}
+	if calls := api.calls(); fmt.Sprint(calls) != fmt.Sprint(wantAPICalls) {
+		t.Fatalf("API calls = %v, want %v", calls, wantAPICalls)
 	}
 }
 

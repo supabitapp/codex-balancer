@@ -33,6 +33,7 @@ type accountState struct {
 type Account struct {
 	accountState
 	mu          sync.Mutex
+	resetMu     sync.Mutex
 	inflight    chan struct{}
 	lastRefresh error
 
@@ -96,6 +97,34 @@ func (a *Account) health() (primary, secondary window, cooldown time.Time, reaut
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.primary, a.secondary, a.cooldown, a.dead
+}
+
+func (a *Account) markSpent() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.spent = true
+}
+
+func (a *Account) restoreFromUsageAfter(t time.Time) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.pressure() >= 100 {
+		return false
+	}
+	known := false
+	for _, window := range []window{a.primary, a.secondary} {
+		if !window.known() {
+			continue
+		}
+		known = true
+		if !window.seenAt.After(t) {
+			return false
+		}
+	}
+	if known {
+		a.spent = false
+	}
+	return known
 }
 
 func (a *Account) status(now time.Time) accountStatus {

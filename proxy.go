@@ -207,6 +207,7 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 	key := affinity.statsKey(r.Header)
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
+	resetRetried := map[string]bool{}
 	modelRetried := false
 	s.log.Debug("http turn received",
 		"thread", key,
@@ -291,12 +292,25 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		usageLimit := resp.StatusCode == http.StatusTooManyRequests && responseUsageLimitReached(resp)
+		resettableUsageLimit := usageLimit && !workspaceUsageLimitReached(resp.Header)
 		unsupportedModel := resp.StatusCode == http.StatusBadRequest && responseAccountModelUnsupported(resp, request.Model)
 		if status := resp.StatusCode; status == http.StatusTooManyRequests ||
 			status == http.StatusUnauthorized || status >= 500 || unsupportedModel {
 			if status == http.StatusTooManyRequests {
 				account.observe(resp.Header)
-				account.rateLimited(resp.Header, attempt)
+				if usageLimit {
+					account.markSpent()
+					if resettableUsageLimit && !resetRetried[id] && s.recoverUsageLimit(r.Context(), account, sent) {
+						resetRetried[id] = true
+						resolution.preferred = id
+						resp.Body.Close()
+						attempt--
+						continue
+					}
+				} else {
+					account.rateLimited(resp.Header, attempt)
+				}
 				s.stats.rateLimited(id)
 				attrs := []any{"transport", transportHTTP, "thread", key, "attempt", attempt + 1}
 				attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
@@ -400,7 +414,13 @@ func responseRequest(body []byte) responseRequestData {
 	return request
 }
 
-func responseAccountModelUnsupported(resp *http.Response, model string) bool {
+type responseErrorPayload struct {
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func responseError(resp *http.Response) responseErrorPayload {
 	original := resp.Body
 	prefix, _ := io.ReadAll(io.LimitReader(original, maxUpstreamErrorBody))
 	resp.Body = struct {
@@ -411,15 +431,26 @@ func responseAccountModelUnsupported(resp *http.Response, model string) bool {
 		Closer: original,
 	}
 	var envelope struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
+		Error responseErrorPayload `json:"error"`
 	}
 	if json.Unmarshal(prefix, &envelope) != nil {
-		return false
+		return responseErrorPayload{}
 	}
-	return accountModelUnsupported(envelope.Error.Code, envelope.Error.Message, model)
+	return envelope.Error
+}
+
+func responseUsageLimitReached(resp *http.Response) bool {
+	err := responseError(resp)
+	return err.Type == "usage_limit_reached" || err.Code == "usage_limit_reached"
+}
+
+func workspaceUsageLimitReached(headers http.Header) bool {
+	return strings.HasPrefix(strings.ToLower(headers.Get("x-codex-rate-limit-reached-type")), "workspace_")
+}
+
+func responseAccountModelUnsupported(resp *http.Response, model string) bool {
+	err := responseError(resp)
+	return accountModelUnsupported(err.Code, err.Message, model)
 }
 
 func accountModelUnsupported(code, message, model string) bool {
