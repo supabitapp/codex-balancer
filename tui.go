@@ -29,28 +29,19 @@ type tuiStyles struct {
 	section lipgloss.Style
 }
 
-func newTUIStyles(dark bool) tuiStyles {
-	pick := lipgloss.LightDark(dark)
-	text := pick(lipgloss.Color("#242424"), lipgloss.Color("#e6e6e6"))
-	dim := pick(lipgloss.Color("#646464"), lipgloss.Color("#6c7086"))
-	accent := pick(lipgloss.Color("#0057b8"), lipgloss.Color("#89b4fa"))
-	good := pick(lipgloss.Color("#18794e"), lipgloss.Color("#a6e3a1"))
-	warn := pick(lipgloss.Color("#946800"), lipgloss.Color("#f9e2af"))
-	hot := pick(lipgloss.Color("#a14000"), lipgloss.Color("#fab387"))
-	bad := pick(lipgloss.Color("#c62a2f"), lipgloss.Color("#f38ba8"))
-	muted := pick(lipgloss.Color("#9b9b9b"), lipgloss.Color("#45475a"))
+func newTUIStyles() tuiStyles {
 	return tuiStyles{
-		title:   lipgloss.NewStyle().Foreground(accent).Bold(true),
-		dim:     lipgloss.NewStyle().Foreground(dim),
-		text:    lipgloss.NewStyle().Foreground(text),
-		bad:     lipgloss.NewStyle().Foreground(bad),
-		warn:    lipgloss.NewStyle().Foreground(warn),
-		hot:     lipgloss.NewStyle().Foreground(hot),
-		good:    lipgloss.NewStyle().Foreground(good),
-		num:     lipgloss.NewStyle().Foreground(text).Bold(true),
-		spark:   lipgloss.NewStyle().Foreground(accent),
-		panel:   lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(muted).Padding(0, 2),
-		section: lipgloss.NewStyle().Foreground(accent).Bold(true),
+		title:   lipgloss.NewStyle().Foreground(lipgloss.Blue).Bold(true),
+		dim:     lipgloss.NewStyle().Faint(true),
+		text:    lipgloss.NewStyle(),
+		bad:     lipgloss.NewStyle().Foreground(lipgloss.Red),
+		warn:    lipgloss.NewStyle().Foreground(lipgloss.Yellow),
+		hot:     lipgloss.NewStyle().Foreground(lipgloss.Magenta),
+		good:    lipgloss.NewStyle().Foreground(lipgloss.Green),
+		num:     lipgloss.NewStyle().Bold(true),
+		spark:   lipgloss.NewStyle().Foreground(lipgloss.Blue),
+		panel:   lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.BrightBlack).Padding(0, 2),
+		section: lipgloss.NewStyle().Foreground(lipgloss.Blue).Bold(true),
 	}
 }
 
@@ -62,7 +53,6 @@ type dashboard struct {
 	addr        string
 	width       int
 	height      int
-	dark        bool
 	cursor      int
 	snap        Snapshot
 }
@@ -70,16 +60,11 @@ type dashboard struct {
 type tickMsg time.Time
 
 func (d dashboard) Init() tea.Cmd {
-	return tea.Batch(
-		tea.RequestBackgroundColor,
-		tea.Tick(frame, func(t time.Time) tea.Msg { return tickMsg(t) }),
-	)
+	return tea.Tick(frame, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.BackgroundColorMsg:
-		d.dark = msg.IsDark()
 	case tea.WindowSizeMsg:
 		d.width, d.height = msg.Width, msg.Height
 	case tea.KeyPressMsg:
@@ -102,7 +87,7 @@ func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (d dashboard) styles() tuiStyles {
-	return newTUIStyles(d.dark)
+	return newTUIStyles()
 }
 
 func (d dashboard) toggle() {

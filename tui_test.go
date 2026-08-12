@@ -6,35 +6,31 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
-func TestDashboardAdaptsPaletteToTerminalBackground(t *testing.T) {
-	tests := []struct {
-		name       string
-		background color.Color
-		text       color.RGBA
-		accent     color.RGBA
-		good       color.RGBA
-		warn       color.RGBA
-	}{
-		{"light", color.White, color.RGBA{0x24, 0x24, 0x24, 0xff}, color.RGBA{0x00, 0x57, 0xb8, 0xff}, color.RGBA{0x18, 0x79, 0x4e, 0xff}, color.RGBA{0x94, 0x68, 0x00, 0xff}},
-		{"dark", color.Black, color.RGBA{0xe6, 0xe6, 0xe6, 0xff}, color.RGBA{0x89, 0xb4, 0xfa, 0xff}, color.RGBA{0xa6, 0xe3, 0xa1, 0xff}, color.RGBA{0xf9, 0xe2, 0xaf, 0xff}},
+func TestDashboardUsesTerminalPalette(t *testing.T) {
+	styles := (dashboard{}).styles()
+	for name, style := range map[string]lipgloss.Style{
+		"text": styles.text,
+		"num":  styles.num,
+		"dim":  styles.dim,
+	} {
+		if got := style.GetForeground(); got != (lipgloss.NoColor{}) {
+			t.Fatalf("%s foreground = %v, want terminal default", name, got)
+		}
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			model, _ := (dashboard{}).Update(tea.BackgroundColorMsg{Color: test.background})
-			styles := model.(dashboard).styles()
-			assertColor(t, styles.text.GetForeground(), test.text)
-			assertColor(t, styles.title.GetForeground(), test.accent)
-			assertColor(t, styles.good.GetForeground(), test.good)
-			assertColor(t, styles.warn.GetForeground(), test.warn)
-		})
+	if !styles.dim.GetFaint() {
+		t.Fatal("dim style is not faint")
 	}
+	assertColor(t, styles.title.GetForeground(), lipgloss.Blue)
+	assertColor(t, styles.good.GetForeground(), lipgloss.Green)
+	assertColor(t, styles.warn.GetForeground(), lipgloss.Yellow)
+	assertColor(t, styles.hot.GetForeground(), lipgloss.Magenta)
+	assertColor(t, styles.bad.GetForeground(), lipgloss.Red)
 }
 
-func assertColor(t *testing.T, got color.Color, want color.RGBA) {
+func assertColor(t *testing.T, got, want color.Color) {
 	t.Helper()
 	gotR, gotG, gotB, gotA := got.RGBA()
 	wantR, wantG, wantB, wantA := want.RGBA()
