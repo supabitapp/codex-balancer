@@ -15,28 +15,44 @@ const (
 	columnGap = 3
 )
 
-var (
-	cText   = lipgloss.Color("#e6e6e6")
-	cDim    = lipgloss.Color("#6c7086")
-	cAccent = lipgloss.Color("#89b4fa")
-	cGood   = lipgloss.Color("#a6e3a1")
-	cWarn   = lipgloss.Color("#f9e2af")
-	cHot    = lipgloss.Color("#fab387")
-	cBad    = lipgloss.Color("#f38ba8")
-	cMuted  = lipgloss.Color("#45475a")
+type tuiStyles struct {
+	title   lipgloss.Style
+	dim     lipgloss.Style
+	text    lipgloss.Style
+	bad     lipgloss.Style
+	warn    lipgloss.Style
+	hot     lipgloss.Style
+	good    lipgloss.Style
+	num     lipgloss.Style
+	spark   lipgloss.Style
+	panel   lipgloss.Style
+	section lipgloss.Style
+}
 
-	sTitle   = lipgloss.NewStyle().Foreground(cAccent).Bold(true)
-	sDim     = lipgloss.NewStyle().Foreground(cDim)
-	sText    = lipgloss.NewStyle().Foreground(cText)
-	sBad     = lipgloss.NewStyle().Foreground(cBad)
-	sWarn    = lipgloss.NewStyle().Foreground(cWarn)
-	sHot     = lipgloss.NewStyle().Foreground(cHot)
-	sGood    = lipgloss.NewStyle().Foreground(cGood)
-	sNum     = lipgloss.NewStyle().Foreground(cText).Bold(true)
-	sSpark   = lipgloss.NewStyle().Foreground(cAccent)
-	sPanel   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(cMuted).Padding(0, 2)
-	sSection = lipgloss.NewStyle().Foreground(cAccent).Bold(true)
-)
+func newTUIStyles(dark bool) tuiStyles {
+	pick := lipgloss.LightDark(dark)
+	text := pick(lipgloss.Color("#242424"), lipgloss.Color("#e6e6e6"))
+	dim := pick(lipgloss.Color("#646464"), lipgloss.Color("#6c7086"))
+	accent := pick(lipgloss.Color("#0057b8"), lipgloss.Color("#89b4fa"))
+	good := pick(lipgloss.Color("#18794e"), lipgloss.Color("#a6e3a1"))
+	warn := pick(lipgloss.Color("#946800"), lipgloss.Color("#f9e2af"))
+	hot := pick(lipgloss.Color("#a14000"), lipgloss.Color("#fab387"))
+	bad := pick(lipgloss.Color("#c62a2f"), lipgloss.Color("#f38ba8"))
+	muted := pick(lipgloss.Color("#9b9b9b"), lipgloss.Color("#45475a"))
+	return tuiStyles{
+		title:   lipgloss.NewStyle().Foreground(accent).Bold(true),
+		dim:     lipgloss.NewStyle().Foreground(dim),
+		text:    lipgloss.NewStyle().Foreground(text),
+		bad:     lipgloss.NewStyle().Foreground(bad),
+		warn:    lipgloss.NewStyle().Foreground(warn),
+		hot:     lipgloss.NewStyle().Foreground(hot),
+		good:    lipgloss.NewStyle().Foreground(good),
+		num:     lipgloss.NewStyle().Foreground(text).Bold(true),
+		spark:   lipgloss.NewStyle().Foreground(accent),
+		panel:   lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(muted).Padding(0, 2),
+		section: lipgloss.NewStyle().Foreground(accent).Bold(true),
+	}
+}
 
 type dashboard struct {
 	pool        *Pool
@@ -46,6 +62,7 @@ type dashboard struct {
 	addr        string
 	width       int
 	height      int
+	dark        bool
 	cursor      int
 	snap        Snapshot
 }
@@ -53,11 +70,16 @@ type dashboard struct {
 type tickMsg time.Time
 
 func (d dashboard) Init() tea.Cmd {
-	return tea.Tick(frame, func(t time.Time) tea.Msg { return tickMsg(t) })
+	return tea.Batch(
+		tea.RequestBackgroundColor,
+		tea.Tick(frame, func(t time.Time) tea.Msg { return tickMsg(t) }),
+	)
 }
 
 func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		d.dark = msg.IsDark()
 	case tea.WindowSizeMsg:
 		d.width, d.height = msg.Width, msg.Height
 	case tea.KeyPressMsg:
@@ -77,6 +99,10 @@ func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Tick(frame, func(t time.Time) tea.Msg { return tickMsg(t) })
 	}
 	return d, nil
+}
+
+func (d dashboard) styles() tuiStyles {
+	return newTUIStyles(d.dark)
 }
 
 func (d dashboard) toggle() {
@@ -124,8 +150,9 @@ func (d dashboard) title() string {
 }
 
 func (d dashboard) render() string {
+	styles := d.styles()
 	if d.width < 80 || d.height < 16 {
-		return sDim.Render("terminal too small")
+		return styles.dim.Render("terminal too small")
 	}
 	head := d.header()
 	totals := d.totals(d.width)
@@ -139,7 +166,7 @@ func (d dashboard) render() string {
 		detailHeight = bodyHeight - lipgloss.Height(accounts)
 	}
 	if detailHeight < 6 {
-		return sDim.Render("terminal too small")
+		return styles.dim.Render("terminal too small")
 	}
 	threadsHeight := min(max(len(d.snap.Threads)+4, detailHeight/2), detailHeight-4)
 	eventsHeight := detailHeight - threadsHeight
@@ -158,6 +185,7 @@ func (d dashboard) render() string {
 }
 
 func (d dashboard) header() string {
+	styles := d.styles()
 	live, priority, checking, cooling, dead, held := 0, 0, 0, 0, 0, 0
 	now := time.Now()
 	for _, a := range d.pool.all() {
@@ -177,27 +205,27 @@ func (d dashboard) header() string {
 		}
 	}
 
-	parts := []string{sGood.Render(fmt.Sprintf("%d live", live))}
+	parts := []string{styles.good.Render(fmt.Sprintf("%d live", live))}
 	if priority > 0 {
-		parts = append(parts, sWarn.Render(fmt.Sprintf("%d priority", priority)))
+		parts = append(parts, styles.warn.Render(fmt.Sprintf("%d priority", priority)))
 	}
 	if checking > 0 {
-		parts = append(parts, sDim.Render(fmt.Sprintf("%d checking", checking)))
+		parts = append(parts, styles.dim.Render(fmt.Sprintf("%d checking", checking)))
 	}
 	if cooling > 0 {
-		parts = append(parts, sHot.Render(fmt.Sprintf("%d cooling", cooling)))
+		parts = append(parts, styles.hot.Render(fmt.Sprintf("%d cooling", cooling)))
 	}
 	if held > 0 {
-		parts = append(parts, sDim.Render(fmt.Sprintf("%d paused", held)))
+		parts = append(parts, styles.dim.Render(fmt.Sprintf("%d paused", held)))
 	}
 	if dead > 0 {
-		parts = append(parts, sBad.Render(fmt.Sprintf("%d need reauth", dead)))
+		parts = append(parts, styles.bad.Render(fmt.Sprintf("%d need reauth", dead)))
 	}
 
-	left := sTitle.Render("CODEX BALANCER") + sDim.Render("   "+strings.Join(parts, sDim.Render(" · ")))
-	right := sDim.Render(fmt.Sprintf("%s · %s · up %s · q quits", d.addr, rate(d.snap), short(d.snap.Uptime)))
+	left := styles.title.Render("CODEX BALANCER") + styles.dim.Render("   "+strings.Join(parts, styles.dim.Render(" · ")))
+	right := styles.dim.Render(fmt.Sprintf("%s · %s · up %s · q quits", d.addr, rate(d.snap), short(d.snap.Uptime)))
 	gap := max(d.width-6-lipgloss.Width(left)-lipgloss.Width(right), 1)
-	return sPanel.Width(d.width).Render(left + strings.Repeat(" ", gap) + right)
+	return styles.panel.Width(d.width).Render(left + strings.Repeat(" ", gap) + right)
 }
 
 func rate(s Snapshot) string {
@@ -210,9 +238,10 @@ func rate(s Snapshot) string {
 }
 
 func (d dashboard) accounts(limit int) string {
+	styles := d.styles()
 	accounts := d.pool.sorted()
 	if len(accounts) == 0 {
-		return sSection.Render("ACCOUNTS") + "\n" + sDim.Render("  (none)")
+		return styles.section.Render("ACCOUNTS") + "\n" + styles.dim.Render("  (none)")
 	}
 	limit = min(max(limit, 1), len(accounts))
 	cursor := min(max(d.cursor, 0), len(accounts)-1)
@@ -246,26 +275,26 @@ func (d dashboard) accounts(limit int) string {
 	pad2 := strings.Repeat(" ", gap)
 
 	hdr := "  " + strings.Join([]string{
-		sSection.Render(fit("Account", nameW)),
-		sSection.Render(fit("Plan", planW)),
-		sSection.Render(fit("Status", statusW)),
-		sSection.Render(fit("Weekly", weeklyW)),
-		sSection.Render(fit("Banked", bankedW)),
-		sSection.Render(fit("Reset in", resetW)),
-		sSection.Render(fit("Turns", turnsW)),
-		sSection.Render(fit("WS", wsW)),
-		sSection.Render(fit("Traffic", trafficW)),
-		sSection.Render(fit("Limits", limitsW)),
-		sSection.Render(fit("Activity", activityW)),
+		styles.section.Render(fit("Account", nameW)),
+		styles.section.Render(fit("Plan", planW)),
+		styles.section.Render(fit("Status", statusW)),
+		styles.section.Render(fit("Weekly", weeklyW)),
+		styles.section.Render(fit("Banked", bankedW)),
+		styles.section.Render(fit("Reset in", resetW)),
+		styles.section.Render(fit("Turns", turnsW)),
+		styles.section.Render(fit("WS", wsW)),
+		styles.section.Render(fit("Traffic", trafficW)),
+		styles.section.Render(fit("Limits", limitsW)),
+		styles.section.Render(fit("Activity", activityW)),
 	}, pad2)
 
-	sep := sDim.Render(strings.Repeat("─", d.width-2))
+	sep := styles.dim.Render(strings.Repeat("─", d.width-2))
 
 	title := "ACCOUNTS"
 	if limit < len(accounts) {
 		title = fmt.Sprintf("ACCOUNTS  %d-%d/%d", start+1, end, len(accounts))
 	}
-	rows := []string{sSection.Render(title) + sDim.Render("   ↑↓ pick · space pauses"), "", hdr, sep}
+	rows := []string{styles.section.Render(title) + styles.dim.Render("   ↑↓ pick · space pauses"), "", hdr, sep}
 
 	for i, a := range accounts[start:end] {
 		primary, secondary, _, reauth := a.health()
@@ -276,17 +305,17 @@ func (d dashboard) accounts(limit int) string {
 		var status string
 		switch a.status(now) {
 		case accountPaused:
-			status = sDim.Render(fit("⏸ paused", statusW))
+			status = styles.dim.Render(fit("⏸ paused", statusW))
 		case accountNeedsReauth:
-			status = sBad.Render(fit("✕ "+reauth, statusW))
+			status = styles.bad.Render(fit("✕ "+reauth, statusW))
 		case accountCooling:
-			status = sHot.Render(fit("◐ cooling", statusW))
+			status = styles.hot.Render(fit("◐ cooling", statusW))
 		case accountChecking:
-			status = sDim.Render(fit("◌ checking", statusW))
+			status = styles.dim.Render(fit("◌ checking", statusW))
 		case accountLive:
-			status = sGood.Render(fit("● live", statusW))
+			status = styles.good.Render(fit("● live", statusW))
 		case accountPriority:
-			status = sWarn.Render(fit("◆ priority", statusW))
+			status = styles.warn.Render(fit("◆ priority", statusW))
 		}
 
 		turns := ""
@@ -309,45 +338,45 @@ func (d dashboard) accounts(limit int) string {
 		var weeklyCell string
 		left, known := remainingPercent(weekly)
 		if !known {
-			weeklyCell = sDim.Render(fit("--", weeklyW))
+			weeklyCell = styles.dim.Render(fit("--", weeklyW))
 		} else {
-			style := sGood
+			style := styles.good
 			switch {
 			case left <= 10:
-				style = sBad
+				style = styles.bad
 			case left <= 30:
-				style = sWarn
+				style = styles.warn
 			}
 			weeklyCell = style.Render(fit(formatPercent(left), weeklyW))
 		}
 
-		banked := sDim.Render(fit("--", bankedW))
+		banked := styles.dim.Render(fit("--", bankedW))
 		if count, _, known := a.bankedResets(); known {
-			banked = sNum.Render(fit(fmt.Sprintf("%d", count), bankedW))
+			banked = styles.num.Render(fit(fmt.Sprintf("%d", count), bankedW))
 		}
 
-		reset := sDim.Render(fit("--", resetW))
+		reset := styles.dim.Render(fit("--", resetW))
 		if next := nextReset(now, primary, secondary); !next.IsZero() {
-			reset = sDim.Render(fit(short(next.Sub(now)), resetW))
+			reset = styles.dim.Render(fit(short(next.Sub(now)), resetW))
 		}
 
-		marker, name := "  ", sText.Render(fit(label(a), nameW))
+		marker, name := "  ", styles.text.Render(fit(label(a), nameW))
 		if start+i == cursor {
-			marker, name = sTitle.Render("▸ "), sTitle.Render(fit(label(a), nameW))
+			marker, name = styles.title.Render("▸ "), styles.title.Render(fit(label(a), nameW))
 		}
 
 		rows = append(rows, marker+strings.Join([]string{
 			name,
-			sDim.Render(fit(a.plan(), planW)),
+			styles.dim.Render(fit(a.plan(), planW)),
 			status,
 			weeklyCell,
 			banked,
 			reset,
-			sNum.Render(fit(turns, turnsW)),
-			sGood.Render(fit(websockets, wsW)),
-			sDim.Render(fit(traffic, trafficW)),
-			sBad.Render(fit(limits, limitsW)),
-			fit(spark(stat.Activity), activityW),
+			styles.num.Render(fit(turns, turnsW)),
+			styles.good.Render(fit(websockets, wsW)),
+			styles.dim.Render(fit(traffic, trafficW)),
+			styles.bad.Render(fit(limits, limitsW)),
+			fit(styles.spark.Render(sparkline(stat.Activity)), activityW),
 		}, pad2))
 	}
 	return strings.Join(rows, "\n")
@@ -384,10 +413,6 @@ func label(a *Account) string {
 
 var sparkRunes = []rune("▁▂▃▄▅▆▇█")
 
-func spark(activity []int64) string {
-	return sSpark.Render(sparkline(activity))
-}
-
 func sparkline(activity []int64) string {
 	peak := int64(1)
 	for _, v := range activity {
@@ -400,8 +425,8 @@ func sparkline(activity []int64) string {
 	return b.String()
 }
 
-func column(title string, rows []string, width, limit int) string {
-	out := []string{sSection.Render(title), ""}
+func column(styles tuiStyles, title string, rows []string, width, limit int) string {
+	out := []string{styles.section.Render(title), ""}
 	for _, row := range rows {
 		if len(out) >= limit {
 			break
@@ -412,6 +437,7 @@ func column(title string, rows []string, width, limit int) string {
 }
 
 func (d dashboard) threads(width, height int) string {
+	styles := d.styles()
 	type routingThreadView struct {
 		dashboardThreadView
 		clientIP string
@@ -427,7 +453,7 @@ func (d dashboard) threads(width, height int) string {
 		})
 	}
 	if len(views) == 0 {
-		return column("ROUTING  0", []string{sDim.Render("no live threads")}, width, height)
+		return column(styles, "ROUTING  0", []string{styles.dim.Render("no live threads")}, width, height)
 	}
 
 	accountWidth := len("Account")
@@ -449,25 +475,25 @@ func (d dashboard) threads(width, height int) string {
 		value func(routingThreadView) string
 	}
 	columns := []routingColumn{
-		{"Thread", 8, sText, func(view routingThreadView) string { return view.KeyPrefix }},
-		{"Client", 8, sDim, func(view routingThreadView) string { return view.ClientID }},
-		{"IP", ipWidth, sDim, func(view routingThreadView) string { return view.clientIP }},
-		{"Account", accountWidth, sSpark, func(view routingThreadView) string { return view.Account }},
-		{"Model", modelWidth, sText, func(view routingThreadView) string { return view.Model }},
-		{"Via", 4, sGood, func(view routingThreadView) string { return view.Via }},
-		{"Fast", 4, sHot, func(view routingThreadView) string {
+		{"Thread", 8, styles.text, func(view routingThreadView) string { return view.KeyPrefix }},
+		{"Client", 8, styles.dim, func(view routingThreadView) string { return view.ClientID }},
+		{"IP", ipWidth, styles.dim, func(view routingThreadView) string { return view.clientIP }},
+		{"Account", accountWidth, styles.spark, func(view routingThreadView) string { return view.Account }},
+		{"Model", modelWidth, styles.text, func(view routingThreadView) string { return view.Model }},
+		{"Via", 4, styles.good, func(view routingThreadView) string { return view.Via }},
+		{"Fast", 4, styles.hot, func(view routingThreadView) string {
 			if view.Fast {
 				return "FAST"
 			}
 			return ""
 		}},
-		{"Uncached", 8, sNum, func(view routingThreadView) string { return view.UncachedInput }},
-		{"Cache%", 6, sDim, func(view routingThreadView) string { return view.CacheRate }},
-		{"Output", 7, sNum, func(view routingThreadView) string { return view.Output }},
-		{"Ctx/Cmp", 8, sDim, func(view routingThreadView) string { return view.ContextLeft }},
-		{"Latency", 7, sDim, func(view routingThreadView) string { return view.Latency }},
-		{"Reqs", 4, sNum, func(view routingThreadView) string { return view.Requests }},
-		{"Active", 8, sDim, func(view routingThreadView) string { return view.Last }},
+		{"Uncached", 8, styles.num, func(view routingThreadView) string { return view.UncachedInput }},
+		{"Cache%", 6, styles.dim, func(view routingThreadView) string { return view.CacheRate }},
+		{"Output", 7, styles.num, func(view routingThreadView) string { return view.Output }},
+		{"Ctx/Cmp", 8, styles.dim, func(view routingThreadView) string { return view.ContextLeft }},
+		{"Latency", 7, styles.dim, func(view routingThreadView) string { return view.Latency }},
+		{"Reqs", 4, styles.num, func(view routingThreadView) string { return view.Requests }},
+		{"Active", 8, styles.dim, func(view routingThreadView) string { return view.Last }},
 	}
 	tableWidth := func() int {
 		total := len(columns) - 1
@@ -488,9 +514,9 @@ func (d dashboard) threads(width, height int) string {
 
 	header := make([]string, 0, len(columns))
 	for _, column := range columns {
-		header = append(header, sSection.Render(fit(column.title, column.width)))
+		header = append(header, styles.section.Render(fit(column.title, column.width)))
 	}
-	rows := []string{strings.Join(header, " "), sDim.Render(strings.Repeat("─", tableWidth()))}
+	rows := []string{strings.Join(header, " "), styles.dim.Render(strings.Repeat("─", tableWidth()))}
 	for _, view := range views {
 		cells := make([]string, 0, len(columns))
 		for _, column := range columns {
@@ -498,10 +524,11 @@ func (d dashboard) threads(width, height int) string {
 		}
 		rows = append(rows, strings.Join(cells, " "))
 	}
-	return column(fmt.Sprintf("ROUTING  %d", len(views)), rows, width, height)
+	return column(styles, fmt.Sprintf("ROUTING  %d", len(views)), rows, width, height)
 }
 
 func (d dashboard) events(width, height int) string {
+	styles := d.styles()
 	type eventView struct {
 		at      string
 		kind    string
@@ -518,12 +545,12 @@ func (d dashboard) events(width, height int) string {
 		if !visible {
 			continue
 		}
-		style := sDim
+		style := styles.dim
 		switch e.Kind {
 		case eventFailover:
-			style = sBad
+			style = styles.bad
 		case eventRateLimited:
-			style = sHot
+			style = styles.hot
 		}
 		views = append(views, eventView{e.At.Format("15:04:05"), e.Kind, account, detail, style})
 	}
@@ -553,26 +580,27 @@ func (d dashboard) events(width, height int) string {
 		overflow -= shrink
 	}
 	rows := []string{strings.Join([]string{
-		sSection.Render(fit("Time", timeWidth)),
-		sSection.Render(fit("Event", kindWidth)),
-		sSection.Render(fit("Account", accountWidth)),
-		sSection.Render(fit("Detail", detailWidth)),
+		styles.section.Render(fit("Time", timeWidth)),
+		styles.section.Render(fit("Event", kindWidth)),
+		styles.section.Render(fit("Account", accountWidth)),
+		styles.section.Render(fit("Detail", detailWidth)),
 	}, " ")}
 	for _, view := range views {
 		rows = append(rows, strings.Join([]string{
-			sDim.Render(fit(view.at, timeWidth)),
+			styles.dim.Render(fit(view.at, timeWidth)),
 			view.style.Render(fit(view.kind, kindWidth)),
-			sText.Render(fit(view.account, accountWidth)),
-			sDim.Render(fit(view.detail, detailWidth)),
+			styles.text.Render(fit(view.account, accountWidth)),
+			styles.dim.Render(fit(view.detail, detailWidth)),
 		}, " "))
 	}
 	if len(views) == 0 {
-		rows = append(rows, sDim.Render("quiet"))
+		rows = append(rows, styles.dim.Render("quiet"))
 	}
-	return column("EVENTS", rows, width, height)
+	return column(styles, "EVENTS", rows, width, height)
 }
 
 func (d dashboard) totals(width int) string {
+	styles := d.styles()
 	type total struct {
 		label string
 		value string
@@ -611,13 +639,13 @@ func (d dashboard) totals(width int) string {
 	for _, statRow := range stats {
 		pairs := make([]string, 0, len(statRow))
 		for i, stat := range statRow {
-			label := sDim.Width(labelWidths[i]).Render(stat.label)
-			value := sNum.Width(valueWidths[i]).MaxWidth(valueWidths[i]).Align(lipgloss.Right).Render(stat.value)
+			label := styles.dim.Width(labelWidths[i]).Render(stat.label)
+			value := styles.num.Width(valueWidths[i]).MaxWidth(valueWidths[i]).Align(lipgloss.Right).Render(stat.value)
 			pairs = append(pairs, label+" "+value)
 		}
 		rows = append(rows, strings.Join(pairs, strings.Repeat(" ", columnGap)))
 	}
-	return column("TOTALS", rows, width, len(rows)+2)
+	return column(styles, "TOTALS", rows, width, len(rows)+2)
 }
 
 func (d dashboard) shortNames() map[string]string {

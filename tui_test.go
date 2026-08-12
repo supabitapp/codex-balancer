@@ -1,12 +1,47 @@
 package main
 
 import (
+	"image/color"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
+
+func TestDashboardAdaptsPaletteToTerminalBackground(t *testing.T) {
+	tests := []struct {
+		name       string
+		background color.Color
+		text       color.RGBA
+		accent     color.RGBA
+		good       color.RGBA
+		warn       color.RGBA
+	}{
+		{"light", color.White, color.RGBA{0x24, 0x24, 0x24, 0xff}, color.RGBA{0x00, 0x57, 0xb8, 0xff}, color.RGBA{0x18, 0x79, 0x4e, 0xff}, color.RGBA{0x94, 0x68, 0x00, 0xff}},
+		{"dark", color.Black, color.RGBA{0xe6, 0xe6, 0xe6, 0xff}, color.RGBA{0x89, 0xb4, 0xfa, 0xff}, color.RGBA{0xa6, 0xe3, 0xa1, 0xff}, color.RGBA{0xf9, 0xe2, 0xaf, 0xff}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model, _ := (dashboard{}).Update(tea.BackgroundColorMsg{Color: test.background})
+			styles := model.(dashboard).styles()
+			assertColor(t, styles.text.GetForeground(), test.text)
+			assertColor(t, styles.title.GetForeground(), test.accent)
+			assertColor(t, styles.good.GetForeground(), test.good)
+			assertColor(t, styles.warn.GetForeground(), test.warn)
+		})
+	}
+}
+
+func assertColor(t *testing.T, got color.Color, want color.RGBA) {
+	t.Helper()
+	gotR, gotG, gotB, gotA := got.RGBA()
+	wantR, wantG, wantB, wantA := want.RGBA()
+	if gotR != wantR || gotG != wantG || gotB != wantB || gotA != wantA {
+		t.Fatalf("color = #%02x%02x%02x, want #%02x%02x%02x", gotR>>8, gotG>>8, gotB>>8, wantR>>8, wantG>>8, wantB>>8)
+	}
+}
 
 func TestShortOmitsSecondsAfterOneMinute(t *testing.T) {
 	for duration, want := range map[time.Duration]string{
