@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	dashboardFrame            = 500 * time.Millisecond
-	dashboardMaxConnections   = 32
-	dashboardContextBaseline  = 12_000
-	icedLattePriceNanoDollars = 6_000_000_000
+	dashboardFrame           = 500 * time.Millisecond
+	dashboardMaxConnections  = 32
+	dashboardContextBaseline = 12_000
 )
 
 //go:embed web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
@@ -255,13 +254,13 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		})
 	}
 
-	monthInfo := "Calculated from " + calendarMonthStart(now).Format("2 January 2006, 15:04 MST")
+	monthInfo := calendarMonthStart(now).Format("From Jan 2")
 	priceInfo := monthInfo
 	if !snapshot.PriceFetchedAt.IsZero() {
 		priceInfo += ". Prices from models.dev, updated " + snapshot.PriceFetchedAt.In(now.Location()).Format("2 January 2006, 15:04 MST")
 	}
 	if snapshot.UnpricedResponses == 0 {
-		priceInfo = icedLatteEquivalent(snapshot.APICostNanoDollars) + "\n" + priceInfo
+		priceInfo = funCostEquivalents(snapshot.APICostNanoDollars) + "\n" + priceInfo
 	}
 	overview := dashboardResourceMetrics(s.resources.usage(now))
 	overview = append(overview,
@@ -478,14 +477,30 @@ func dashboardNumber(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
 
-func icedLatteEquivalent(nanoDollars int64) string {
-	lattes := nanoDollars / icedLattePriceNanoDollars
-	if nanoDollars%icedLattePriceNanoDollars >= icedLattePriceNanoDollars/2 {
-		lattes++
+func funCostEquivalents(nanoDollars int64) string {
+	equivalents := [...]struct {
+		emoji        string
+		singular     string
+		plural       string
+		priceDollars int64
+	}{
+		{"🧊☕", "iced latte", "iced lattes", 6},
+		{"🌮", "taco", "tacos", 12},
+		{"🦆", "rubber duck", "rubber ducks", 1},
+		{"🔥🌲", "tree bonfire", "tree bonfires", 100},
 	}
-	name := "iced lattes"
-	if lattes == 1 {
-		name = "iced latte"
+	lines := make([]string, 0, len(equivalents))
+	for _, equivalent := range equivalents {
+		priceNanoDollars := equivalent.priceDollars * 1_000_000_000
+		count := nanoDollars / priceNanoDollars
+		if nanoDollars%priceNanoDollars >= priceNanoDollars/2 {
+			count++
+		}
+		name := equivalent.plural
+		if count == 1 {
+			name = equivalent.singular
+		}
+		lines = append(lines, fmt.Sprintf("%s %d %s ($%d each)", equivalent.emoji, count, name, equivalent.priceDollars))
 	}
-	return fmt.Sprintf("🧊☕ %d %s ($6 each)", lattes, name)
+	return strings.Join(lines, "\n")
 }
