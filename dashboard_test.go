@@ -192,7 +192,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatalf("accounts = %d, want two", len(view.Accounts))
 	}
 	accountView := view.Accounts[0]
-	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.Traffic != "" {
+	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.Traffic != "1" {
 		t.Fatalf("account values = %+v", accountView)
 	}
 	if view.Accounts[1].Traffic != "99" {
@@ -210,6 +210,20 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	}
 	if strings.Contains(body, "<th>Limits 24h</th>") {
 		t.Fatal("dashboard contains Limits 24h column")
+	}
+}
+
+func TestTrafficPercentagesSumToOneHundred(t *testing.T) {
+	accounts := []accountStatsResponse{
+		{Activity: []int64{841}},
+		{Activity: []int64{86}},
+		{Activity: []int64{27_629}},
+		{},
+	}
+
+	got := trafficPercentages(accounts)
+	if len(got) != 4 || got[0] != 3 || got[1] != 0 || got[2] != 97 || got[3] != 0 {
+		t.Fatalf("traffic percentages = %v, want [3 0 97 0]", got)
 	}
 }
 

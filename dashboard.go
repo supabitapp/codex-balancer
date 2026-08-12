@@ -177,10 +177,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	snapshot := s.stats.snapshot()
 	s.countries.refresh(snapshot.Threads)
 	stats := s.statsResponseAt(now, snapshot)
-	var trafficTurns int64
-	for _, account := range stats.Accounts {
-		trafficTurns += activityTotal(account.Activity)
-	}
+	traffic := trafficPercentages(stats.Accounts)
 	counts := map[accountStatus]int{}
 	names := make(map[string]string, len(stats.Accounts))
 	accounts := make([]dashboardAccountView, 0, len(stats.Accounts))
@@ -204,10 +201,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		if account.ResetAt != nil {
 			resetIn = short(account.ResetAt.Sub(now))
 		}
-		traffic := ""
-		if trafficTurns > 0 {
-			traffic = dashboardNumber(activityTotal(account.Activity) * 100 / trafficTurns)
-		}
 		accounts = append(accounts, dashboardAccountView{
 			Name:           name,
 			Plan:           account.Plan,
@@ -219,7 +212,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			ResetIn:        resetIn,
 			Turns:          dashboardNumber(account.Turns),
 			OpenWebSockets: dashboardNumber(account.OpenWebSockets),
-			Traffic:        traffic,
+			Traffic:        dashboardNumber(traffic[i]),
 			Activity:       sparkline(account.Activity),
 		})
 	}
@@ -285,6 +278,38 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		Threads:  threadViews,
 		Events:   events,
 	}
+}
+
+func trafficPercentages(accounts []accountStatsResponse) []int64 {
+	percentages := make([]int64, len(accounts))
+	remainders := make([]int64, len(accounts))
+	var total int64
+	for i, account := range accounts {
+		percentages[i] = activityTotal(account.Activity)
+		total += percentages[i]
+	}
+	if total == 0 {
+		return percentages
+	}
+	var assigned int64
+	for i, turns := range percentages {
+		numerator := turns * 100
+		percentages[i] = numerator / total
+		remainders[i] = numerator % total
+		assigned += percentages[i]
+	}
+	for assigned < 100 {
+		largest := 0
+		for i := 1; i < len(remainders); i++ {
+			if remainders[i] > remainders[largest] {
+				largest = i
+			}
+		}
+		percentages[largest]++
+		remainders[largest] = -1
+		assigned++
+	}
+	return percentages
 }
 
 func newDashboardThreadView(thread ThreadSnapshot, account string, clientIDKey []byte, country string, limits modelContextLimits, now time.Time) dashboardThreadView {
