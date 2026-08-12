@@ -357,7 +357,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	stats := newStats()
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "019fe5c2private", TurnID: "019fe730private", SubagentKind: "compact"}
 	stats.activateThread("thread")
-	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, metadata)
+	stats.applyRouted(now, "thread", "203.0.113.42", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, metadata)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300, TotalTokens: 2_300}
 	usage.InputDetails.CachedTokens = 1_500
 	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "default", usage)
@@ -368,14 +368,19 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	model["context_window"] = 272_000
 	model["effective_context_window_percent"] = 95
 	catalog.replace([]string{"account"}, map[string][]modelEntry{"account": {model}}, "0.147.0")
-	server := &server{pool: &Pool{}, stats: stats, catalog: catalog}
+	server := &server{
+		pool:      &Pool{},
+		stats:     stats,
+		catalog:   catalog,
+		countries: countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}},
+	}
 
 	view := server.currentDashboard(now)
 	if len(view.Threads) != 1 {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "gpt-5.6-sol (xhigh)" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextLeft != "100% (1)" || thread.Latency != "2s" || thread.Requests != "1" {
+	if thread.Country != "🇺🇸 US" || thread.Model != "gpt-5.6-sol (xhigh)" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextLeft != "100% (1)" || thread.Latency != "2s" || thread.Requests != "1" {
 		t.Fatalf("routing row = %+v", thread)
 	}
 	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Context window: 258.4K") || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Used: 2.3K") || !strings.Contains(thread.ContextInfo, "Left: 100%") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
@@ -386,7 +391,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Model (thinking mode)</th>", "<td>gpt-5.6-sol (xhigh)</td>", "<th>Cache %</th>", "<th>Context left<br>Compactions</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1"} {
+	for _, expected := range []string{"<th>Country</th>", "<td>🇺🇸 US</td>", "<th>Model (thinking mode)</th>", "<td>gpt-5.6-sol (xhigh)</td>", "<th>Cache %</th>", "<th>Context left<br>Compactions</th>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -396,7 +401,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 			t.Fatalf("dashboard contains %q", absent)
 		}
 	}
-	for _, private := range []string{"019fe5c2private", "019fe730private"} {
+	for _, private := range []string{"019fe5c2private", "019fe730private", "203.0.113.42"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard exposed %q", private)
 		}

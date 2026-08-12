@@ -71,6 +71,7 @@ type dashboardThreadView struct {
 	KeyPrefix     string
 	Info          string
 	ClientID      string
+	Country       string
 	Account       string
 	Model         string
 	Via           string
@@ -174,6 +175,7 @@ func renderDashboard(name string, view dashboardView) ([]byte, error) {
 
 func (s *server) currentDashboard(now time.Time) dashboardView {
 	snapshot := s.stats.snapshot()
+	s.countries.refresh(snapshot.Threads)
 	stats := s.statsResponseAt(now, snapshot)
 	var trafficTurns int64
 	for _, account := range stats.Accounts {
@@ -241,7 +243,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 
 	threadViews := make([]dashboardThreadView, 0, len(snapshot.Threads))
 	for _, thread := range snapshot.Threads {
-		threadViews = append(threadViews, newDashboardThreadView(thread, names[thread.Account], s.clientIDKey, s.catalog.contextLimits(thread.Account, thread.Model), now))
+		threadViews = append(threadViews, newDashboardThreadView(thread, names[thread.Account], s.clientIDKey, s.countries.label(thread.ClientIP), s.catalog.contextLimits(thread.Account, thread.Model), now))
 	}
 
 	events := make([]dashboardEventView, 0, len(snapshot.Events))
@@ -285,12 +287,13 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 }
 
-func newDashboardThreadView(thread ThreadSnapshot, account string, clientIDKey []byte, limits modelContextLimits, now time.Time) dashboardThreadView {
+func newDashboardThreadView(thread ThreadSnapshot, account string, clientIDKey []byte, country string, limits modelContextLimits, now time.Time) dashboardThreadView {
 	used := thread.LatestUsage.contextTokens()
 	return dashboardThreadView{
 		KeyPrefix:     shortKey(thread.Key),
 		Info:          dashboardThreadInfo(thread.Metadata),
 		ClientID:      clientIDForIP(thread.ClientIP, clientIDKey),
+		Country:       country,
 		Account:       account,
 		Model:         dashboardModel(thread.Model, thread.Effort),
 		Via:           strings.ToUpper(string(thread.Via)),

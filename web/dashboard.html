@@ -158,6 +158,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <thead><tr>
 <th>Thread</th>
 <th>Client</th>
+<th>Country</th>
 <th>Account</th>
 <th>Model (thinking mode)</th>
 <th>Via</th>
@@ -169,6 +170,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <tbody>{{if .Threads}}{{range .Threads}}<tr>
 <td>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.KeyPrefix}}</span>{{else}}{{.KeyPrefix}}{{end}}</td>
 <td class="dim">{{.ClientID}}</td>
+<td>{{.Country}}</td>
 <td>{{.Account}}</td>
 <td>{{.Model}}</td>
 <td>{{.Via}}</td>
@@ -176,7 +178,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.CacheRate}}</td>
 <td>{{if .ContextInfo}}<span class="has-tooltip" data-tooltip="{{.ContextInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.ContextLeft}}</span>{{else}}{{.ContextLeft}}{{end}}</td>
 <td class="dim">{{.Last}}</td>
-</tr>{{end}}{{else}}<tr><td class="empty" colspan="9">no live threads</td></tr>{{end}}</tbody>
+</tr>{{end}}{{else}}<tr><td class="empty" colspan="10">no live threads</td></tr>{{end}}</tbody>
 </table>
 {{end}}
 

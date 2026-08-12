@@ -68,6 +68,7 @@ type server struct {
 	admission            *admissionGate
 	retryBackoff         func(int) time.Duration
 	resources            *resourceMonitor
+	countries            countryResolver
 	dashboardConnections atomic.Int64
 }
 

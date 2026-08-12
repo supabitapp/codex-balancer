@@ -55,6 +55,7 @@ type dashboard struct {
 	height      int
 	cursor      int
 	snap        Snapshot
+	countries   *countryResolver
 }
 
 type tickMsg time.Time
@@ -81,6 +82,7 @@ func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		d.cursor = min(d.cursor, max(d.pool.count()-1, 0))
 		d.snap = d.stats.snapshot()
+		d.countries.refresh(d.snap.Threads)
 		return d, tea.Tick(frame, func(t time.Time) tea.Msg { return tickMsg(t) })
 	}
 	return d, nil
@@ -433,7 +435,7 @@ func (d dashboard) threads(width, height int) string {
 	for _, t := range d.snap.Threads {
 		name := cmp.Or(names[t.Account], shortKey(t.Account))
 		views = append(views, routingThreadView{
-			dashboardThreadView: newDashboardThreadView(t, name, d.clientIDKey, d.catalog.contextLimits(t.Account, t.Model), now),
+			dashboardThreadView: newDashboardThreadView(t, name, d.clientIDKey, d.countries.label(t.ClientIP), d.catalog.contextLimits(t.Account, t.Model), now),
 			clientIP:            t.ClientIP,
 		})
 	}
@@ -463,6 +465,7 @@ func (d dashboard) threads(width, height int) string {
 		{"Thread", 8, styles.text, func(view routingThreadView) string { return view.KeyPrefix }},
 		{"Client", 8, styles.dim, func(view routingThreadView) string { return view.ClientID }},
 		{"IP", ipWidth, styles.dim, func(view routingThreadView) string { return view.clientIP }},
+		{"Country", 7, styles.text, func(view routingThreadView) string { return view.Country }},
 		{"Account", accountWidth, styles.spark, func(view routingThreadView) string { return view.Account }},
 		{"Model", modelWidth, styles.text, func(view routingThreadView) string { return view.Model }},
 		{"Via", 4, styles.good, func(view routingThreadView) string { return view.Via }},
@@ -491,7 +494,7 @@ func (d dashboard) threads(width, height int) string {
 	for _, item := range []struct {
 		index   int
 		minimum int
-	}{{3, 8}, {4, 12}, {2, min(ipWidth, 15)}} {
+	}{{4, len("Account")}, {5, len("Model")}, {2, len("IP")}} {
 		shrink := min(max(columns[item.index].width-item.minimum, 0), overflow)
 		columns[item.index].width -= shrink
 		overflow -= shrink
