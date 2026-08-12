@@ -130,6 +130,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /favicon.svg", webAsset("web/favicon.svg", "image/svg+xml", "public, max-age=3600"))
 	mux.HandleFunc("GET /dashboard/assets/dashboard.js", webAsset("web/dashboard.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
 	mux.HandleFunc("GET /dashboard/assets/htmx-2.0.10.min.js", webAsset("web/htmx-2.0.10.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
+	mux.HandleFunc("GET /dashboard/assets/webtui-0.1.9.css", webAsset("web/webtui-0.1.9.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable"))
 	mux.HandleFunc("GET /dashboard/assets/ws-2.0.4.min.js", webAsset("web/ws-2.0.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
 	mux.HandleFunc("GET /dashboard/ws", s.dashboardWebSocket)
 	mux.HandleFunc("GET /stats", s.statsJSON)
