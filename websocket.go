@@ -16,7 +16,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-const responsesWebSocketBeta = "responses_websockets=2026-02-06"
+const (
+	responsesWebSocketBeta = "responses_websockets=2026-02-06"
+	websocketHandoffFrame  = 500 * time.Millisecond
+)
 
 type websocketDial struct {
 	conn    *websocket.Conn
@@ -178,7 +181,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer downstream.CloseNow()
 	downstream.SetReadLimit(maxRequestBody)
 	dial.conn.SetReadLimit(maxRequestBody)
-	s.relayResponsesWebSocket(downstream, r, dial, thread)
+	s.relayResponsesWebSocket(downstream, r, dial, thread, resolution.hard)
 }
 
 func websocketHandshake(w http.ResponseWriter, r *http.Request) bool {
@@ -405,6 +408,7 @@ func (s *server) relayResponsesWebSocket(
 	r *http.Request,
 	initial *websocketDial,
 	thread string,
+	handshakeHard bool,
 ) {
 	ctx := s.ctx
 	if ctx == nil {
@@ -416,6 +420,8 @@ func (s *server) relayResponsesWebSocket(
 	current := initial
 	generation := 1
 	messages := make(chan websocketMessage, 8)
+	handoffTicker := time.NewTicker(websocketHandoffFrame)
+	defer handoffTicker.Stop()
 	readWebSocketMessages(ctx, downstream, true, 0, messages)
 	readWebSocketMessages(ctx, current.conn, false, generation, messages)
 	liveThreads := map[string]struct{}{}
@@ -503,6 +509,18 @@ func (s *server) relayResponsesWebSocket(
 		var message websocketMessage
 		select {
 		case message = <-messages:
+		case <-handoffTicker.C:
+			target := s.pool.drainTarget(nil)
+			if !handshakeHard && !s.compactionRotation.hasSession(thread) && len(turns) == 0 && target != nil && target.id() != current.account.id() {
+				_ = downstream.Close(websocket.StatusServiceRestart, "account draining")
+				s.log.Info("draining websocket restart requested",
+					"thread", thread,
+					"source_account", current.account.id(),
+					"target_account", target.id(),
+				)
+				return
+			}
+			continue
 		case <-ctx.Done():
 			return
 		}

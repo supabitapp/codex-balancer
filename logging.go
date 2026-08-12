@@ -60,6 +60,8 @@ func routingLogAttrs(candidate routingCandidate, now time.Time) []any {
 	attrs := []any{
 		"account", candidate.id,
 		"status", status,
+		"routing_mode", candidate.mode,
+		"draining", candidate.draining(),
 		"reset_priority", prioritized,
 		"banked_resets_known", candidate.resetCredits.known,
 		"banked_resets", candidate.resetCredits.count,

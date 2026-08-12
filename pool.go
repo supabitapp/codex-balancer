@@ -39,6 +39,7 @@ type routingCandidate struct {
 	spent        bool
 	pressure     float64
 	lastUsed     time.Time
+	mode         routingMode
 }
 
 type routingDecision struct {
@@ -126,6 +127,23 @@ func (p *Pool) togglePause(a *Account) (bool, error) {
 	return paused, err
 }
 
+func (p *Pool) cycleRoutingMode(a *Account) (routingMode, error) {
+	id := a.id()
+	mode := routingModeNormal
+	err := p.mutate(func(accounts []*Account) ([]*Account, error) {
+		i := indexOf(accounts, id)
+		if i < 0 {
+			return nil, fmt.Errorf("no account %q", id)
+		}
+		state := accounts[i].persisted()
+		state.RoutingMode = state.RoutingMode.next()
+		mode = state.RoutingMode
+		accounts[i] = accountFromState(state)
+		return accounts, nil
+	})
+	return mode, err
+}
+
 func (p *Pool) persistTokens(state accountState) (accountState, error) {
 	id := claimsFromToken(state.IDToken).Auth.AccountID
 	var persisted accountState
@@ -154,6 +172,14 @@ func (p *Pool) pick(required, preferred string, skip, allowed map[string]bool) *
 	return p.route(required, preferred, skip, allowed).account
 }
 
+func (p *Pool) drainTarget(allowed map[string]bool) *Account {
+	account := p.route("", "", nil, allowed).account
+	if account == nil || !account.routingCandidate().draining() {
+		return nil
+	}
+	return account
+}
+
 func (p *Pool) route(required, preferred string, skip, allowed map[string]bool) routingDecision {
 	now := time.Now()
 	decision := routingDecision{now: now}
@@ -167,6 +193,20 @@ func (p *Pool) route(required, preferred string, skip, allowed map[string]bool) 
 				break
 			}
 		}
+		return decision
+	}
+	var draining *routingCandidate
+	for i := range decision.candidates {
+		candidate := &decision.candidates[i]
+		if skip[candidate.id] || !accountAllowed(allowed, candidate.id) || !candidate.available(now) || !candidate.draining() {
+			continue
+		}
+		if draining == nil || candidate.drainsBefore(*draining) {
+			draining = candidate
+		}
+	}
+	if draining != nil {
+		decision.account = draining.account
 		return decision
 	}
 	if preferred != "" && !skip[preferred] && accountAllowed(allowed, preferred) {
@@ -217,6 +257,7 @@ func (a *Account) routingCandidate() routingCandidate {
 		spent:    a.spent,
 		pressure: a.pressure(),
 		lastUsed: a.lastUsed,
+		mode:     a.RoutingMode.normalized(),
 	}
 }
 
@@ -227,6 +268,12 @@ func (c routingCandidate) available(now time.Time) bool {
 func (c routingCandidate) status(now time.Time) accountStatus {
 	status := accountStatusAt(c.paused, c.reauth, c.cooldown, c.spent, c.quotaKnown(), now)
 	if status == accountLive {
+		if c.draining() {
+			return accountDraining
+		}
+		if c.mode == routingModePriority {
+			return accountPriority
+		}
 		if _, ok := c.routingPriority(now); ok {
 			return accountPriority
 		}
@@ -236,6 +283,29 @@ func (c routingCandidate) status(now time.Time) accountStatus {
 
 func (c routingCandidate) quotaKnown() bool {
 	return c.primary.known() || c.secondary.known()
+}
+
+func (c routingCandidate) draining() bool {
+	switch c.mode {
+	case routingModeDraining:
+		return true
+	case routingModePriority:
+		return false
+	default:
+		return c.quotaKnown() && c.pressure > 100-drainBelowPercent
+	}
+}
+
+func (c routingCandidate) drainsBefore(other routingCandidate) bool {
+	manual := c.mode == routingModeDraining
+	otherManual := other.mode == routingModeDraining
+	if manual != otherManual {
+		return manual
+	}
+	if c.pressure != other.pressure {
+		return c.pressure > other.pressure
+	}
+	return c.roomierThan(other)
 }
 
 func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool) {
@@ -254,6 +324,11 @@ func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool)
 }
 
 func (c routingCandidate) routesBefore(other routingCandidate, now time.Time) bool {
+	manualPriority := c.mode == routingModePriority
+	otherManualPriority := other.mode == routingModePriority
+	if manualPriority != otherManualPriority {
+		return manualPriority
+	}
 	priority, prioritized := c.routingPriority(now)
 	otherPriority, otherPrioritized := other.routingPriority(now)
 	if prioritized != otherPrioritized {
@@ -261,14 +336,6 @@ func (c routingCandidate) routesBefore(other routingCandidate, now time.Time) bo
 	}
 	if prioritized && !priority.expiresAt.Equal(otherPriority.expiresAt) {
 		return priority.expiresAt.Before(otherPriority.expiresAt)
-	}
-	drain := c.quotaKnown() && c.pressure > 100-drainBelowPercent
-	otherDrain := other.quotaKnown() && other.pressure > 100-drainBelowPercent
-	if drain != otherDrain {
-		return drain
-	}
-	if drain && c.pressure != other.pressure {
-		return c.pressure > other.pressure
 	}
 	return c.roomierThan(other)
 }

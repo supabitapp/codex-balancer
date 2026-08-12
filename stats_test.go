@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -25,6 +27,23 @@ func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
 		if thread.Key == "inactive" {
 			t.Fatal("inactive thread included")
 		}
+	}
+}
+
+func TestStatsEndpointReportsDrainingRoutingMode(t *testing.T) {
+	account := testAccount("account-a", 20)
+	account.RoutingMode = routingModeDraining
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
+	request := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	response := httptest.NewRecorder()
+
+	server.routes().ServeHTTP(response, request)
+	var payload statsResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || len(payload.Accounts) != 1 || payload.Accounts[0].Status != accountDraining || payload.Accounts[0].RoutingMode != routingModeDraining {
+		t.Fatalf("status = %d, payload = %+v", response.Code, payload)
 	}
 }
 

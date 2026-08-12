@@ -96,6 +96,123 @@ func TestPoolRouteHonorsHardAndSoftAffinity(t *testing.T) {
 	}
 }
 
+func TestPoolRouteDrainingOverridesSoftAffinity(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 96)
+	pool := &Pool{accounts: []*Account{owner, draining}}
+
+	if got := pool.route("", owner.id(), nil, nil).account; got != draining {
+		t.Fatalf("account = %s, want draining account", got.id())
+	}
+}
+
+func TestPoolRouteDrainingDoesNotOverrideHardAffinity(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 96)
+	pool := &Pool{accounts: []*Account{owner, draining}}
+
+	if got := pool.route(owner.id(), "", nil, nil).account; got != owner {
+		t.Fatalf("account = %s, want hard owner", got.id())
+	}
+}
+
+func TestPoolRouteStartsDrainingBelowFivePercent(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	boundary := testAccount("account-boundary", 95)
+	pool := &Pool{accounts: []*Account{owner, boundary}}
+
+	if got := pool.route("", owner.id(), nil, nil).account; got != owner {
+		t.Fatalf("account at five percent = %s, want soft owner", got.id())
+	}
+	setTestAccountUsage(boundary, 95.01)
+	if got := pool.route("", owner.id(), nil, nil).account; got != boundary {
+		t.Fatalf("account below five percent = %s, want draining account", got.id())
+	}
+}
+
+func TestPoolRouteChoosesLowestRemainingDrainingAccount(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 96)
+	lowest := testAccount("account-lowest", 99)
+	pool := &Pool{accounts: []*Account{owner, draining, lowest}}
+
+	if got := pool.route("", owner.id(), nil, nil).account; got != lowest {
+		t.Fatalf("account = %s, want lowest remaining account", got.id())
+	}
+}
+
+func TestPoolRouteDrainingOverridesResetPriority(t *testing.T) {
+	now := time.Now()
+	priority := testAccount("account-priority", 20)
+	adoptTestResetCredit(priority, now.Add(time.Hour))
+	draining := testAccount("account-draining", 96)
+	pool := &Pool{accounts: []*Account{priority, draining}}
+
+	if got := pool.route("", "", nil, nil).account; got != draining {
+		t.Fatalf("account = %s, want draining account", got.id())
+	}
+}
+
+func TestPoolRouteDrainingRespectsEligibility(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 96)
+	pool := &Pool{accounts: []*Account{owner, draining}}
+
+	if got := pool.route("", owner.id(), nil, map[string]bool{owner.id(): true}).account; got != owner {
+		t.Fatalf("model-filtered account = %s, want eligible owner", got.id())
+	}
+	if got := pool.route("", owner.id(), map[string]bool{draining.id(): true}, nil).account; got != owner {
+		t.Fatalf("skipped account = %s, want owner", got.id())
+	}
+}
+
+func TestPoolRouteManualPriorityKeepsSoftAffinity(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	priority := testAccount("account-priority", 80)
+	priority.RoutingMode = routingModePriority
+	pool := &Pool{accounts: []*Account{owner, priority}}
+
+	if got := pool.route("", "", nil, nil).account; got != priority {
+		t.Fatalf("fresh account = %s, want manual priority", got.id())
+	}
+	if got := pool.route("", owner.id(), nil, nil).account; got != owner {
+		t.Fatalf("soft account = %s, want owner", got.id())
+	}
+}
+
+func TestPoolRouteManualPriorityStopsAutomaticDraining(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	priority := testAccount("account-priority", 99)
+	priority.RoutingMode = routingModePriority
+	pool := &Pool{accounts: []*Account{owner, priority}}
+
+	if got := pool.route("", owner.id(), nil, nil).account; got != owner {
+		t.Fatalf("account = %s, want soft owner", got.id())
+	}
+}
+
+func TestPoolRouteManualDrainingOverridesSoftAffinity(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 20)
+	draining.RoutingMode = routingModeDraining
+	pool := &Pool{accounts: []*Account{owner, draining}}
+
+	if got := pool.route("", owner.id(), nil, nil).account; got != draining {
+		t.Fatalf("account = %s, want manual draining account", got.id())
+	}
+}
+
+func TestPoolRouteManualDrainingOverridesAutomaticDraining(t *testing.T) {
+	manual := testAccount("account-manual", 20)
+	manual.RoutingMode = routingModeDraining
+	automatic := testAccount("account-automatic", 99)
+	pool := &Pool{accounts: []*Account{automatic, manual}}
+
+	if got := pool.route("", "", nil, nil).account; got != manual {
+		t.Fatalf("account = %s, want manual draining account", got.id())
+	}
+}
+
 func TestPoolRouteDoesNotRetryExcludedOwner(t *testing.T) {
 	a := testAccount("account-a", 10)
 	b := testAccount("account-b", 20)
@@ -158,7 +275,7 @@ func TestPoolRoutePrioritizesEarliestBankedResetExpiry(t *testing.T) {
 	}
 }
 
-func TestPoolRouteKeepsResetPriorityAtZeroWeeklyRemaining(t *testing.T) {
+func TestPoolRouteDrainsBeforeResetPriorityAtZeroWeeklyRemaining(t *testing.T) {
 	now := time.Now()
 	resetting := testAccount("account-resetting", 100)
 	resetting.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(4 * time.Hour), seenAt: now}
@@ -171,15 +288,15 @@ func TestPoolRouteKeepsResetPriorityAtZeroWeeklyRemaining(t *testing.T) {
 	if got := pool.route("", "", nil, nil).account; got != resetting {
 		t.Fatalf("account = %s, want reset account at zero remaining", got.id())
 	}
-	if got := resetting.status(now); got != accountPriority {
-		t.Fatalf("status = %s, want priority at zero remaining", got)
+	if got := resetting.status(now); got != accountDraining {
+		t.Fatalf("status = %s, want draining at zero remaining", got)
 	}
 	resetting.secondary.usedPercent = 99.99
 	if got := pool.route("", "", nil, nil).account; got != resetting {
 		t.Fatalf("account = %s, want reset account above zero remaining", got.id())
 	}
-	if got := resetting.status(now); got != accountPriority {
-		t.Fatalf("status = %s, want priority above zero remaining", got)
+	if got := resetting.status(now); got != accountDraining {
+		t.Fatalf("status = %s, want draining above zero remaining", got)
 	}
 }
 
@@ -209,6 +326,30 @@ func TestAccountPriorityStatusUsesBankedResetExpiryWindow(t *testing.T) {
 	adoptTestResetCredit(account, now.Add(24*time.Hour+time.Second))
 	if got := account.status(now); got != accountLive {
 		t.Fatalf("status = %s outside lead, want live", got)
+	}
+}
+
+func TestAccountStatusShowsAutomaticDraining(t *testing.T) {
+	account := testAccount("account-a", 96)
+
+	if got := account.status(time.Now()); got != accountDraining {
+		t.Fatalf("status = %s, want draining", got)
+	}
+}
+
+func TestAccountStatusShowsManualRoutingMode(t *testing.T) {
+	account := testAccount("account-a", 20)
+	account.RoutingMode = routingModePriority
+	if got := account.status(time.Now()); got != accountPriority {
+		t.Fatalf("priority status = %s", got)
+	}
+	account.RoutingMode = routingModeDraining
+	if got := account.status(time.Now()); got != accountDraining {
+		t.Fatalf("draining status = %s", got)
+	}
+	account.Paused = true
+	if got := account.status(time.Now()); got != accountPaused {
+		t.Fatalf("paused status = %s", got)
 	}
 }
 

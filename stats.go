@@ -655,6 +655,7 @@ type accountStatsResponse struct {
 	Email                  string                        `json:"email,omitempty"`
 	Plan                   string                        `json:"plan"`
 	Status                 accountStatus                 `json:"status"`
+	RoutingMode            routingMode                   `json:"routing_mode"`
 	RoutingPriority        *routingPriorityStatsResponse `json:"routing_priority,omitempty"`
 	WeeklyRemainingPercent *float64                      `json:"weekly_remaining_percent"`
 	BankedResets           *int64                        `json:"banked_resets"`
@@ -735,6 +736,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			Email:                  maskEmail(claims.Email),
 			Plan:                   claims.Auth.Plan,
 			Status:                 status,
+			RoutingMode:            candidate.mode,
 			RoutingPriority:        routingPriority,
 			WeeklyRemainingPercent: weeklyRemaining,
 			BankedResets:           bankedResets,

@@ -206,7 +206,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Name:           name,
 			Plan:           account.Plan,
 			Status:         account.Status,
-			StatusInfo:     dashboardRoutingPriorityInfo(now, account.RoutingPriority),
+			StatusInfo:     dashboardAccountStatusInfo(now, account),
 			Weekly:         weekly,
 			Banked:         banked,
 			BankedInfo:     bankedInfo,
@@ -218,13 +218,14 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		})
 	}
 
-	summary := make([]dashboardCount, 0, 6)
+	summary := make([]dashboardCount, 0, 7)
 	for _, item := range []struct {
 		status accountStatus
 		label  string
 	}{
 		{accountLive, "live"},
 		{accountPriority, "priority"},
+		{accountDraining, "draining"},
 		{accountChecking, "checking"},
 		{accountCooling, "cooling"},
 		{accountPaused, "paused"},
@@ -491,8 +492,27 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 		return dashboardStatusView{Mark: "●", Label: "live"}
 	case accountPriority:
 		return dashboardStatusView{Mark: "◆", Label: "priority"}
+	case accountDraining:
+		return dashboardStatusView{Mark: "▼", Label: "draining"}
 	default:
 		return dashboardStatusView{Label: string(status)}
+	}
+}
+
+func dashboardAccountStatusInfo(now time.Time, account accountStatsResponse) string {
+	switch account.Status {
+	case accountDraining:
+		if account.RoutingMode == routingModeDraining {
+			return "Manual draining. Portable threads move to this account; active turns finish before reconnecting."
+		}
+		return "A rate-limit window has less than 5% left. Portable threads move to this account; active turns finish before reconnecting."
+	case accountPriority:
+		if account.RoutingMode == routingModePriority {
+			return "Manual priority for fresh portable work. Existing soft-affined threads stay on their account."
+		}
+		return dashboardRoutingPriorityInfo(now, account.RoutingPriority)
+	default:
+		return ""
 	}
 }
 

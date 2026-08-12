@@ -83,6 +83,7 @@ var stateMigrations = []string{
 		fetched_at_ns INTEGER NOT NULL CHECK (fetched_at_ns > 0),
 		payload BLOB NOT NULL CHECK (length(payload) > 0)
 	) STRICT;`,
+	`ALTER TABLE accounts ADD COLUMN routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (routing_mode IN ('normal', 'priority', 'draining'));`,
 }
 
 type StateStore struct {
@@ -255,7 +256,7 @@ func (s *StateStore) Close() error {
 }
 
 func (s *StateStore) readAccounts() ([]*Account, error) {
-	rows, err := s.db.Query(`SELECT id_token, access_token, refresh_token, paused, last_refresh_ns FROM accounts ORDER BY account_id`)
+	rows, err := s.db.Query(`SELECT id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns FROM accounts ORDER BY account_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -268,11 +269,13 @@ func scanAccounts(rows *sql.Rows) ([]*Account, error) {
 	for rows.Next() {
 		var state accountState
 		var paused int
+		var mode string
 		var lastRefresh int64
-		if err := rows.Scan(&state.IDToken, &state.AccessToken, &state.RefreshToken, &paused, &lastRefresh); err != nil {
+		if err := rows.Scan(&state.IDToken, &state.AccessToken, &state.RefreshToken, &paused, &mode, &lastRefresh); err != nil {
 			return nil, err
 		}
 		state.Paused = paused != 0
+		state.RoutingMode = routingMode(mode).normalized()
 		state.LastRefresh = decodeTime(lastRefresh)
 		accounts = append(accounts, accountFromState(state))
 	}
@@ -307,7 +310,7 @@ func (s *StateStore) restoreLastUsed(accounts []*Account) error {
 func (s *StateStore) mutateAccounts(change func([]*Account) ([]*Account, error)) ([]*Account, error) {
 	var accounts []*Account
 	err := s.immediate(func(conn *sql.Conn) error {
-		rows, err := conn.QueryContext(context.Background(), `SELECT id_token, access_token, refresh_token, paused, last_refresh_ns FROM accounts ORDER BY account_id`)
+		rows, err := conn.QueryContext(context.Background(), `SELECT id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns FROM accounts ORDER BY account_id`)
 		if err != nil {
 			return err
 		}
@@ -369,8 +372,8 @@ func insertAccount(exec sqlExecer, account *Account) error {
 		return errors.New("credentials carry no chatgpt_account_id")
 	}
 	_, err := exec.ExecContext(context.Background(), `INSERT INTO accounts (
-		account_id, id_token, access_token, refresh_token, paused, last_refresh_ns
-	) VALUES (?, ?, ?, ?, ?, ?)`, id, state.IDToken, state.AccessToken, state.RefreshToken, state.Paused, encodeTime(state.LastRefresh))
+		account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns
+	) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, state.IDToken, state.AccessToken, state.RefreshToken, state.Paused, state.RoutingMode.normalized(), encodeTime(state.LastRefresh))
 	return err
 }
 

@@ -59,6 +59,47 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 	}
 }
 
+func TestPoolCyclesRoutingModeAndPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := loadPool(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount("account-a", 20)
+	if err := pool.add(account); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []routingMode{routingModePriority, routingModeDraining} {
+		got, err := pool.cycleRoutingMode(account)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("mode = %q, want %q", got, want)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reloaded, err := reopened.readAccounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded) != 1 || reloaded[0].routingMode() != routingModeDraining {
+		t.Fatalf("reloaded accounts = %+v", reloaded)
+	}
+}
+
 func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)
@@ -71,6 +112,7 @@ func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
 	) STRICT;
 	INSERT INTO settings (id, rotate_after_compaction) VALUES (1, 0);
 	DROP TABLE price_catalog;
+	ALTER TABLE accounts DROP COLUMN routing_mode;
 	ALTER TABLE attempts DROP COLUMN client_ip;
 	ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 	PRAGMA user_version = 10;`); err != nil {
@@ -101,6 +143,7 @@ func TestStateStoreMigratesClientIDsToIPs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`DROP TABLE price_catalog;
+		ALTER TABLE accounts DROP COLUMN routing_mode;
 		ALTER TABLE attempts DROP COLUMN client_ip;
 		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, reasoning_effort, turn_metadata, client_id)
@@ -140,6 +183,7 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`DROP TABLE price_catalog;
+		ALTER TABLE accounts DROP COLUMN routing_mode;
 		ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
 		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
 		ALTER TABLE events DROP COLUMN thread_key;
@@ -178,6 +222,7 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`DROP TABLE price_catalog;
+		ALTER TABLE accounts DROP COLUMN routing_mode;
 		ALTER TABLE attempts DROP COLUMN client_ip;
 		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 		INSERT INTO attempts (

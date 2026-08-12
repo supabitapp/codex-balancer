@@ -2,10 +2,12 @@ package main
 
 import (
 	"image/color"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -28,6 +30,48 @@ func TestDashboardUsesTerminalPalette(t *testing.T) {
 	assertColor(t, styles.warn.GetForeground(), lipgloss.Yellow)
 	assertColor(t, styles.hot.GetForeground(), lipgloss.Magenta)
 	assertColor(t, styles.bad.GetForeground(), lipgloss.Red)
+}
+
+func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	pool, err := loadPool(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccount("account-a", 20)
+	if err := pool.add(account); err != nil {
+		t.Fatal(err)
+	}
+	dashboard := dashboard{pool: pool, stats: newStats(), width: 160}
+	press := tea.KeyPressMsg(tea.Key{Text: "r", Code: 'r'})
+
+	for _, want := range []struct {
+		mode   routingMode
+		status accountStatus
+		text   string
+	}{
+		{routingModePriority, accountPriority, "priority"},
+		{routingModeDraining, accountDraining, "draining"},
+		{routingModeNormal, accountLive, "live"},
+	} {
+		dashboard.Update(press)
+		if got := account.routingMode(); got != want.mode {
+			t.Fatalf("mode = %s, want %s", got, want.mode)
+		}
+		if got := account.status(time.Now()); got != want.status {
+			t.Fatalf("status = %s, want %s", got, want.status)
+		}
+		if row := dashboard.accounts(1); !strings.Contains(row, want.text) {
+			t.Fatalf("account row missing %q:\n%s", want.text, row)
+		}
+	}
+	if row := dashboard.accounts(1); !strings.Contains(row, "r route") {
+		t.Fatalf("account controls missing routing key:\n%s", row)
+	}
 }
 
 func assertColor(t *testing.T, got, want color.Color) {

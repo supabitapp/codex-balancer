@@ -210,6 +210,20 @@ func (r *compactionRotation) reconnectingForSession(session string) (pendingComp
 	return pendingCompactionRotation{}, false
 }
 
+func (r *compactionRotation) hasSession(session string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, pending := range r.pending {
+		if pending.session == session {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *compactionRotation) otherReconnectingThread(session, thread string) string {
 	for _, pending := range r.pending {
 		if pending.session == session && pending.thread != thread && pending.reconnecting {

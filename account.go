@@ -27,6 +27,7 @@ type accountState struct {
 	AccessToken  string
 	RefreshToken string
 	Paused       bool
+	RoutingMode  routingMode
 	LastRefresh  time.Time
 }
 
@@ -61,14 +62,41 @@ type window struct {
 
 type accountStatus string
 
+type routingMode string
+
 const (
 	accountLive        accountStatus = "live"
 	accountPriority    accountStatus = "priority"
+	accountDraining    accountStatus = "draining"
 	accountChecking    accountStatus = "checking"
 	accountCooling     accountStatus = "cooling"
 	accountPaused      accountStatus = "paused"
 	accountNeedsReauth accountStatus = "needs_reauth"
+
+	routingModeNormal   routingMode = "normal"
+	routingModePriority routingMode = "priority"
+	routingModeDraining routingMode = "draining"
 )
+
+func (m routingMode) normalized() routingMode {
+	switch m {
+	case routingModePriority, routingModeDraining:
+		return m
+	default:
+		return routingModeNormal
+	}
+}
+
+func (m routingMode) next() routingMode {
+	switch m.normalized() {
+	case routingModeNormal:
+		return routingModePriority
+	case routingModePriority:
+		return routingModeDraining
+	default:
+		return routingModeNormal
+	}
+}
 
 func (w window) known() bool { return !w.seenAt.IsZero() }
 
@@ -162,6 +190,7 @@ func (a *Account) persisted() accountState {
 }
 
 func accountFromState(state accountState) *Account {
+	state.RoutingMode = state.RoutingMode.normalized()
 	return &Account{accountState: state}
 }
 
@@ -183,7 +212,14 @@ func (a *Account) applyPersisted(next accountState) bool {
 		}
 	}
 	a.Paused = next.Paused
+	a.RoutingMode = next.RoutingMode.normalized()
 	return a.accountState != before
+}
+
+func (a *Account) routingMode() routingMode {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.RoutingMode.normalized()
 }
 
 type authClaims struct {

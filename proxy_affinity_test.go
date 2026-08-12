@@ -41,7 +41,7 @@ func TestHTTPNewWorkUsesZeroRemainingAccountWithExpiringReset(t *testing.T) {
 	}
 }
 
-func TestHTTPNewWorkUsesEarliestExpiringResetBeforeDrainMode(t *testing.T) {
+func TestHTTPNewWorkDrainsBeforeExpiringReset(t *testing.T) {
 	now := time.Now()
 	earlier := testAccount("account-earlier-reset", 40)
 	adoptTestResetCredit(earlier, now.Add(time.Hour))
@@ -59,7 +59,7 @@ func TestHTTPNewWorkUsesEarliestExpiringResetBeforeDrainMode(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if fmt.Sprint(calls) != "[account-earlier-reset]" {
+	if fmt.Sprint(calls) != "[account-drain]" {
 		t.Fatalf("calls = %v", calls)
 	}
 }
@@ -141,6 +141,50 @@ func TestHTTPSoftSessionMovesFromSpentAccount(t *testing.T) {
 	}
 	if got := store.lookup(affinityRef{kind: affinityResponse, value: "resp_b"}); got != "account-b" {
 		t.Fatalf("response owner = %q, want account-b", got)
+	}
+}
+
+func TestHTTPSoftSessionMovesToDrainingAccount(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 96)
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{owner, draining}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp_draining")
+	})
+	defer closeServer()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, owner.id()); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "session", "", `{"model":"gpt","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-draining]" {
+		t.Fatalf("calls = %v", calls)
+	}
+}
+
+func TestHTTPHardResponseStaysOnOwnerWhileDraining(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 96)
+	calls := []string{}
+	server, store, closeServer := newAffinityHTTPServer(t, []*Account{owner, draining}, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Header.Get("chatgpt-account-id"))
+		writeResponseCreated(w, "resp_next")
+	})
+	defer closeServer()
+	if err := store.bind(affinityRef{kind: affinityResponse, value: "resp_owner"}, owner.id()); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serveHTTPResponse(t, server, "session", "", `{"previous_response_id":"resp_owner","input":[]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(calls) != "[account-owner]" {
+		t.Fatalf("calls = %v", calls)
 	}
 }
 

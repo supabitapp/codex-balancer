@@ -78,6 +78,8 @@ func (d dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			d.cursor = min(d.cursor+1, max(d.pool.count()-1, 0))
 		case "space", "enter":
 			d.toggle()
+		case "r":
+			d.cycleRoutingMode()
 		}
 	case tickMsg:
 		d.cursor = min(d.cursor, max(d.pool.count()-1, 0))
@@ -108,6 +110,20 @@ func (d dashboard) toggle() {
 		kind = "paused"
 	}
 	d.stats.note(kind, account.id(), "")
+}
+
+func (d dashboard) cycleRoutingMode() {
+	accounts := d.pool.sorted()
+	if d.cursor >= len(accounts) {
+		return
+	}
+	account := accounts[d.cursor]
+	mode, err := d.pool.cycleRoutingMode(account)
+	if err != nil {
+		d.stats.note("save failed", account.id(), err.Error())
+		return
+	}
+	d.stats.note("routing mode", account.id(), string(mode))
 }
 
 func (d dashboard) View() tea.View {
@@ -173,7 +189,7 @@ func (d dashboard) render() string {
 
 func (d dashboard) header() string {
 	styles := d.styles()
-	live, priority, checking, cooling, dead, held := 0, 0, 0, 0, 0, 0
+	live, priority, draining, checking, cooling, dead, held := 0, 0, 0, 0, 0, 0, 0
 	now := time.Now()
 	for _, a := range d.pool.all() {
 		switch a.status(now) {
@@ -189,12 +205,17 @@ func (d dashboard) header() string {
 			live++
 		case accountPriority:
 			priority++
+		case accountDraining:
+			draining++
 		}
 	}
 
 	parts := []string{styles.good.Render(fmt.Sprintf("%d live", live))}
 	if priority > 0 {
 		parts = append(parts, styles.warn.Render(fmt.Sprintf("%d priority", priority)))
+	}
+	if draining > 0 {
+		parts = append(parts, styles.bad.Render(fmt.Sprintf("%d draining", draining)))
 	}
 	if checking > 0 {
 		parts = append(parts, styles.dim.Render(fmt.Sprintf("%d checking", checking)))
@@ -281,7 +302,7 @@ func (d dashboard) accounts(limit int) string {
 	if limit < len(accounts) {
 		title = fmt.Sprintf("ACCOUNTS  %d-%d/%d", start+1, end, len(accounts))
 	}
-	rows := []string{styles.section.Render(title) + styles.dim.Render("   ↑↓ pick · space pauses"), "", hdr, sep}
+	rows := []string{styles.section.Render(title) + styles.dim.Render("   ↑↓ pick · r route · space pauses"), "", hdr, sep}
 
 	for i, a := range accounts[start:end] {
 		primary, secondary, _, reauth := a.health()
@@ -303,6 +324,8 @@ func (d dashboard) accounts(limit int) string {
 			status = styles.good.Render(fit("● live", statusW))
 		case accountPriority:
 			status = styles.warn.Render(fit("◆ priority", statusW))
+		case accountDraining:
+			status = styles.bad.Render(fit("▼ draining", statusW))
 		}
 
 		turns := ""

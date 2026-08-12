@@ -58,6 +58,158 @@ func TestWebSocketSoftRateLimitReplaysOnAnotherAccount(t *testing.T) {
 	}
 }
 
+func TestWebSocketIdleSoftSessionReconnectsToDrainingAccount(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_" + account},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{owner, draining})
+	defer closeProxy()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, owner.id()); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	setTestAccountUsage(draining, 96)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusServiceRestart {
+		cancel()
+		conn.CloseNow()
+		t.Fatalf("close error = %v, want service restart", err)
+	}
+	cancel()
+	conn.CloseNow()
+
+	conn = dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-draining]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+}
+
+func TestWebSocketUsageHeadersRestartOtherIdleSessions(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		event := map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_" + account},
+		}
+		if account == "account-b" {
+			event["headers"] = map[string]any{"x-codex-primary-used-percent": 96}
+		}
+		writeWebSocketEvent(t, conn, event)
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 20)
+	b := testAccount("account-b", 30)
+	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	server.upstream = upstream.URL
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session-a"}, a.id()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session-b"}, b.id()); err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+
+	idle := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session-a"}})
+	defer idle.CloseNow()
+	reporter := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session-b"}})
+	defer reporter.CloseNow()
+	writeWebSocketEvent(t, reporter, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, reporter)
+	readWebSocketEvent(t, reporter)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := idle.Read(ctx); websocket.CloseStatus(err) != websocket.StatusServiceRestart {
+		t.Fatalf("close error = %v, want service restart", err)
+	}
+}
+
+func TestWebSocketBusySessionCompletesBeforeDrainingRestart(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_" + account},
+		})
+		close(started)
+		<-release
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{owner, draining})
+	defer closeProxy()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, owner.id()); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	created := readWebSocketEvent(t, conn)
+	if created.Type != "response.created" {
+		t.Fatalf("event = %+v", created)
+	}
+	<-started
+	setTestAccountUsage(draining, 96)
+	time.Sleep(2 * websocketHandoffFrame)
+	close(release)
+	completed := readWebSocketEvent(t, conn)
+	if completed.Type != "response.completed" {
+		t.Fatalf("event = %+v, want completed before restart", completed)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusServiceRestart {
+		t.Fatalf("close error = %v, want service restart", err)
+	}
+}
+
+func TestWebSocketHardHandshakeStaysOnOwnerWhileDraining(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_" + account},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 20)
+	proxy, store, closeProxy := newAffinityProxyWebSocketServer(t, upstream.URL, []*Account{owner, draining})
+	defer closeProxy()
+	if err := store.bind(affinityRef{kind: affinityTurnState, value: "turn"}, owner.id()); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"X-Codex-Turn-State": {"turn"}})
+	defer conn.CloseNow()
+	setTestAccountUsage(draining, 96)
+	time.Sleep(2 * websocketHandoffFrame)
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+}
+
 func TestWebSocketPrecreatedUsageLimitReplaysOnAnotherAccount(t *testing.T) {
 	resetCreditCalls := useNoResetCreditsAPI(t)
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {

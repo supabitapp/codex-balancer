@@ -39,10 +39,14 @@ codex-balancer server           # serve the proxy
 The usage poll redeems the earliest available rate-limit reset credit once it
 is within one hour of expiry.
 
-Fresh routes keep hard and soft affinity, then prefer live accounts with a
-banked reset that expires within 24 hours and weekly capacity left. The
-earliest expiry wins. Remaining routes use the lowest limit use, then the
-account used least recently.
+Hard account ownership always wins. Portable work normally keeps soft affinity,
+then prefers accounts with a banked reset that expires within 24 hours. When a
+rate-limit window drops below 5%, that account enters draining and takes all
+portable work. Active WebSocket turns finish before their connections restart.
+Remaining routes use the lowest limit use, then the account used least recently.
+
+In the TUI, select an account and press `r` to cycle its routing mode through
+normal, priority, and draining. Press Space to pause it.
 
 `GET /stats` returns the same live account status as public JSON. Account emails
 hide their domain and all but the first and last local-part characters, such as
