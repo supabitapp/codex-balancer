@@ -518,6 +518,12 @@ func (s *Stats) snapshot() Snapshot {
 		})
 	}
 	slices.SortFunc(out.Threads, func(left, right ThreadSnapshot) int {
+		if left.Last.After(right.Last) {
+			return -1
+		}
+		if left.Last.Before(right.Last) {
+			return 1
+		}
 		return strings.Compare(left.Key, right.Key)
 	})
 	return out

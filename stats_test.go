@@ -52,6 +52,27 @@ func TestSnapshotKeepsThreadsUntilTheirLastLiveReferenceCloses(t *testing.T) {
 	}
 }
 
+func TestSnapshotSortsActiveThreadsByLastActivity(t *testing.T) {
+	stats := newStats()
+	now := time.Now()
+	for _, thread := range []struct {
+		key  string
+		last time.Time
+	}{
+		{"oldest", now.Add(-time.Hour)},
+		{"newest", now},
+		{"middle", now.Add(-time.Minute)},
+	} {
+		stats.activateThread(thread.key)
+		stats.applyRouted(thread.last, thread.key, "", "account", "", "", "", transportHTTP, turnMetadata{})
+	}
+
+	threads := stats.snapshot().Threads
+	if len(threads) != 3 || threads[0].Key != "newest" || threads[1].Key != "middle" || threads[2].Key != "oldest" {
+		t.Fatalf("threads = %+v", threads)
+	}
+}
+
 func TestAccountSnapshotUsesLast24Hours(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
