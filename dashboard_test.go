@@ -40,31 +40,26 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Security-Policy"), "style-src 'self' 'unsafe-inline'") || !strings.Contains(response.Header.Get("Content-Security-Policy"), "script-src 'self'") {
+	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Security-Policy"), "script-src 'self'") {
 		t.Fatalf("status = %s, CSP = %q", response.Status, response.Header.Get("Content-Security-Policy"))
 	}
 	for _, expected := range []string{
 		`<link rel="icon" href="/favicon.svg" type="image/svg+xml">`,
-		`<script src="` + dashboardAssetURL("theme.js") + `"></script>`,
-		`<link rel="stylesheet" href="` + dashboardAssetURL("webtui-0.1.9.css") + `">`,
 		`src="` + dashboardAssetURL("dashboard.js") + `"`,
 		`src="/dashboard/assets/htmx-2.0.10.min.js"`,
 		`src="/dashboard/assets/ws-2.0.4.min.js"`,
 		`hx-ext="ws"`,
 		`ws-connect="/dashboard/ws"`,
 		`id="dashboard"`,
-		`<section box-="square" shear-="top">`,
-		`<h2 is-="badge" variant-="background0">Active Threads</h2>`,
-		`<span class="panel-meta"><span id="routing-count">0</span> active</span>`,
-		`<table divide-="horizontal">`,
+		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
 		`no live threads`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
 	}
-	overview := strings.Index(body, `>Overview</h2>`)
-	accounts := strings.Index(body, `>Accounts</h2>`)
+	overview := strings.Index(body, `<h2>Overview</h2>`)
+	accounts := strings.Index(body, `<h2>Accounts <span id="summary">`)
 	if overview < 0 || accounts < 0 || overview > accounts {
 		t.Fatalf("dashboard section order: overview = %d, accounts = %d", overview, accounts)
 	}
@@ -87,8 +82,6 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 		{"/favicon.svg", "image/svg+xml", "public, max-age=3600", 100},
 		{"/dashboard/assets/dashboard.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 500},
 		{"/dashboard/assets/htmx-2.0.10.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
-		{"/dashboard/assets/theme.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 100},
-		{"/dashboard/assets/webtui-0.1.9.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable", 7_500},
 		{"/dashboard/assets/ws-2.0.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
 	} {
 		response, err := http.Get(httpServer.URL + asset.path)
@@ -152,8 +145,8 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`019fe5c2`,
 		`52f3c1d8`,
 		`<td>gpt-5.6-sol (high)</td>`,
-		`<span is-="badge" cap-="slant-top">◌ checking</span>`,
-		`<span is-="badge" variant-="background1">1 checking</span>`,
+		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
+		`<span>1 checking</span>`,
 		`<td>WS</td>`,
 		`class="fast-icon"`,
 		`aria-label="Fast"`,
@@ -288,9 +281,9 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 	}
 	body := string(payload)
 	for _, expected := range []string{
-		`<span is-="badge" variant-="background1">1 priority</span>`,
-		`<span is-="badge" cap-="slant-top">`,
-		`>◆ priority</span></span>`,
+		`<span>1 priority</span>`,
+		`class="status-mark status-priority"`,
+		`>◆</span> priority</span>`,
 		`data-tooltip="Prioritized for new routing: a banked reset expires in 30m; 20% weekly capacity remains."`,
 		`aria-describedby="dashboard-tooltip"`,
 		`tabindex="0"`,
