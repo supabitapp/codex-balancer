@@ -465,7 +465,7 @@ func (d dashboard) threads(width, height int) string {
 		{"Thread", 8, styles.text, func(view routingThreadView) string { return view.KeyPrefix }},
 		{"Client", 8, styles.dim, func(view routingThreadView) string { return view.ClientID }},
 		{"IP", ipWidth, styles.dim, func(view routingThreadView) string { return view.clientIP }},
-		{"Country", 7, styles.text, func(view routingThreadView) string { return view.Country }},
+		{"Country", 8, styles.text, func(view routingThreadView) string { return " " + view.Country }},
 		{"Account", accountWidth, styles.spark, func(view routingThreadView) string { return view.Account }},
 		{"Model", modelWidth, styles.text, func(view routingThreadView) string { return view.Model }},
 		{"Via", 4, styles.good, func(view routingThreadView) string { return view.Via }},
