@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	dashboardFrame           = 500 * time.Millisecond
-	dashboardMaxConnections  = 32
-	dashboardContextBaseline = 12_000
+	dashboardFrame            = 500 * time.Millisecond
+	dashboardMaxConnections   = 32
+	dashboardContextBaseline  = 12_000
+	icedLattePriceNanoDollars = 6_000_000_000
 )
 
 //go:embed web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
@@ -259,6 +260,9 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	if !snapshot.PriceFetchedAt.IsZero() {
 		priceInfo += ". Prices from models.dev, updated " + snapshot.PriceFetchedAt.In(now.Location()).Format("2 January 2006, 15:04 MST")
 	}
+	if snapshot.UnpricedResponses == 0 {
+		priceInfo = icedLatteEquivalent(snapshot.APICostNanoDollars) + "\n" + priceInfo
+	}
 	overview := dashboardResourceMetrics(s.resources.usage(now))
 	overview = append(overview,
 		dashboardMetric{Name: "uptime", Value: short(snapshot.Uptime)},
@@ -472,4 +476,16 @@ func dashboardNumber(value int64) string {
 		return ""
 	}
 	return strconv.FormatInt(value, 10)
+}
+
+func icedLatteEquivalent(nanoDollars int64) string {
+	lattes := nanoDollars / icedLattePriceNanoDollars
+	if nanoDollars%icedLattePriceNanoDollars >= icedLattePriceNanoDollars/2 {
+		lattes++
+	}
+	name := "iced lattes"
+	if lattes == 1 {
+		name = "iced latte"
+	}
+	return fmt.Sprintf("🧊☕ %d %s ($6 each)", lattes, name)
 }
