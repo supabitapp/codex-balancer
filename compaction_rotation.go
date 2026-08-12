@@ -210,18 +210,30 @@ func (r *compactionRotation) reconnectingForSession(session string) (pendingComp
 	return pendingCompactionRotation{}, false
 }
 
-func (r *compactionRotation) hasSession(session string) bool {
+func (r *compactionRotation) yieldToDrain(session string) bool {
 	if r == nil {
-		return false
+		return true
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, pending := range r.pending {
-		if pending.session == session {
-			return true
+		if pending.session == session && pending.reconnecting {
+			return false
 		}
 	}
-	return false
+	for thread, pending := range r.pending {
+		if pending.session != session {
+			continue
+		}
+		delete(r.pending, thread)
+		r.log.Info("compaction rotation yielded to drain",
+			"session", session,
+			"thread", pending.thread,
+			"source_account", pending.account,
+			"compaction_turn", pending.turn,
+		)
+	}
+	return true
 }
 
 func (r *compactionRotation) otherReconnectingThread(session, thread string) string {

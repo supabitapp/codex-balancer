@@ -96,6 +96,73 @@ func TestWebSocketIdleSoftSessionReconnectsToDrainingAccount(t *testing.T) {
 	}
 }
 
+func TestWebSocketDrainingTakesOverPassiveCompactionHandoff(t *testing.T) {
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_" + account},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 10)
+	draining := testAccount("account-draining", 20)
+	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{owner, draining}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	server.compactionRotation = newCompactionRotation(server.log)
+	server.upstream = upstream.URL
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+	if err := store.bind(affinityRef{kind: affinitySession, value: "session"}, owner.id()); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "logical-thread", TurnID: "turn-a"}
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(compaction)},
+		"input":           []any{map[string]any{"type": "compaction_trigger"}},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	for range 2 {
+		if _, err := server.pool.cycleRoutingMode(server.pool.find(draining.id())); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusServiceRestart {
+		cancel()
+		conn.CloseNow()
+		t.Fatalf("close error = %v, want service restart", err)
+	}
+	cancel()
+	conn.CloseNow()
+
+	conn = dialAffinityWebSocket(t, proxy.URL, http.Header{"Session-Id": {"session"}})
+	defer conn.CloseNow()
+	prewarm := turnMetadata{RequestKind: "turn", ThreadID: "logical-thread", TurnID: "turn-b"}
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnMetadataKey: encodeTurnMetadata(prewarm)},
+		"input":           []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	writeWebSocketEvent(t, conn, map[string]any{
+		"type":                 "response.create",
+		"previous_response_id": "resp_account-draining",
+		"input":                []any{},
+	})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-draining account-draining]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+}
+
 func TestWebSocketUsageHeadersRestartOtherIdleSessions(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		event := map[string]any{

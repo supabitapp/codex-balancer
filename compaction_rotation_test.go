@@ -167,16 +167,3 @@ func TestCompactionRotationKeepsFreshRouteSource(t *testing.T) {
 		"fresh_account":  "account-a",
 	})
 }
-
-func TestCompactionRotationReportsPendingSession(t *testing.T) {
-	rotation := newCompactionRotation(slog.New(slog.DiscardHandler))
-	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "thread", TurnID: "turn"}
-	rotation.arm("session", "account-a", metadata)
-	if !rotation.hasSession("session") {
-		t.Fatal("pending session not found")
-	}
-	rotation.finish("thread", "done", "account-b")
-	if rotation.hasSession("session") {
-		t.Fatal("finished session remains pending")
-	}
-}

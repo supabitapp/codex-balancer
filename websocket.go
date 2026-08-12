@@ -511,7 +511,7 @@ func (s *server) relayResponsesWebSocket(
 		case message = <-messages:
 		case <-handoffTicker.C:
 			target := s.pool.drainTarget(nil)
-			if !handshakeHard && !s.compactionRotation.hasSession(thread) && len(turns) == 0 && target != nil && target.id() != current.account.id() {
+			if !handshakeHard && len(turns) == 0 && target != nil && target.id() != current.account.id() && s.compactionRotation.yieldToDrain(thread) {
 				_ = downstream.Close(websocket.StatusServiceRestart, "account draining")
 				s.log.Info("draining websocket restart requested",
 					"thread", thread,
