@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -71,7 +72,6 @@ type dashboardThreadView struct {
 	KeyPrefix     string
 	Info          string
 	ClientID      string
-	Country       string
 	Account       string
 	Model         string
 	Via           string
@@ -84,6 +84,7 @@ type dashboardThreadView struct {
 	Latency       string
 	LatencyInfo   string
 	Requests      string
+	Cost          string
 	Last          string
 }
 
@@ -235,8 +236,10 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 
 	threadViews := make([]dashboardThreadView, 0, len(snapshot.Threads))
+	clientNames := dashboardClientNames(snapshot.Threads, s.clientIDKey, &s.countries)
 	for _, thread := range snapshot.Threads {
-		threadViews = append(threadViews, newDashboardThreadView(thread, names[thread.Account], s.clientIDKey, s.countries.label(thread.ClientIP), s.catalog.contextLimits(thread.Account, thread.Model), now))
+		clientName := clientNames[clientIDForIP(thread.ClientIP, s.clientIDKey)]
+		threadViews = append(threadViews, newDashboardThreadView(thread, names[thread.Account], clientName, s.catalog.contextLimits(thread.Account, thread.Model), now))
 	}
 
 	events := make([]dashboardEventView, 0, len(snapshot.Events))
@@ -315,13 +318,46 @@ func trafficPercentages(accounts []accountStatsResponse) []int64 {
 	return percentages
 }
 
-func newDashboardThreadView(thread ThreadSnapshot, account string, clientIDKey []byte, country string, limits modelContextLimits, now time.Time) dashboardThreadView {
+func dashboardClientNames(threads []ThreadSnapshot, clientIDKey []byte, countries *countryResolver) map[string]string {
+	countriesByID := make(map[string]string)
+	ids := make([]string, 0)
+	for _, thread := range threads {
+		id := clientIDForIP(thread.ClientIP, clientIDKey)
+		if id == "" {
+			continue
+		}
+		if _, exists := countriesByID[id]; exists {
+			continue
+		}
+		country := ""
+		if countries != nil {
+			country = countries.label(thread.ClientIP)
+		}
+		countriesByID[id] = country
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	names := make(map[string]string, len(ids))
+	for i, id := range ids {
+		country := countriesByID[id]
+		if country == "" {
+			country = "Unknown"
+		}
+		names[id] = fmt.Sprintf("%s-%d", country, i+1)
+	}
+	return names
+}
+
+func newDashboardThreadView(thread ThreadSnapshot, account, clientName string, limits modelContextLimits, now time.Time) dashboardThreadView {
 	used := thread.LatestUsage.contextTokens()
+	cost := "--"
+	if !thread.Usage.empty() {
+		cost = formatAPIPrice(thread.apiCostNanoDollars, thread.unpricedResponses)
+	}
 	return dashboardThreadView{
 		KeyPrefix:     shortKey(thread.Key),
 		Info:          dashboardThreadInfo(thread.Metadata),
-		ClientID:      clientIDForIP(thread.ClientIP, clientIDKey),
-		Country:       country,
+		ClientID:      clientName,
 		Account:       account,
 		Model:         dashboardModel(thread.Model, thread.Effort),
 		Via:           strings.ToUpper(string(thread.Via)),
@@ -334,6 +370,7 @@ func newDashboardThreadView(thread ThreadSnapshot, account string, clientIDKey [
 		Latency:       formatLatency(thread.Latency),
 		LatencyInfo:   dashboardLatencyInfo(thread.TTFB, thread.Latency),
 		Requests:      dashboardNumber(thread.Turns),
+		Cost:          cost,
 		Last:          agoAt(now, thread.Last),
 	}
 }

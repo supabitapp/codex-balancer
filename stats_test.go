@@ -211,6 +211,56 @@ func TestClientIDForIP(t *testing.T) {
 	}
 }
 
+func TestThreadCostPricesEachResponse(t *testing.T) {
+	prices := testPriceSnapshot(t)
+	stats := newStatsWithPrices(prices)
+	stats.activateThread("thread")
+	now := time.Now()
+	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "xhigh", "default", transportWebSocket, turnMetadata{})
+	usage := responseUsage{InputTokens: 200_000, OutputTokens: 1_000}
+	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "default", usage)
+	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "default", usage)
+
+	want, known := prices.estimate("gpt-5.6-sol", "default", usage)
+	if !known {
+		t.Fatal("test model has no price")
+	}
+	thread := stats.snapshot().Threads[0]
+	if thread.apiCostNanoDollars != want*2 || thread.unpricedResponses != 0 {
+		t.Fatalf("thread cost = %d with %d unpriced, want %d with none", thread.apiCostNanoDollars, thread.unpricedResponses, want*2)
+	}
+}
+
+func TestThreadCostRepricesAfterCatalogRefresh(t *testing.T) {
+	store, err := openStateStore(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	stats, err := newPersistentStats(store, priceSnapshot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats.activateThread("thread")
+	stats.routed("thread", "client", "account", "gpt-5.4", "high", "default", transportWebSocket, turnMetadata{})
+	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
+	stats.recordUsage("thread", "account", "gpt-5.4", "default", usage)
+	before := stats.snapshot().Threads[0]
+	if before.apiCostNanoDollars != 0 || before.unpricedResponses != 1 {
+		t.Fatalf("thread cost before refresh = %d with %d unpriced", before.apiCostNanoDollars, before.unpricedResponses)
+	}
+
+	prices := testPriceSnapshot(t)
+	if err := stats.reprice(prices); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := prices.estimate("gpt-5.4", "default", usage)
+	after := stats.snapshot().Threads[0]
+	if after.apiCostNanoDollars != want || after.unpricedResponses != 0 {
+		t.Fatalf("thread cost after refresh = %d with %d unpriced, want %d with none", after.apiCostNanoDollars, after.unpricedResponses, want)
+	}
+}
+
 func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	prices := testPriceSnapshot(t)
 	stats := newStatsWithPrices(prices)

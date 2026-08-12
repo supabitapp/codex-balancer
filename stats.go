@@ -76,23 +76,25 @@ type rollingCounter struct {
 }
 
 type threadStats struct {
-	key              string
-	clientIP         string
-	account          string
-	model            string
-	effort           string
-	serviceTier      string
-	metadata         turnMetadata
-	turns            int64
-	compactions      int64
-	usage            responseUsage
-	latestUsage      responseUsage
-	ttfb             time.Duration
-	latency          time.Duration
-	createdAt        time.Time
-	segmentStartedAt time.Time
-	last             time.Time
-	via              transport
+	key                string
+	clientIP           string
+	account            string
+	model              string
+	effort             string
+	serviceTier        string
+	metadata           turnMetadata
+	turns              int64
+	compactions        int64
+	usage              responseUsage
+	latestUsage        responseUsage
+	apiCostNanoDollars int64
+	unpricedResponses  int64
+	ttfb               time.Duration
+	latency            time.Duration
+	createdAt          time.Time
+	segmentStartedAt   time.Time
+	last               time.Time
+	via                transport
 }
 
 type Event struct {
@@ -224,6 +226,8 @@ func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, eff
 		t.turns = 0
 		t.usage = responseUsage{}
 		t.latestUsage = responseUsage{}
+		t.apiCostNanoDollars = 0
+		t.unpricedResponses = 0
 		t.ttfb = 0
 		t.latency = 0
 		t.segmentStartedAt = now
@@ -342,10 +346,16 @@ func (s *Stats) recordUsage(thread, account, model, serviceTier string, usage re
 func (s *Stats) applyUsageAt(at time.Time, thread, account, model, serviceTier string, usage responseUsage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	cost, known := s.prices.estimate(model, serviceTier, usage)
 	if current := s.threads[thread]; current != nil && current.account == account && !at.Before(current.segmentStartedAt) {
 		current.model = model
 		current.usage.add(usage)
 		current.latestUsage = usage
+		if known {
+			current.apiCostNanoDollars += cost
+		} else {
+			current.unpricedResponses++
+		}
 	}
 	month := calendarMonth(at)
 	if month < s.usageMonth {
@@ -353,7 +363,6 @@ func (s *Stats) applyUsageAt(at time.Time, thread, account, model, serviceTier s
 	}
 	s.syncUsageMonth(month)
 	s.monthlyUsage.add(usage)
-	cost, known := s.prices.estimate(model, serviceTier, usage)
 	if !known {
 		s.unpricedResponses++
 		return
@@ -368,9 +377,26 @@ func (s *Stats) reprice(prices priceSnapshot) error {
 	s.pricingMu.Lock()
 	defer s.pricingMu.Unlock()
 	now := time.Now()
-	events, err := s.store.usageEventsSince(calendarMonthStart(now))
+	monthStart := calendarMonthStart(now)
+	events, err := s.store.usageEventsSince(monthStart)
 	if err != nil {
 		return err
+	}
+	s.mu.Lock()
+	threadStart := now
+	threads := len(s.threads)
+	for _, thread := range s.threads {
+		if thread.segmentStartedAt.Before(threadStart) {
+			threadStart = thread.segmentStartedAt
+		}
+	}
+	s.mu.Unlock()
+	var threadEvents []storedEvent
+	if threads > 0 {
+		threadEvents, err = s.store.threadUsageEventsSince(threadStart)
+		if err != nil {
+			return err
+		}
 	}
 	var usage responseUsage
 	var cost, unpriced int64
@@ -390,6 +416,22 @@ func (s *Stats) reprice(prices priceSnapshot) error {
 	s.apiCostNanoDollars = cost
 	s.unpricedResponses = unpriced
 	s.prices = prices
+	for _, thread := range s.threads {
+		thread.apiCostNanoDollars = 0
+		thread.unpricedResponses = 0
+	}
+	for _, event := range threadEvents {
+		thread := s.threads[event.Thread]
+		if thread == nil || thread.account != event.Account || event.At.Before(thread.segmentStartedAt) {
+			continue
+		}
+		price, known := prices.estimate(event.Model, event.ServiceTier, event.Usage)
+		if known {
+			thread.apiCostNanoDollars += price
+		} else {
+			thread.unpricedResponses++
+		}
+	}
 	return nil
 }
 
@@ -443,21 +485,23 @@ type AccountSnapshot struct {
 }
 
 type ThreadSnapshot struct {
-	Key         string `json:"key"`
-	ClientIP    string `json:"-"`
-	Account     string `json:"account"`
-	Model       string `json:"model"`
-	Effort      string `json:"reasoning_effort"`
-	ServiceTier string `json:"service_tier"`
-	Metadata    turnMetadata
-	Turns       int64 `json:"turns"`
-	Compactions int64 `json:"compactions"`
-	Usage       responseUsage
-	LatestUsage responseUsage
-	TTFB        time.Duration
-	Latency     time.Duration
-	Last        time.Time `json:"last"`
-	Via         transport `json:"via"`
+	Key                string `json:"key"`
+	ClientIP           string `json:"-"`
+	Account            string `json:"account"`
+	Model              string `json:"model"`
+	Effort             string `json:"reasoning_effort"`
+	ServiceTier        string `json:"service_tier"`
+	Metadata           turnMetadata
+	Turns              int64 `json:"turns"`
+	Compactions        int64 `json:"compactions"`
+	Usage              responseUsage
+	LatestUsage        responseUsage
+	apiCostNanoDollars int64
+	unpricedResponses  int64
+	TTFB               time.Duration
+	Latency            time.Duration
+	Last               time.Time `json:"last"`
+	Via                transport `json:"via"`
 }
 
 func (s *Stats) snapshot() Snapshot {
@@ -500,21 +544,23 @@ func (s *Stats) snapshot() Snapshot {
 			continue
 		}
 		out.Threads = append(out.Threads, ThreadSnapshot{
-			Key:         t.key,
-			ClientIP:    t.clientIP,
-			Account:     t.account,
-			Model:       t.model,
-			Effort:      t.effort,
-			ServiceTier: t.serviceTier,
-			Metadata:    t.metadata,
-			Turns:       t.turns,
-			Compactions: t.compactions,
-			Usage:       t.usage,
-			LatestUsage: t.latestUsage,
-			TTFB:        t.ttfb,
-			Latency:     t.latency,
-			Last:        t.last,
-			Via:         t.via,
+			Key:                t.key,
+			ClientIP:           t.clientIP,
+			Account:            t.account,
+			Model:              t.model,
+			Effort:             t.effort,
+			ServiceTier:        t.serviceTier,
+			Metadata:           t.metadata,
+			Turns:              t.turns,
+			Compactions:        t.compactions,
+			Usage:              t.usage,
+			LatestUsage:        t.latestUsage,
+			apiCostNanoDollars: t.apiCostNanoDollars,
+			unpricedResponses:  t.unpricedResponses,
+			TTFB:               t.ttfb,
+			Latency:            t.latency,
+			Last:               t.last,
+			Via:                t.via,
 		})
 	}
 	slices.SortFunc(out.Threads, func(left, right ThreadSnapshot) int {

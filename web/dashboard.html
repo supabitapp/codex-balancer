@@ -160,25 +160,25 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <thead><tr>
 <th>Thread</th>
 <th>Client</th>
-<th>Country</th>
 <th>Account</th>
 <th>Model (thinking mode)</th>
 <th>Via</th>
 <th>Fast</th>
 <th>Cache %</th>
 <th>Context left<br>Compactions</th>
+<th>Cost</th>
 <th>Last active</th>
 </tr></thead>
 <tbody>{{if .Threads}}{{range .Threads}}<tr>
 <td>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.KeyPrefix}}</span>{{else}}{{.KeyPrefix}}{{end}}</td>
 <td class="dim">{{.ClientID}}</td>
-<td>{{.Country}}</td>
 <td>{{.Account}}</td>
 <td>{{.Model}}</td>
 <td>{{.Via}}</td>
 <td>{{if .Fast}}<svg class="fast-icon" viewBox="0 0 15 15" role="img" aria-label="Fast"><title>Fast</title><path d="M8.5 1 3.75 8H7l-.5 6 4.75-7H8l.5-6Z"/></svg>{{end}}</td>
 <td>{{.CacheRate}}</td>
 <td>{{if .ContextInfo}}<span class="has-tooltip" data-tooltip="{{.ContextInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.ContextLeft}}</span>{{else}}{{.ContextLeft}}{{end}}</td>
+<td>{{.Cost}}</td>
 <td class="dim">{{.Last}}</td>
 </tr>{{end}}{{else}}<tr><td class="empty" colspan="10">no live threads</td></tr>{{end}}</tbody>
 </table>

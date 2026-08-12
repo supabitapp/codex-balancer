@@ -432,10 +432,11 @@ func (d dashboard) threads(width, height int) string {
 	names := d.accountNames()
 	now := time.Now()
 	views := make([]routingThreadView, 0, len(d.snap.Threads))
+	clientNames := dashboardClientNames(d.snap.Threads, d.clientIDKey, d.countries)
 	for _, t := range d.snap.Threads {
 		name := cmp.Or(names[t.Account], shortKey(t.Account))
 		views = append(views, routingThreadView{
-			dashboardThreadView: newDashboardThreadView(t, name, d.clientIDKey, d.countries.label(t.ClientIP), d.catalog.contextLimits(t.Account, t.Model), now),
+			dashboardThreadView: newDashboardThreadView(t, name, clientNames[clientIDForIP(t.ClientIP, d.clientIDKey)], d.catalog.contextLimits(t.Account, t.Model), now),
 			clientIP:            t.ClientIP,
 		})
 	}
@@ -465,7 +466,6 @@ func (d dashboard) threads(width, height int) string {
 		{"Thread", 8, styles.text, func(view routingThreadView) string { return view.KeyPrefix }},
 		{"Client", 8, styles.dim, func(view routingThreadView) string { return view.ClientID }},
 		{"IP", ipWidth, styles.dim, func(view routingThreadView) string { return view.clientIP }},
-		{"Country", 8, styles.text, func(view routingThreadView) string { return " " + view.Country }},
 		{"Account", accountWidth, styles.spark, func(view routingThreadView) string { return view.Account }},
 		{"Model", modelWidth, styles.text, func(view routingThreadView) string { return view.Model }},
 		{"Via", 4, styles.good, func(view routingThreadView) string { return view.Via }},
@@ -481,6 +481,7 @@ func (d dashboard) threads(width, height int) string {
 		{"Ctx/Cmp", 8, styles.dim, func(view routingThreadView) string { return view.ContextLeft }},
 		{"Latency", 7, styles.dim, func(view routingThreadView) string { return view.Latency }},
 		{"Reqs", 4, styles.num, func(view routingThreadView) string { return view.Requests }},
+		{"Cost", 8, styles.num, func(view routingThreadView) string { return view.Cost }},
 		{"Active", 8, styles.dim, func(view routingThreadView) string { return view.Last }},
 	}
 	tableWidth := func() int {
@@ -494,7 +495,7 @@ func (d dashboard) threads(width, height int) string {
 	for _, item := range []struct {
 		index   int
 		minimum int
-	}{{4, len("Account")}, {5, len("Model")}, {2, len("IP")}} {
+	}{{3, len("Account")}, {4, len("Model")}, {2, len("IP")}} {
 		shrink := min(max(columns[item.index].width-item.minimum, 0), overflow)
 		columns[item.index].width -= shrink
 		overflow -= shrink

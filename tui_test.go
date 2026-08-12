@@ -61,25 +61,26 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 		clientIDKey: []byte("secret"),
 		countries:   &countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}},
 		snap: Snapshot{Threads: []ThreadSnapshot{{
-			Key:         "019fe5c2private",
-			ClientIP:    "203.0.113.42",
-			Account:     "account-a",
-			Model:       "gpt-5.6-sol",
-			Effort:      "xhigh",
-			ServiceTier: serviceTierFast,
-			Turns:       39,
-			Compactions: 2,
-			Usage:       usage,
-			Latency:     5420 * time.Millisecond,
-			Last:        time.Now(),
-			Via:         transportHTTP,
+			Key:                "019fe5c2private",
+			ClientIP:           "203.0.113.42",
+			Account:            "account-a",
+			Model:              "gpt-5.6-sol",
+			Effort:             "xhigh",
+			ServiceTier:        serviceTierFast,
+			Turns:              39,
+			Compactions:        2,
+			Usage:              usage,
+			apiCostNanoDollars: 24_500_000,
+			Latency:            5420 * time.Millisecond,
+			Last:               time.Now(),
+			Via:                transportHTTP,
 		}}},
 	}
 
 	view := dashboard.threads(220, 8)
 	for _, expected := range []string{
-		"Thread", "Client", "IP", "Country", "Account", "Model", "Via", "Fast", "Uncached", "Cache%", "Output", "Ctx/Cmp", "Latency", "Reqs", "Active",
-		"019fe5c2", "52f3c1d8", "203.0.113.42", "🇺🇸 US", "account-a@example.com", "gpt-5.6-sol (xhigh)", "HTTP", "⚡", "500", "75", "300", "-- (2)", "5.42s", "39",
+		"Thread", "Client", "IP", "Account", "Model", "Via", "Fast", "Uncached", "Cache%", "Output", "Ctx/Cmp", "Latency", "Reqs", "Cost", "Active",
+		"019fe5c2", "🇺🇸 US-1", "203.0.113.42", "account-a@example.com", "gpt-5.6-sol (xhigh)", "HTTP", "⚡", "500", "75", "300", "-- (2)", "5.42s", "39", "$0.025",
 	} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("routing missing %q:\n%s", expected, view)
@@ -90,13 +91,12 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 	}
 	clientColumn := strings.Index(view, "Client")
 	ipColumn := strings.Index(view, "IP")
-	countryColumn := strings.Index(view, "Country")
 	accountColumn := strings.Index(view, "Account")
-	if clientColumn < 0 || ipColumn < clientColumn || countryColumn < ipColumn || accountColumn < countryColumn {
-		t.Fatalf("routing column order is not Client, IP, Country, Account:\n%s", view)
+	if clientColumn < 0 || ipColumn < clientColumn || accountColumn < ipColumn {
+		t.Fatalf("routing column order is not Client, IP, Account:\n%s", view)
 	}
 	compact := dashboard.threads(120, 8)
-	for _, expected := range []string{"Client", "52f3c1d8", "IP", "203.0.113.42", "Country", "🇺🇸 US", "Ctx/Cmp", "5.42s", "Reqs", "39", "Active"} {
+	for _, expected := range []string{"Client", "🇺🇸 US-1", "IP", "203.0.113.42", "Ctx/Cmp", "5.42s", "Reqs", "39", "Cost", "$0.025", "Active"} {
 		if !strings.Contains(compact, expected) {
 			t.Fatalf("compact routing missing %q:\n%s", expected, compact)
 		}
