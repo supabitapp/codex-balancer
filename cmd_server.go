@@ -30,10 +30,13 @@ Point Codex at it by adding to ~/.codex/config.toml:
   [model_providers.balancer]
   name = "OpenAI"
   base_url = "http://127.0.0.1:8317/v1"
-  requires_openai_auth = true
   supports_websockets = true
 
-then authenticate once with: codex login --with-api-key
+  [model_providers.balancer.auth]
+  command = "/bin/sh"
+  args = ["-c", "exec /bin/cat \"$HOME/.codex/balancer-api-key\""]
+
+Store the server key in ~/.codex/balancer-api-key with mode 600.
 
 Flags:
 `

@@ -62,6 +62,13 @@ curl http://127.0.0.1:8317/stats
 
 ## Point Codex at it
 
+On every machine that runs Codex, save the server key at
+`~/.codex/balancer-api-key` with mode `600`:
+
+```sh
+chmod 600 ~/.codex/balancer-api-key
+```
+
 In `~/.codex/config.toml`:
 
 ```toml
@@ -70,19 +77,16 @@ model_provider = "balancer"
 [model_providers.balancer]
 name = "OpenAI"
 base_url = "http://127.0.0.1:8317/v1"
-requires_openai_auth = true
-env_key = "CODEX_BALANCER_KEY"
 supports_websockets = true
+
+[model_providers.balancer.auth]
+command = "/bin/sh"
+args = ["-c", "exec /bin/cat \"$HOME/.codex/balancer-api-key\""]
 ```
 
 `name` must be exactly `OpenAI`: Codex compares it verbatim to decide whether a
 provider supports remote compaction and whether to keep encrypted tool
 arguments intact.
 
-`env_key` reads the key from the environment, so every shell running `codex`
-must export it. To bake the key into `~/.codex/auth.json` instead, drop the line
-and log in once:
-
-```sh
-printenv CODEX_BALANCER_KEY | codex login --with-api-key
-```
+Codex runs the auth command and uses its output as the bearer token. The key
+stays in one file, and shell startup files need no secret exports.
