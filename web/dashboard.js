@@ -29,7 +29,14 @@ function placeTooltip() {
 
 function showTooltip(element) {
   active = element
-  if (tooltip.textContent !== element.dataset.tooltip) tooltip.textContent = element.dataset.tooltip
+  const strongText = element.dataset.tooltipStrong
+  if (strongText) {
+    const strong = document.createElement("strong")
+    strong.textContent = strongText
+    tooltip.replaceChildren(strong, element.dataset.tooltip)
+  } else if (tooltip.textContent !== element.dataset.tooltip || tooltip.children.length) {
+    tooltip.textContent = element.dataset.tooltip
+  }
   tooltip.hidden = false
   placeTooltip()
 }

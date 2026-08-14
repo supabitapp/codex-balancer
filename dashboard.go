@@ -63,9 +63,10 @@ type dashboardStatusView struct {
 }
 
 type dashboardMetric struct {
-	Name  string
-	Value string
-	Info  string
+	Name       string
+	Value      string
+	Info       string
+	InfoStrong string
 }
 
 type dashboardThreadView struct {
@@ -267,10 +268,12 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	if snapshot.UnpricedResponses == 0 {
 		priceInfo = funCostEquivalents(snapshot.APICostNanoDollars) + "\n" + priceInfo
 	}
+	onTrackInfo, onTrackInfoStrong := dashboardOnTrackInfo(stats.weeklyPace)
 	overview := []dashboardMetric{{
-		Name:  "On track",
-		Value: dashboardOnTrack(stats.weeklyPace.pace()),
-		Info:  dashboardOnTrackInfo(stats.weeklyPace),
+		Name:       "On track",
+		Value:      dashboardOnTrack(stats.weeklyPace.pace()),
+		Info:       onTrackInfo,
+		InfoStrong: onTrackInfoStrong,
 	}}
 	overview = append(overview, dashboardResourceMetrics(s.resources.usage(now))...)
 	overview = append(overview,
@@ -306,17 +309,22 @@ func dashboardOnTrack(pace usagePace) string {
 	}
 }
 
-func dashboardOnTrackInfo(estimate usagePaceEstimate) string {
+func dashboardOnTrackInfo(estimate usagePaceEstimate) (string, string) {
 	if !estimate.known {
-		return "Not enough limit data to estimate whether the pool will last."
+		return "Not enough limit data to estimate whether the pool will last.", ""
 	}
-	if estimate.shortfallPercent > 0 {
-		return "At this pace, the pool is " + formatPercent(estimate.shortfallPercent) + " short of lasting until its limits reset."
+	return " against the pace needed to last until its limits reset.", formatSignedPercent(-estimate.shortfallPercent)
+}
+
+func formatSignedPercent(value float64) string {
+	formatted := formatPercent(value)
+	if formatted == "0%" || formatted == "-0%" {
+		return "0%"
 	}
-	if estimate.shortfallPercent < 0 {
-		return "At this pace, the pool has " + formatPercent(-estimate.shortfallPercent) + " to spare before its limits reset."
+	if value > 0 {
+		return "+" + formatted
 	}
-	return "At this pace, the pool has just enough capacity to last until its limits reset."
+	return formatted
 }
 
 func trafficPercentages(accounts []accountStatsResponse) []int64 {

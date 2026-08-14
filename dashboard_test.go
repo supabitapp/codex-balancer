@@ -223,14 +223,15 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name     string
-		used     []float64
-		want     string
-		wantInfo string
+		name           string
+		used           []float64
+		want           string
+		wantInfo       string
+		wantInfoStrong string
 	}{
-		{name: "yes", used: []float64{0, 20}, want: "✅ Yes", wantInfo: "At this pace, the pool has 4.29% to spare before its limits reset."},
-		{name: "close", used: []float64{0, 30}, want: "⚠️ Close", wantInfo: "At this pace, the pool is 0.71% short of lasting until its limits reset."},
-		{name: "no", used: []float64{20, 30}, want: "❌ No", wantInfo: "At this pace, the pool is 10.71% short of lasting until its limits reset."},
+		{name: "yes", used: []float64{0, 20}, want: "✅ Yes", wantInfo: " against the pace needed to last until its limits reset.", wantInfoStrong: "+4.29%"},
+		{name: "close", used: []float64{0, 30}, want: "⚠️ Close", wantInfo: " against the pace needed to last until its limits reset.", wantInfoStrong: "-0.71%"},
+		{name: "no", used: []float64{20, 30}, want: "❌ No", wantInfo: " against the pace needed to last until its limits reset.", wantInfoStrong: "-10.71%"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -248,7 +249,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			server := &server{pool: &Pool{accounts: accounts}, stats: newStats()}
 
 			view := server.currentDashboard(now)
-			if view.Overview[0].Name != "On track" || view.Overview[0].Value != test.want || view.Overview[0].Info != test.wantInfo {
+			if view.Overview[0].Name != "On track" || view.Overview[0].Value != test.want || view.Overview[0].Info != test.wantInfo || view.Overview[0].InfoStrong != test.wantInfoStrong {
 				t.Fatalf("on track metric = %+v, want %q", view.Overview[0], test.want)
 			}
 			payload, err := renderDashboard("dashboard", view)
@@ -257,7 +258,8 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			}
 			body := string(payload)
 			expected := `<dt>On track</dt><dd><span class="has-tooltip"`
-			if !strings.Contains(body, expected) || !strings.Contains(body, `data-tooltip="`+test.wantInfo+`"`) || !strings.Contains(body, ">"+test.want+"</span>") {
+			renderedInfoStrong := strings.ReplaceAll(test.wantInfoStrong, "+", "&#43;")
+			if !strings.Contains(body, expected) || !strings.Contains(body, `data-tooltip="`+test.wantInfo+`"`) || !strings.Contains(body, `data-tooltip-strong="`+renderedInfoStrong+`"`) || !strings.Contains(body, ">"+test.want+"</span>") {
 				t.Fatalf("dashboard missing global on track metric:\n%s", body)
 			}
 			if strings.Contains(body, "<th>On track</th>") {
@@ -317,6 +319,12 @@ func TestWeeklyPlanCapacity(t *testing.T) {
 		if got := weeklyPlanCapacity(plan); got != want {
 			t.Fatalf("%s weekly capacity = %v, want %v", plan, got, want)
 		}
+	}
+}
+
+func TestFormatSignedPercentRoundsWithoutNegativeZero(t *testing.T) {
+	if got := formatSignedPercent(-0.001); got != "0%" {
+		t.Fatalf("signed percent = %q, want 0%%", got)
 	}
 }
 
