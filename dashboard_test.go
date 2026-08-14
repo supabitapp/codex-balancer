@@ -632,7 +632,7 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "mixed" || thread.ModelInfo != "gpt-5.6-sol (xhigh)\ngpt-5.6-luna (low)" {
+	if thread.Model != "🔀 mixed" || thread.ModelInfo != "gpt-5.6-sol (xhigh)\ngpt-5.6-luna (low)" {
 		t.Fatalf("mixed model = %q with info %q", thread.Model, thread.ModelInfo)
 	}
 	payload, err := renderDashboard("dashboard", view)
@@ -640,7 +640,7 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	if !strings.Contains(body, "data-tooltip=\"gpt-5.6-sol (xhigh)\ngpt-5.6-luna (low)\"") || !strings.Contains(body, `>mixed</span>`) {
+	if !strings.Contains(body, "data-tooltip=\"gpt-5.6-sol (xhigh)\ngpt-5.6-luna (low)\"") || !strings.Contains(body, `>🔀 mixed</span>`) {
 		t.Fatalf("mixed model tooltip missing from dashboard: %s", body)
 	}
 }

@@ -427,7 +427,7 @@ func dashboardThreadModel(thread ThreadSnapshot) (string, string) {
 			models[index] += " (" + strings.Join(model.efforts, ", ") + ")"
 		}
 	}
-	return "mixed", strings.Join(models, "\n")
+	return "🔀 mixed", strings.Join(models, "\n")
 }
 
 func dashboardModel(model, effort string) string {
