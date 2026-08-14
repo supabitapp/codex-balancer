@@ -33,7 +33,7 @@ function showTooltip(element) {
   if (strongText) {
     const strong = document.createElement("strong")
     strong.textContent = strongText
-    tooltip.replaceChildren(strong, element.dataset.tooltip)
+    tooltip.replaceChildren(element.dataset.tooltip, strong)
   } else if (tooltip.textContent !== element.dataset.tooltip || tooltip.children.length) {
     tooltip.textContent = element.dataset.tooltip
   }

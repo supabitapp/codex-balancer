@@ -309,7 +309,7 @@ func dashboardOnTrackMetric(estimate usagePaceEstimate) dashboardMetric {
 	return dashboardMetric{
 		Name:       "On track",
 		Value:      mark + " " + gap,
-		Info:       " until reset.",
+		Info:       "Estimated at next reset: ",
 		InfoStrong: gap,
 	}
 }

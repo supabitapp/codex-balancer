@@ -229,9 +229,9 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		wantInfo       string
 		wantInfoStrong string
 	}{
-		{name: "yes", used: []float64{0, 20}, want: "✅ +4.29%", wantInfo: " until reset.", wantInfoStrong: "+4.29%"},
-		{name: "close", used: []float64{0, 30}, want: "⚠️ -0.71%", wantInfo: " until reset.", wantInfoStrong: "-0.71%"},
-		{name: "no", used: []float64{20, 30}, want: "❌ -10.71%", wantInfo: " until reset.", wantInfoStrong: "-10.71%"},
+		{name: "yes", used: []float64{0, 20}, want: "✅ +4.29%", wantInfo: "Estimated at next reset: ", wantInfoStrong: "+4.29%"},
+		{name: "close", used: []float64{0, 30}, want: "⚠️ -0.71%", wantInfo: "Estimated at next reset: ", wantInfoStrong: "-0.71%"},
+		{name: "no", used: []float64{20, 30}, want: "❌ -10.71%", wantInfo: "Estimated at next reset: ", wantInfoStrong: "-10.71%"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
