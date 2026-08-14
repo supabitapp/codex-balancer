@@ -269,8 +269,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 	overview := []dashboardMetric{{
 		Name:  "On track",
-		Value: dashboardOnTrack(stats.weeklyPace),
-		Info:  "Shows whether the pool will last until its limits reset at the current pace.",
+		Value: dashboardOnTrack(stats.weeklyPace.pace()),
+		Info:  dashboardOnTrackInfo(stats.weeklyPace),
 	}}
 	overview = append(overview, dashboardResourceMetrics(s.resources.usage(now))...)
 	overview = append(overview,
@@ -304,6 +304,19 @@ func dashboardOnTrack(pace usagePace) string {
 	default:
 		return "❔ Unknown"
 	}
+}
+
+func dashboardOnTrackInfo(estimate usagePaceEstimate) string {
+	if !estimate.known {
+		return "Not enough limit data to estimate whether the pool will last."
+	}
+	if estimate.shortfallPercent > 0 {
+		return "At this pace, the pool is " + formatPercent(estimate.shortfallPercent) + " short of lasting until its limits reset."
+	}
+	if estimate.shortfallPercent < 0 {
+		return "At this pace, the pool has " + formatPercent(-estimate.shortfallPercent) + " to spare before its limits reset."
+	}
+	return "At this pace, the pool has just enough capacity to last until its limits reset."
 }
 
 func trafficPercentages(accounts []accountStatsResponse) []int64 {

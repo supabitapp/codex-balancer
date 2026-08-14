@@ -671,7 +671,7 @@ type statsResponse struct {
 	RateLimits              int64                  `json:"rate_limits"`
 	AverageTTFBMilliseconds float64                `json:"average_ttfb_ms"`
 	Accounts                []accountStatsResponse `json:"accounts"`
-	weeklyPace              usagePace
+	weeklyPace              usagePaceEstimate
 }
 
 type accountStatsResponse struct {

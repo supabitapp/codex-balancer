@@ -66,6 +66,11 @@ type routingMode string
 
 type usagePace uint8
 
+type usagePaceEstimate struct {
+	shortfallPercent float64
+	known            bool
+}
+
 type weightedWindow struct {
 	capacity float64
 	window   window
@@ -129,7 +134,21 @@ func longestWindow(windows ...window) window {
 	return longest
 }
 
-func usagePaceAt(now time.Time, windows ...weightedWindow) usagePace {
+func (e usagePaceEstimate) pace() usagePace {
+	if !e.known {
+		return usagePaceUnknown
+	}
+	switch {
+	case e.shortfallPercent <= 0:
+		return usagePaceOnTrack
+	case e.shortfallPercent <= 5:
+		return usagePaceClose
+	default:
+		return usagePaceOffTrack
+	}
+}
+
+func usagePaceAt(now time.Time, windows ...weightedWindow) usagePaceEstimate {
 	var totalShortfall float64
 	var totalCapacity float64
 	for _, weighted := range windows {
@@ -144,17 +163,9 @@ func usagePaceAt(now time.Time, windows ...weightedWindow) usagePace {
 		totalCapacity += weighted.capacity
 	}
 	if totalCapacity == 0 {
-		return usagePaceUnknown
+		return usagePaceEstimate{}
 	}
-	shortfall := totalShortfall / totalCapacity
-	switch {
-	case shortfall <= 0:
-		return usagePaceOnTrack
-	case shortfall <= 5:
-		return usagePaceClose
-	default:
-		return usagePaceOffTrack
-	}
+	return usagePaceEstimate{shortfallPercent: totalShortfall / totalCapacity, known: true}
 }
 
 func weeklyPlanCapacity(plan string) float64 {

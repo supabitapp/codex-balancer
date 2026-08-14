@@ -223,13 +223,14 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name string
-		used []float64
-		want string
+		name     string
+		used     []float64
+		want     string
+		wantInfo string
 	}{
-		{name: "yes", used: []float64{0, 20}, want: "✅ Yes"},
-		{name: "close", used: []float64{0, 30}, want: "⚠️ Close"},
-		{name: "no", used: []float64{20, 30}, want: "❌ No"},
+		{name: "yes", used: []float64{0, 20}, want: "✅ Yes", wantInfo: "At this pace, the pool has 4.29% to spare before its limits reset."},
+		{name: "close", used: []float64{0, 30}, want: "⚠️ Close", wantInfo: "At this pace, the pool is 0.71% short of lasting until its limits reset."},
+		{name: "no", used: []float64{20, 30}, want: "❌ No", wantInfo: "At this pace, the pool is 10.71% short of lasting until its limits reset."},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -247,7 +248,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			server := &server{pool: &Pool{accounts: accounts}, stats: newStats()}
 
 			view := server.currentDashboard(now)
-			if view.Overview[0].Name != "On track" || view.Overview[0].Value != test.want {
+			if view.Overview[0].Name != "On track" || view.Overview[0].Value != test.want || view.Overview[0].Info != test.wantInfo {
 				t.Fatalf("on track metric = %+v, want %q", view.Overview[0], test.want)
 			}
 			payload, err := renderDashboard("dashboard", view)
@@ -256,7 +257,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			}
 			body := string(payload)
 			expected := `<dt>On track</dt><dd><span class="has-tooltip"`
-			if !strings.Contains(body, expected) || !strings.Contains(body, ">"+test.want+"</span>") {
+			if !strings.Contains(body, expected) || !strings.Contains(body, `data-tooltip="`+test.wantInfo+`"`) || !strings.Contains(body, ">"+test.want+"</span>") {
 				t.Fatalf("dashboard missing global on track metric:\n%s", body)
 			}
 			if strings.Contains(body, "<th>On track</th>") {
@@ -503,6 +504,11 @@ func TestDashboardOverview(t *testing.T) {
 			delete(wantValues, metric.Name)
 		}
 		switch metric.Name {
+		case "On track":
+			want := "Not enough limit data to estimate whether the pool will last."
+			if metric.Info != want {
+				t.Fatalf("On track overview info = %q, want %q", metric.Info, want)
+			}
 		case "API estimate":
 			apiEstimateFound = true
 			if metric.Info != wantPriceInfo {
