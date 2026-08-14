@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -209,7 +210,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>On track</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -219,56 +220,68 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	}
 }
 
-func TestDashboardEstimatesWhetherWeeklyCapacityWillLast(t *testing.T) {
+func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
-	accounts := []*Account{
-		testAccount("unknown", 0),
-		testAccount("yes", 10),
-		testAccount("close", 16),
-		testAccount("no", 30),
-		testAccount("monthly", 10),
+	tests := []struct {
+		name string
+		used []float64
+		want string
+	}{
+		{name: "yes", used: []float64{0, 20}, want: "✅ Yes"},
+		{name: "close", used: []float64{0, 30}, want: "⚠️ Close"},
+		{name: "no", used: []float64{20, 30}, want: "❌ No"},
 	}
-	for _, account := range accounts[1:4] {
-		account.secondary = window{
-			usedPercent: account.secondary.usedPercent,
-			minutes:     7 * 24 * 60,
-			resetsAt:    now.Add(6 * 24 * time.Hour),
-			seenAt:      now,
-		}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			accounts := make([]*Account, len(test.used))
+			for i, used := range test.used {
+				account := testAccount(fmt.Sprintf("account-%d", i), used)
+				account.secondary = window{
+					usedPercent: used,
+					minutes:     7 * 24 * 60,
+					resetsAt:    now.Add(6 * 24 * time.Hour),
+					seenAt:      now,
+				}
+				accounts[i] = account
+			}
+			server := &server{pool: &Pool{accounts: accounts}, stats: newStats()}
+
+			view := server.currentDashboard(now)
+			if view.Overview[0].Name != "On track" || view.Overview[0].Value != test.want {
+				t.Fatalf("on track metric = %+v, want %q", view.Overview[0], test.want)
+			}
+			payload, err := renderDashboard("dashboard", view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := string(payload)
+			expected := `<dt>On track</dt><dd><span class="has-tooltip"`
+			if !strings.Contains(body, expected) || !strings.Contains(body, ">"+test.want+"</span>") {
+				t.Fatalf("dashboard missing global on track metric:\n%s", body)
+			}
+			if strings.Contains(body, "<th>On track</th>") {
+				t.Fatalf("dashboard has per-account on track column:\n%s", body)
+			}
+		})
 	}
-	accounts[4].secondary = window{
+
+	monthly := testAccount("monthly", 10)
+	monthly.secondary = window{
 		usedPercent: 10,
 		minutes:     30 * 24 * 60,
 		resetsAt:    now.Add(26 * 24 * time.Hour),
 		seenAt:      now,
 	}
-	server := &server{pool: &Pool{accounts: accounts}, stats: newStats()}
-
-	view := server.currentDashboard(now)
-	want := map[string]string{
-		"c***e@***.com": "⚠️ Close",
-		"m***y@***.com": "✅ Yes",
-		"n***@***.com":  "❌ No",
-		"u***n@***.com": "❔ Unknown",
-		"y***s@***.com": "✅ Yes",
+	weekly := testAccount("weekly", 27)
+	weekly.secondary = window{
+		usedPercent: 27,
+		minutes:     7 * 24 * 60,
+		resetsAt:    now.Add(6 * 24 * time.Hour),
+		seenAt:      now,
 	}
-	if len(view.Accounts) != len(want) {
-		t.Fatalf("accounts = %+v", view.Accounts)
-	}
-	for _, account := range view.Accounts {
-		if account.OnTrack != want[account.Name] {
-			t.Fatalf("%s on track = %q, want %q", account.Name, account.OnTrack, want[account.Name])
-		}
-	}
-	payload, err := renderDashboard("dashboard", view)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(payload)
-	for _, expected := range []string{"<th>On track</th>", "<td>✅ Yes</td>", "<td>⚠️ Close</td>", "<td>❌ No</td>", "<td>❔ Unknown</td>"} {
-		if !strings.Contains(body, expected) {
-			t.Fatalf("dashboard missing %q:\n%s", expected, body)
-		}
+	server := &server{pool: &Pool{accounts: []*Account{monthly, weekly}}, stats: newStats()}
+	if got := server.currentDashboard(now).Overview[0].Value; got != "⚠️ Close" {
+		t.Fatalf("mixed limit windows on track = %q, want close", got)
 	}
 }
 
@@ -425,6 +438,7 @@ func TestDashboardOverview(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
 	wantValues := map[string]string{
+		"On track":      "❔ Unknown",
 		"CPU":           "--",
 		"RAM":           "--",
 		"network in":    "--",
@@ -434,7 +448,7 @@ func TestDashboardOverview(t *testing.T) {
 		"output tokens": "300",
 		"uptime":        "28m",
 	}
-	wantNames := []string{"CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "API estimate"}
+	wantNames := []string{"On track", "CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "API estimate"}
 	if len(view.Overview) != len(wantNames) {
 		t.Fatalf("overview metrics = %+v", view.Overview)
 	}
@@ -449,7 +463,7 @@ func TestDashboardOverview(t *testing.T) {
 			if metric.Value != wantValue {
 				t.Fatalf("%s overview metric = %+v, want value %q", metric.Name, metric, wantValue)
 			}
-			if metric.Name != "CPU" && metric.Name != "RAM" && metric.Name != "network in" && metric.Name != "network out" && metric.Name != "uptime" && metric.Info != wantInfo {
+			if metric.Name != "On track" && metric.Name != "CPU" && metric.Name != "RAM" && metric.Name != "network in" && metric.Name != "network out" && metric.Name != "uptime" && metric.Info != wantInfo {
 				t.Fatalf("%s overview info = %q, want %q", metric.Name, metric.Info, wantInfo)
 			}
 			delete(wantValues, metric.Name)

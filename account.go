@@ -124,14 +124,23 @@ func longestWindow(windows ...window) window {
 	return longest
 }
 
-func usagePaceAt(now time.Time, w window) usagePace {
-	remaining, known := remainingPercent(w)
-	duration := time.Duration(w.minutes) * time.Minute
-	resetIn := w.resetsAt.Sub(now)
-	if !known || duration <= 0 || resetIn <= 0 || resetIn > duration {
+func usagePaceAt(now time.Time, windows ...window) usagePace {
+	var totalShortfall float64
+	var known int
+	for _, w := range windows {
+		remaining, ok := remainingPercent(w)
+		duration := time.Duration(w.minutes) * time.Minute
+		resetIn := w.resetsAt.Sub(now)
+		if !ok || duration <= 0 || resetIn <= 0 || resetIn > duration {
+			continue
+		}
+		totalShortfall += float64(resetIn)/float64(duration)*100 - remaining
+		known++
+	}
+	if known == 0 {
 		return usagePaceUnknown
 	}
-	shortfall := float64(resetIn)/float64(duration)*100 - remaining
+	shortfall := totalShortfall / float64(known)
 	switch {
 	case shortfall <= 0:
 		return usagePaceOnTrack

@@ -671,6 +671,7 @@ type statsResponse struct {
 	RateLimits              int64                  `json:"rate_limits"`
 	AverageTTFBMilliseconds float64                `json:"average_ttfb_ms"`
 	Accounts                []accountStatsResponse `json:"accounts"`
+	weeklyPace              usagePace
 }
 
 type accountStatsResponse struct {
@@ -688,7 +689,6 @@ type accountStatsResponse struct {
 	OpenWebSockets         int64                         `json:"open_websockets"`
 	RateLimits             int64                         `json:"rate_limits"`
 	Activity               []int64                       `json:"activity"`
-	weeklyPace             usagePace
 }
 
 type routingPriorityStatsResponse struct {
@@ -720,12 +720,14 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		AverageTTFBMilliseconds: float64(snapshot.TTFB) / float64(time.Millisecond),
 		Accounts:                make([]accountStatsResponse, 0, s.pool.count()),
 	}
+	weeklyWindows := make([]window, 0, s.pool.count())
 	for _, account := range s.pool.sorted() {
 		claims := account.claims()
 		candidate := account.routingCandidate()
 		primary, secondary := candidate.primary, candidate.secondary
 		traffic := snapshot.Accounts[claims.Auth.AccountID]
 		weekly := longestWindow(primary, secondary)
+		weeklyWindows = append(weeklyWindows, weekly)
 		var weeklyRemaining *float64
 		if remaining, known := remainingPercent(weekly); known {
 			weeklyRemaining = &remaining
@@ -770,9 +772,9 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			OpenWebSockets:         traffic.WSOpen,
 			RateLimits:             traffic.Limited,
 			Activity:               append([]int64{}, traffic.Activity...),
-			weeklyPace:             usagePaceAt(now, weekly),
 		})
 	}
+	out.weeklyPace = usagePaceAt(now, weeklyWindows...)
 	return out
 }
 

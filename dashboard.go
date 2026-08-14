@@ -51,7 +51,6 @@ type dashboardAccountView struct {
 	Banked         string
 	BankedInfo     string
 	ResetIn        string
-	OnTrack        string
 	Turns          string
 	OpenWebSockets string
 	Traffic        string
@@ -213,7 +212,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Banked:         banked,
 			BankedInfo:     bankedInfo,
 			ResetIn:        resetIn,
-			OnTrack:        dashboardOnTrack(account.weeklyPace),
 			Turns:          dashboardNumber(account.Turns),
 			OpenWebSockets: dashboardNumber(account.OpenWebSockets),
 			Traffic:        dashboardNumber(traffic[i]),
@@ -269,7 +267,12 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	if snapshot.UnpricedResponses == 0 {
 		priceInfo = funCostEquivalents(snapshot.APICostNanoDollars) + "\n" + priceInfo
 	}
-	overview := dashboardResourceMetrics(s.resources.usage(now))
+	overview := []dashboardMetric{{
+		Name:  "On track",
+		Value: dashboardOnTrack(stats.weeklyPace),
+		Info:  "Compares total capacity left with an even pace across all accounts with known limits. Each account counts equally; Close means the pool trails by no more than five points.",
+	}}
+	overview = append(overview, dashboardResourceMetrics(s.resources.usage(now))...)
 	overview = append(overview,
 		dashboardMetric{Name: "uptime", Value: short(snapshot.Uptime)},
 		dashboardMetric{Name: "input tokens", Value: formatTokenCount(snapshot.MonthlyUsage.InputTokens), Info: monthInfo},

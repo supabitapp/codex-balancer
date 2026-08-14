@@ -60,9 +60,10 @@ td { font-weight: 400 }
 .empty { padding: .5rem 0 }
 .overview { display: flex; gap: 2rem; margin: 0; overflow-x: auto }
 .overview div { display: grid; gap: .25rem; min-width: max-content }
-.overview div:nth-child(1) { flex: 0 0 7ch }
-.overview div:nth-child(2) { flex: 0 0 19ch }
-.overview div:nth-child(3), .overview div:nth-child(4) { flex: 0 0 13ch }
+.overview div:nth-child(1) { flex: 0 0 9ch }
+.overview div:nth-child(2) { flex: 0 0 7ch }
+.overview div:nth-child(3) { flex: 0 0 19ch }
+.overview div:nth-child(4), .overview div:nth-child(5) { flex: 0 0 13ch }
 dt { font-size: .75rem }
 dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 @media (prefers-color-scheme: dark) {
@@ -136,7 +137,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Weekly %</th>
 <th>Banked</th>
 <th>Reset in</th>
-<th>On track</th>
 <th>Turns</th>
 <th>WS</th>
 <th>Traffic 24h %</th>
@@ -149,7 +149,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>
-<td>{{.OnTrack}}</td>
 <td>{{.Turns}}</td>
 <td>{{.OpenWebSockets}}</td>
 <td class="dim">{{.Traffic}}</td>
