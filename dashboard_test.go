@@ -226,12 +226,13 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		name           string
 		used           []float64
 		want           string
+		wantClass      string
 		wantInfo       string
 		wantInfoStrong string
 	}{
 		{name: "yes", used: []float64{0, 20}, want: "✅ +4.29%", wantInfo: "Estimated at next reset: ", wantInfoStrong: "+4.29%"},
-		{name: "close", used: []float64{0, 30}, want: "⚠️ -0.71%", wantInfo: "Estimated at next reset: ", wantInfoStrong: "-0.71%"},
-		{name: "no", used: []float64{20, 30}, want: "❌ -10.71%", wantInfo: "Estimated at next reset: ", wantInfoStrong: "-10.71%"},
+		{name: "close", used: []float64{0, 30}, want: "⚠️ -0.71%", wantClass: "not-on-track", wantInfo: "Estimated at next reset: ", wantInfoStrong: "-0.71%"},
+		{name: "no", used: []float64{20, 30}, want: "❌ -10.71%", wantClass: "not-on-track", wantInfo: "Estimated at next reset: ", wantInfoStrong: "-10.71%"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -249,7 +250,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			server := &server{pool: &Pool{accounts: accounts}, stats: newStats()}
 
 			view := server.currentDashboard(now)
-			if view.Overview[0].Name != "On track" || view.Overview[0].Value != test.want || view.Overview[0].Info != test.wantInfo || view.Overview[0].InfoStrong != test.wantInfoStrong {
+			if view.Overview[0].Name != "On track" || view.Overview[0].Value != test.want || view.Overview[0].ValueClass != test.wantClass || view.Overview[0].Info != test.wantInfo || view.Overview[0].InfoStrong != test.wantInfoStrong {
 				t.Fatalf("on track metric = %+v, want %q", view.Overview[0], test.want)
 			}
 			payload, err := renderDashboard("dashboard", view)
@@ -257,11 +258,18 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := string(payload)
-			expected := `<dt>On track</dt><dd><span class="has-tooltip"`
+			expected := `<dt>On track</dt><dd><span class="has-tooltip`
 			renderedInfoStrong := strings.ReplaceAll(test.wantInfoStrong, "+", "&#43;")
 			renderedWant := strings.ReplaceAll(test.want, "+", "&#43;")
-			if !strings.Contains(body, expected) || !strings.Contains(body, `data-tooltip="`+test.wantInfo+`"`) || !strings.Contains(body, `data-tooltip-strong="`+renderedInfoStrong+`"`) || !strings.Contains(body, ">"+renderedWant+"</span>") {
-				t.Fatalf("dashboard missing global on track metric:\n%s", body)
+			class := `class="has-tooltip"`
+			if test.wantClass != "" {
+				class = `class="has-tooltip ` + test.wantClass + `"`
+			}
+			checks := []string{expected, class, `data-tooltip="` + test.wantInfo + `"`, `data-tooltip-strong="` + renderedInfoStrong + `"`, ">" + renderedWant + "</span>"}
+			for _, check := range checks {
+				if !strings.Contains(body, check) {
+					t.Fatalf("dashboard missing %q:\n%s", check, body)
+				}
 			}
 			if strings.Contains(body, "<th>On track</th>") {
 				t.Fatalf("dashboard has per-account on track column:\n%s", body)

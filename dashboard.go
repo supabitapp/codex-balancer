@@ -65,6 +65,7 @@ type dashboardStatusView struct {
 type dashboardMetric struct {
 	Name       string
 	Value      string
+	ValueClass string
 	Info       string
 	InfoStrong string
 }
@@ -298,17 +299,23 @@ func dashboardOnTrackMetric(estimate usagePaceEstimate) dashboardMetric {
 			Info:  "Not enough limit data to estimate whether the pool will last.",
 		}
 	}
+	pace := estimate.pace()
 	mark := "❌"
-	switch estimate.pace() {
+	switch pace {
 	case usagePaceOnTrack:
 		mark = "✅"
 	case usagePaceClose:
 		mark = "⚠️"
 	}
 	gap := formatSignedPercent(-estimate.shortfallPercent)
+	valueClass := ""
+	if pace != usagePaceOnTrack {
+		valueClass = "not-on-track"
+	}
 	return dashboardMetric{
 		Name:       "On track",
 		Value:      mark + " " + gap,
+		ValueClass: valueClass,
 		Info:       "Estimated at next reset: ",
 		InfoStrong: gap,
 	}
