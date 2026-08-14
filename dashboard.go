@@ -51,6 +51,7 @@ type dashboardAccountView struct {
 	Banked         string
 	BankedInfo     string
 	ResetIn        string
+	OnTrack        string
 	Turns          string
 	OpenWebSockets string
 	Traffic        string
@@ -212,6 +213,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Banked:         banked,
 			BankedInfo:     bankedInfo,
 			ResetIn:        resetIn,
+			OnTrack:        dashboardOnTrack(account.weeklyPace),
 			Turns:          dashboardNumber(account.Turns),
 			OpenWebSockets: dashboardNumber(account.OpenWebSockets),
 			Traffic:        dashboardNumber(traffic[i]),
@@ -285,6 +287,19 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		Overview: overview,
 		Threads:  threadViews,
 		Events:   events,
+	}
+}
+
+func dashboardOnTrack(pace usagePace) string {
+	switch pace {
+	case usagePaceOnTrack:
+		return "✅ Yes"
+	case usagePaceClose:
+		return "⚠️ Close"
+	case usagePaceOffTrack:
+		return "❌ No"
+	default:
+		return "❔ Unknown"
 	}
 }
 

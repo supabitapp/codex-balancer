@@ -136,6 +136,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Weekly %</th>
 <th>Banked</th>
 <th>Reset in</th>
+<th>On track</th>
 <th>Turns</th>
 <th>WS</th>
 <th>Traffic 24h %</th>
@@ -148,6 +149,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>
+<td>{{.OnTrack}}</td>
 <td>{{.Turns}}</td>
 <td>{{.OpenWebSockets}}</td>
 <td class="dim">{{.Traffic}}</td>

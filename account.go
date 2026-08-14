@@ -64,6 +64,8 @@ type accountStatus string
 
 type routingMode string
 
+type usagePace uint8
+
 const (
 	accountLive        accountStatus = "live"
 	accountPriority    accountStatus = "priority"
@@ -76,6 +78,11 @@ const (
 	routingModeNormal   routingMode = "normal"
 	routingModePriority routingMode = "priority"
 	routingModeDraining routingMode = "draining"
+
+	usagePaceUnknown usagePace = iota
+	usagePaceOnTrack
+	usagePaceClose
+	usagePaceOffTrack
 )
 
 func (m routingMode) normalized() routingMode {
@@ -115,6 +122,24 @@ func longestWindow(windows ...window) window {
 		}
 	}
 	return longest
+}
+
+func usagePaceAt(now time.Time, w window) usagePace {
+	remaining, known := remainingPercent(w)
+	duration := time.Duration(w.minutes) * time.Minute
+	resetIn := w.resetsAt.Sub(now)
+	if !known || duration <= 0 || resetIn <= 0 || resetIn > duration {
+		return usagePaceUnknown
+	}
+	shortfall := float64(resetIn)/float64(duration)*100 - remaining
+	switch {
+	case shortfall <= 0:
+		return usagePaceOnTrack
+	case shortfall <= 5:
+		return usagePaceClose
+	default:
+		return usagePaceOffTrack
+	}
 }
 
 func (a *Account) pressure() float64 {

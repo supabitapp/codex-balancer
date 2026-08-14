@@ -688,6 +688,7 @@ type accountStatsResponse struct {
 	OpenWebSockets         int64                         `json:"open_websockets"`
 	RateLimits             int64                         `json:"rate_limits"`
 	Activity               []int64                       `json:"activity"`
+	weeklyPace             usagePace
 }
 
 type routingPriorityStatsResponse struct {
@@ -743,7 +744,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			}
 		}
 		var resetAt *time.Time
-		if reset := nextReset(now, primary, secondary); !reset.IsZero() {
+		if reset := weekly.resetsAt; reset.After(now) {
 			resetAt = &reset
 		}
 		var routingPriority *routingPriorityStatsResponse
@@ -769,6 +770,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			OpenWebSockets:         traffic.WSOpen,
 			RateLimits:             traffic.Limited,
 			Activity:               append([]int64{}, traffic.Activity...),
+			weeklyPace:             usagePaceAt(now, weekly),
 		})
 	}
 	return out

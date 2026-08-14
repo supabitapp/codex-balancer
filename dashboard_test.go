@@ -209,13 +209,66 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>On track</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
 	}
 	if strings.Contains(body, "<th>Limits 24h</th>") {
 		t.Fatal("dashboard contains Limits 24h column")
+	}
+}
+
+func TestDashboardEstimatesWhetherWeeklyCapacityWillLast(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
+	accounts := []*Account{
+		testAccount("unknown", 0),
+		testAccount("yes", 10),
+		testAccount("close", 16),
+		testAccount("no", 30),
+		testAccount("monthly", 10),
+	}
+	for _, account := range accounts[1:4] {
+		account.secondary = window{
+			usedPercent: account.secondary.usedPercent,
+			minutes:     7 * 24 * 60,
+			resetsAt:    now.Add(6 * 24 * time.Hour),
+			seenAt:      now,
+		}
+	}
+	accounts[4].secondary = window{
+		usedPercent: 10,
+		minutes:     30 * 24 * 60,
+		resetsAt:    now.Add(26 * 24 * time.Hour),
+		seenAt:      now,
+	}
+	server := &server{pool: &Pool{accounts: accounts}, stats: newStats()}
+
+	view := server.currentDashboard(now)
+	want := map[string]string{
+		"c***e@***.com": "⚠️ Close",
+		"m***y@***.com": "✅ Yes",
+		"n***@***.com":  "❌ No",
+		"u***n@***.com": "❔ Unknown",
+		"y***s@***.com": "✅ Yes",
+	}
+	if len(view.Accounts) != len(want) {
+		t.Fatalf("accounts = %+v", view.Accounts)
+	}
+	for _, account := range view.Accounts {
+		if account.OnTrack != want[account.Name] {
+			t.Fatalf("%s on track = %q, want %q", account.Name, account.OnTrack, want[account.Name])
+		}
+	}
+	payload, err := renderDashboard("dashboard", view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(payload)
+	for _, expected := range []string{"<th>On track</th>", "<td>✅ Yes</td>", "<td>⚠️ Close</td>", "<td>❌ No</td>", "<td>❔ Unknown</td>"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("dashboard missing %q:\n%s", expected, body)
+		}
 	}
 }
 
