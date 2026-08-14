@@ -270,7 +270,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	overview := []dashboardMetric{{
 		Name:  "On track",
 		Value: dashboardOnTrack(stats.weeklyPace),
-		Info:  "Compares total capacity left with an even pace across all accounts with known limits. Each account counts equally; Close means the pool trails by no more than five points.",
+		Info:  "Shows whether the pool will last until its limits reset at the current pace.",
 	}}
 	overview = append(overview, dashboardResourceMetrics(s.resources.usage(now))...)
 	overview = append(overview,
