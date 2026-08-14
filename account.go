@@ -68,6 +68,7 @@ type usagePace uint8
 
 type usagePaceEstimate struct {
 	shortfallPercent float64
+	runway           time.Duration
 	known            bool
 }
 
@@ -151,6 +152,8 @@ func (e usagePaceEstimate) pace() usagePace {
 func usagePaceAt(now time.Time, windows ...weightedWindow) usagePaceEstimate {
 	var totalShortfall float64
 	var totalCapacity float64
+	var totalRemaining float64
+	var burnPerHour float64
 	for _, weighted := range windows {
 		w := weighted.window
 		remaining, ok := remainingPercent(w)
@@ -161,11 +164,20 @@ func usagePaceAt(now time.Time, windows ...weightedWindow) usagePaceEstimate {
 		}
 		totalShortfall += (float64(resetIn)/float64(duration)*100 - remaining) * weighted.capacity
 		totalCapacity += weighted.capacity
+		totalRemaining += remaining * weighted.capacity
+		elapsed := duration - resetIn
+		if elapsed > 0 {
+			burnPerHour += (100 - remaining) * weighted.capacity / elapsed.Hours()
+		}
 	}
 	if totalCapacity == 0 {
 		return usagePaceEstimate{}
 	}
-	return usagePaceEstimate{shortfallPercent: totalShortfall / totalCapacity, known: true}
+	var runway time.Duration
+	if totalShortfall > 0 && burnPerHour > 0 {
+		runway = time.Duration(totalRemaining / burnPerHour * float64(time.Hour))
+	}
+	return usagePaceEstimate{shortfallPercent: totalShortfall / totalCapacity, runway: runway, known: true}
 }
 
 func weeklyPlanCapacity(plan string) float64 {

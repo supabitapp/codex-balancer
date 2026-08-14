@@ -269,7 +269,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	if snapshot.UnpricedResponses == 0 {
 		priceInfo = funCostEquivalents(snapshot.APICostNanoDollars) + "\n" + priceInfo
 	}
-	overview := []dashboardMetric{dashboardOnTrackMetric(stats.weeklyPace)}
+	overview := []dashboardMetric{dashboardCapacityMetric(now, stats.weeklyPace)}
 	overview = append(overview, dashboardResourceMetrics(s.resources.usage(now))...)
 	overview = append(overview,
 		dashboardMetric{Name: "uptime", Value: short(snapshot.Uptime)},
@@ -291,45 +291,39 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 }
 
-func dashboardOnTrackMetric(estimate usagePaceEstimate) dashboardMetric {
+func dashboardCapacityMetric(now time.Time, estimate usagePaceEstimate) dashboardMetric {
 	if !estimate.known {
 		return dashboardMetric{
-			Name:  "On track",
+			Name:  "Capacity",
 			Value: "❔ Unknown",
 			Info:  "Not enough limit data to estimate whether the pool will last.",
 		}
 	}
 	pace := estimate.pace()
-	mark := "❌"
 	switch pace {
 	case usagePaceOnTrack:
-		mark = "✅"
+		return dashboardMetric{
+			Name:       "Capacity",
+			Value:      "✅ Lasts to reset",
+			ValueClass: "capacity-good",
+			Info:       "At the average burn since reset. Expected capacity at reset: ",
+			InfoStrong: formatPercent(-estimate.shortfallPercent),
+		}
 	case usagePaceClose:
-		mark = "⚠️"
-	}
-	gap := formatSignedPercent(-estimate.shortfallPercent)
-	valueClass := ""
-	if pace != usagePaceOnTrack {
-		valueClass = "not-on-track"
-	}
-	return dashboardMetric{
-		Name:       "On track",
-		Value:      mark + " " + gap,
-		ValueClass: valueClass,
-		Info:       "Estimated at next reset: ",
-		InfoStrong: gap,
+		return dashboardCapacityShortfall(now, estimate, "⚠️", "capacity-warning")
+	default:
+		return dashboardCapacityShortfall(now, estimate, "❌", "capacity-danger")
 	}
 }
 
-func formatSignedPercent(value float64) string {
-	formatted := formatPercent(value)
-	if formatted == "0%" || formatted == "-0%" {
-		return "0%"
+func dashboardCapacityShortfall(now time.Time, estimate usagePaceEstimate, mark, valueClass string) dashboardMetric {
+	return dashboardMetric{
+		Name:       "Capacity",
+		Value:      mark + " Runs out in " + short(estimate.runway),
+		ValueClass: valueClass,
+		Info:       "At the average burn since reset. Expected to run out: ",
+		InfoStrong: now.Add(estimate.runway).Format("2 January 2006, 15:04 MST"),
 	}
-	if value > 0 {
-		return "+" + formatted
-	}
-	return formatted
 }
 
 func trafficPercentages(accounts []accountStatsResponse) []int64 {

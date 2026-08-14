@@ -230,9 +230,9 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		wantInfo       string
 		wantInfoStrong string
 	}{
-		{name: "yes", used: []float64{0, 20}, want: "✅ +4.29%", wantInfo: "Estimated at next reset: ", wantInfoStrong: "+4.29%"},
-		{name: "close", used: []float64{0, 30}, want: "⚠️ -0.71%", wantClass: "not-on-track", wantInfo: "Estimated at next reset: ", wantInfoStrong: "-0.71%"},
-		{name: "no", used: []float64{20, 30}, want: "❌ -10.71%", wantClass: "not-on-track", wantInfo: "Estimated at next reset: ", wantInfoStrong: "-10.71%"},
+		{name: "yes", used: []float64{0, 20}, want: "✅ Lasts to reset", wantClass: "capacity-good", wantInfo: "At the average burn since reset. Expected capacity at reset: ", wantInfoStrong: "4.29%"},
+		{name: "close", used: []float64{0, 30}, want: "⚠️ Runs out in 5d16h", wantClass: "capacity-warning", wantInfo: "At the average burn since reset. Expected to run out: ", wantInfoStrong: "20 August 2026, 04:00 UTC"},
+		{name: "no", used: []float64{20, 30}, want: "❌ Runs out in 3d0h", wantClass: "capacity-danger", wantInfo: "At the average burn since reset. Expected to run out: ", wantInfoStrong: "17 August 2026, 12:00 UTC"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -250,15 +250,15 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			server := &server{pool: &Pool{accounts: accounts}, stats: newStats()}
 
 			view := server.currentDashboard(now)
-			if view.Overview[0].Name != "On track" || view.Overview[0].Value != test.want || view.Overview[0].ValueClass != test.wantClass || view.Overview[0].Info != test.wantInfo || view.Overview[0].InfoStrong != test.wantInfoStrong {
-				t.Fatalf("on track metric = %+v, want %q", view.Overview[0], test.want)
+			if view.Overview[0].Name != "Capacity" || view.Overview[0].Value != test.want || view.Overview[0].ValueClass != test.wantClass || view.Overview[0].Info != test.wantInfo || view.Overview[0].InfoStrong != test.wantInfoStrong {
+				t.Fatalf("capacity metric = %+v, want %q", view.Overview[0], test.want)
 			}
 			payload, err := renderDashboard("dashboard", view)
 			if err != nil {
 				t.Fatal(err)
 			}
 			body := string(payload)
-			expected := `<dt>On track</dt><dd><span class="has-tooltip`
+			expected := `<dt>Capacity</dt><dd><span class="has-tooltip`
 			renderedInfoStrong := strings.ReplaceAll(test.wantInfoStrong, "+", "&#43;")
 			renderedWant := strings.ReplaceAll(test.want, "+", "&#43;")
 			class := `class="has-tooltip"`
@@ -271,8 +271,8 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 					t.Fatalf("dashboard missing %q:\n%s", check, body)
 				}
 			}
-			if strings.Contains(body, "<th>On track</th>") {
-				t.Fatalf("dashboard has per-account on track column:\n%s", body)
+			if strings.Contains(body, "<th>Capacity</th>") {
+				t.Fatalf("dashboard has per-account capacity column:\n%s", body)
 			}
 		})
 	}
@@ -292,7 +292,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		seenAt:      now,
 	}
 	poolServer := &server{pool: &Pool{accounts: []*Account{monthly, weekly}}, stats: newStats()}
-	if got := poolServer.currentDashboard(now).Overview[0].Value; !strings.HasPrefix(got, "⚠️ ") {
+	if got := poolServer.currentDashboard(now).Overview[0].Value; !strings.HasPrefix(got, "⚠️ Runs out in ") {
 		t.Fatalf("mixed limit windows on track = %q, want close", got)
 	}
 
@@ -302,8 +302,8 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		goUsed  float64
 		want    string
 	}{
-		{name: "pro surplus", proUsed: 0, goUsed: 100, want: "✅ "},
-		{name: "pro shortfall", proUsed: 30, goUsed: 0, want: "❌ "},
+		{name: "pro surplus", proUsed: 0, goUsed: 100, want: "✅ Lasts to reset"},
+		{name: "pro shortfall", proUsed: 30, goUsed: 0, want: "❌ Runs out in "},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			pro := testAccountWithPlan("pro", test.proUsed, "pro")
@@ -328,12 +328,6 @@ func TestWeeklyPlanCapacity(t *testing.T) {
 		if got := weeklyPlanCapacity(plan); got != want {
 			t.Fatalf("%s weekly capacity = %v, want %v", plan, got, want)
 		}
-	}
-}
-
-func TestFormatSignedPercentRoundsWithoutNegativeZero(t *testing.T) {
-	if got := formatSignedPercent(-0.001); got != "0%" {
-		t.Fatalf("signed percent = %q, want 0%%", got)
 	}
 }
 
@@ -490,7 +484,7 @@ func TestDashboardOverview(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
 	wantValues := map[string]string{
-		"On track":      "❔ Unknown",
+		"Capacity":      "❔ Unknown",
 		"CPU":           "--",
 		"RAM":           "--",
 		"network in":    "--",
@@ -500,7 +494,7 @@ func TestDashboardOverview(t *testing.T) {
 		"output tokens": "300",
 		"uptime":        "28m",
 	}
-	wantNames := []string{"On track", "CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "API estimate"}
+	wantNames := []string{"Capacity", "CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "API estimate"}
 	if len(view.Overview) != len(wantNames) {
 		t.Fatalf("overview metrics = %+v", view.Overview)
 	}
@@ -515,16 +509,16 @@ func TestDashboardOverview(t *testing.T) {
 			if metric.Value != wantValue {
 				t.Fatalf("%s overview metric = %+v, want value %q", metric.Name, metric, wantValue)
 			}
-			if metric.Name != "On track" && metric.Name != "CPU" && metric.Name != "RAM" && metric.Name != "network in" && metric.Name != "network out" && metric.Name != "uptime" && metric.Info != wantInfo {
+			if metric.Name != "Capacity" && metric.Name != "CPU" && metric.Name != "RAM" && metric.Name != "network in" && metric.Name != "network out" && metric.Name != "uptime" && metric.Info != wantInfo {
 				t.Fatalf("%s overview info = %q, want %q", metric.Name, metric.Info, wantInfo)
 			}
 			delete(wantValues, metric.Name)
 		}
 		switch metric.Name {
-		case "On track":
+		case "Capacity":
 			want := "Not enough limit data to estimate whether the pool will last."
 			if metric.Info != want {
-				t.Fatalf("On track overview info = %q, want %q", metric.Info, want)
+				t.Fatalf("Capacity overview info = %q, want %q", metric.Info, want)
 			}
 		case "API estimate":
 			apiEstimateFound = true
