@@ -229,9 +229,9 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		wantInfo       string
 		wantInfoStrong string
 	}{
-		{name: "yes", used: []float64{0, 20}, want: "✅ Yes", wantInfo: " against the pace needed to last until its limits reset.", wantInfoStrong: "+4.29%"},
-		{name: "close", used: []float64{0, 30}, want: "⚠️ Close", wantInfo: " against the pace needed to last until its limits reset.", wantInfoStrong: "-0.71%"},
-		{name: "no", used: []float64{20, 30}, want: "❌ No", wantInfo: " against the pace needed to last until its limits reset.", wantInfoStrong: "-10.71%"},
+		{name: "yes", used: []float64{0, 20}, want: "✅ +4.29%", wantInfo: " until reset.", wantInfoStrong: "+4.29%"},
+		{name: "close", used: []float64{0, 30}, want: "⚠️ -0.71%", wantInfo: " until reset.", wantInfoStrong: "-0.71%"},
+		{name: "no", used: []float64{20, 30}, want: "❌ -10.71%", wantInfo: " until reset.", wantInfoStrong: "-10.71%"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -259,7 +259,8 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			body := string(payload)
 			expected := `<dt>On track</dt><dd><span class="has-tooltip"`
 			renderedInfoStrong := strings.ReplaceAll(test.wantInfoStrong, "+", "&#43;")
-			if !strings.Contains(body, expected) || !strings.Contains(body, `data-tooltip="`+test.wantInfo+`"`) || !strings.Contains(body, `data-tooltip-strong="`+renderedInfoStrong+`"`) || !strings.Contains(body, ">"+test.want+"</span>") {
+			renderedWant := strings.ReplaceAll(test.want, "+", "&#43;")
+			if !strings.Contains(body, expected) || !strings.Contains(body, `data-tooltip="`+test.wantInfo+`"`) || !strings.Contains(body, `data-tooltip-strong="`+renderedInfoStrong+`"`) || !strings.Contains(body, ">"+renderedWant+"</span>") {
 				t.Fatalf("dashboard missing global on track metric:\n%s", body)
 			}
 			if strings.Contains(body, "<th>On track</th>") {
@@ -283,7 +284,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		seenAt:      now,
 	}
 	poolServer := &server{pool: &Pool{accounts: []*Account{monthly, weekly}}, stats: newStats()}
-	if got := poolServer.currentDashboard(now).Overview[0].Value; got != "⚠️ Close" {
+	if got := poolServer.currentDashboard(now).Overview[0].Value; !strings.HasPrefix(got, "⚠️ ") {
 		t.Fatalf("mixed limit windows on track = %q, want close", got)
 	}
 
@@ -293,8 +294,8 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		goUsed  float64
 		want    string
 	}{
-		{name: "pro surplus", proUsed: 0, goUsed: 100, want: "✅ Yes"},
-		{name: "pro shortfall", proUsed: 30, goUsed: 0, want: "❌ No"},
+		{name: "pro surplus", proUsed: 0, goUsed: 100, want: "✅ "},
+		{name: "pro shortfall", proUsed: 30, goUsed: 0, want: "❌ "},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			pro := testAccountWithPlan("pro", test.proUsed, "pro")
@@ -302,7 +303,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			goAccount := testAccountWithPlan("go", test.goUsed, "go")
 			goAccount.secondary = window{usedPercent: test.goUsed, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
 			server := &server{pool: &Pool{accounts: []*Account{pro, goAccount}}, stats: newStats()}
-			if got := server.currentDashboard(now).Overview[0].Value; got != test.want {
+			if got := server.currentDashboard(now).Overview[0].Value; !strings.HasPrefix(got, test.want) {
 				t.Fatalf("plan-weighted on track = %q, want %q", got, test.want)
 			}
 		})

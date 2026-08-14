@@ -268,13 +268,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	if snapshot.UnpricedResponses == 0 {
 		priceInfo = funCostEquivalents(snapshot.APICostNanoDollars) + "\n" + priceInfo
 	}
-	onTrackInfo, onTrackInfoStrong := dashboardOnTrackInfo(stats.weeklyPace)
-	overview := []dashboardMetric{{
-		Name:       "On track",
-		Value:      dashboardOnTrack(stats.weeklyPace.pace()),
-		Info:       onTrackInfo,
-		InfoStrong: onTrackInfoStrong,
-	}}
+	overview := []dashboardMetric{dashboardOnTrackMetric(stats.weeklyPace)}
 	overview = append(overview, dashboardResourceMetrics(s.resources.usage(now))...)
 	overview = append(overview,
 		dashboardMetric{Name: "uptime", Value: short(snapshot.Uptime)},
@@ -296,24 +290,28 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 }
 
-func dashboardOnTrack(pace usagePace) string {
-	switch pace {
-	case usagePaceOnTrack:
-		return "✅ Yes"
-	case usagePaceClose:
-		return "⚠️ Close"
-	case usagePaceOffTrack:
-		return "❌ No"
-	default:
-		return "❔ Unknown"
-	}
-}
-
-func dashboardOnTrackInfo(estimate usagePaceEstimate) (string, string) {
+func dashboardOnTrackMetric(estimate usagePaceEstimate) dashboardMetric {
 	if !estimate.known {
-		return "Not enough limit data to estimate whether the pool will last.", ""
+		return dashboardMetric{
+			Name:  "On track",
+			Value: "❔ Unknown",
+			Info:  "Not enough limit data to estimate whether the pool will last.",
+		}
 	}
-	return " against the pace needed to last until its limits reset.", formatSignedPercent(-estimate.shortfallPercent)
+	mark := "❌"
+	switch estimate.pace() {
+	case usagePaceOnTrack:
+		mark = "✅"
+	case usagePaceClose:
+		mark = "⚠️"
+	}
+	gap := formatSignedPercent(-estimate.shortfallPercent)
+	return dashboardMetric{
+		Name:       "On track",
+		Value:      mark + " " + gap,
+		Info:       " until reset.",
+		InfoStrong: gap,
+	}
 }
 
 func formatSignedPercent(value float64) string {
