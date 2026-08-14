@@ -66,6 +66,11 @@ type routingMode string
 
 type usagePace uint8
 
+type weightedWindow struct {
+	capacity float64
+	window   window
+}
+
 const (
 	accountLive        accountStatus = "live"
 	accountPriority    accountStatus = "priority"
@@ -124,23 +129,24 @@ func longestWindow(windows ...window) window {
 	return longest
 }
 
-func usagePaceAt(now time.Time, windows ...window) usagePace {
+func usagePaceAt(now time.Time, windows ...weightedWindow) usagePace {
 	var totalShortfall float64
-	var known int
-	for _, w := range windows {
+	var totalCapacity float64
+	for _, weighted := range windows {
+		w := weighted.window
 		remaining, ok := remainingPercent(w)
 		duration := time.Duration(w.minutes) * time.Minute
 		resetIn := w.resetsAt.Sub(now)
-		if !ok || duration <= 0 || resetIn <= 0 || resetIn > duration {
+		if !ok || weighted.capacity <= 0 || duration <= 0 || resetIn <= 0 || resetIn > duration {
 			continue
 		}
-		totalShortfall += float64(resetIn)/float64(duration)*100 - remaining
-		known++
+		totalShortfall += (float64(resetIn)/float64(duration)*100 - remaining) * weighted.capacity
+		totalCapacity += weighted.capacity
 	}
-	if known == 0 {
+	if totalCapacity == 0 {
 		return usagePaceUnknown
 	}
-	shortfall := totalShortfall / float64(known)
+	shortfall := totalShortfall / totalCapacity
 	switch {
 	case shortfall <= 0:
 		return usagePaceOnTrack
@@ -148,6 +154,21 @@ func usagePaceAt(now time.Time, windows ...window) usagePace {
 		return usagePaceClose
 	default:
 		return usagePaceOffTrack
+	}
+}
+
+func weeklyPlanCapacity(plan string) float64 {
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case "free", "go":
+		return 1_134
+	case "plus", "team", "business", "edu":
+		return 7_560
+	case "prolite":
+		return 37_800
+	case "pro", "enterprise":
+		return 50_400
+	default:
+		return 0
 	}
 }
 

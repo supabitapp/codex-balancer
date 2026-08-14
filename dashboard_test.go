@@ -279,9 +279,43 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		resetsAt:    now.Add(6 * 24 * time.Hour),
 		seenAt:      now,
 	}
-	server := &server{pool: &Pool{accounts: []*Account{monthly, weekly}}, stats: newStats()}
-	if got := server.currentDashboard(now).Overview[0].Value; got != "⚠️ Close" {
+	poolServer := &server{pool: &Pool{accounts: []*Account{monthly, weekly}}, stats: newStats()}
+	if got := poolServer.currentDashboard(now).Overview[0].Value; got != "⚠️ Close" {
 		t.Fatalf("mixed limit windows on track = %q, want close", got)
+	}
+
+	for _, test := range []struct {
+		name    string
+		proUsed float64
+		goUsed  float64
+		want    string
+	}{
+		{name: "pro surplus", proUsed: 0, goUsed: 100, want: "✅ Yes"},
+		{name: "pro shortfall", proUsed: 30, goUsed: 0, want: "❌ No"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pro := testAccountWithPlan("pro", test.proUsed, "pro")
+			pro.secondary = window{usedPercent: test.proUsed, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+			goAccount := testAccountWithPlan("go", test.goUsed, "go")
+			goAccount.secondary = window{usedPercent: test.goUsed, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+			server := &server{pool: &Pool{accounts: []*Account{pro, goAccount}}, stats: newStats()}
+			if got := server.currentDashboard(now).Overview[0].Value; got != test.want {
+				t.Fatalf("plan-weighted on track = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestWeeklyPlanCapacity(t *testing.T) {
+	for plan, want := range map[string]float64{
+		"go":      1_134,
+		"plus":    7_560,
+		"prolite": 37_800,
+		"pro":     50_400,
+	} {
+		if got := weeklyPlanCapacity(plan); got != want {
+			t.Fatalf("%s weekly capacity = %v, want %v", plan, got, want)
+		}
 	}
 }
 

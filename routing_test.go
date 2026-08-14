@@ -373,7 +373,11 @@ func TestAccountPriorityStatusRequiresAvailableBankedReset(t *testing.T) {
 }
 
 func testAccount(id string, used float64) *Account {
-	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"email":"%s@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"%s","chatgpt_plan_type":"pro"}}`, id, id)))
+	return testAccountWithPlan(id, used, "pro")
+}
+
+func testAccountWithPlan(id string, used float64, plan string) *Account {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"email":"%s@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"%s","chatgpt_plan_type":"%s"}}`, id, id, plan)))
 	account := accountFromState(accountState{
 		IDToken:      "x." + payload + ".x",
 		AccessToken:  "token-" + id,
