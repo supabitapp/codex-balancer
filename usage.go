@@ -295,12 +295,18 @@ func (a *Account) adoptResetCredits(count int64, credits []resetCredit) {
 
 func (s *server) pollAllUsage(ctx context.Context) {
 	for _, account := range s.pool.all() {
+		if account.needsReauth() {
+			continue
+		}
 		if err := s.pollUsage(ctx, account); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
 			s.log.Warn("usage poll failed", "account", account.id(), "error", err)
 			s.stats.note("usage poll failed", account.id(), err.Error())
+		}
+		if account.needsReauth() {
+			continue
 		}
 		if err := s.pollResetCredits(ctx, account); err != nil {
 			if ctx.Err() != nil {

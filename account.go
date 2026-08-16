@@ -369,6 +369,12 @@ func (a *Account) paused() bool {
 	return a.Paused
 }
 
+func (a *Account) needsReauth() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.dead != ""
+}
+
 func (a *Account) stale(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()

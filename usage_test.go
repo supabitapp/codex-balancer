@@ -189,3 +189,32 @@ func TestPollAllUsageRefreshesResetCreditsWithoutConsuming(t *testing.T) {
 		t.Fatalf("calls = %v, want %v", calls, wantCalls)
 	}
 }
+
+func TestPollAllUsageSkipsAccountsNeedingReauth(t *testing.T) {
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+	}))
+	defer upstream.Close()
+
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = upstream.URL
+	t.Cleanup(func() {
+		accountAPIBaseURL = oldBaseURL
+	})
+
+	account := testAccount("account-a", 0)
+	account.dead = "reauth required"
+	s := &server{
+		pool:   &Pool{accounts: []*Account{account}},
+		stats:  newStats(),
+		client: upstream.Client(),
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	s.pollAllUsage(context.Background())
+
+	if requests != 0 {
+		t.Fatalf("requests = %d, want 0", requests)
+	}
+}
