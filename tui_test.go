@@ -46,7 +46,7 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 	if err := pool.add(account); err != nil {
 		t.Fatal(err)
 	}
-	dashboard := dashboard{pool: pool, stats: newStats(), width: 160}
+	dashboard := dashboard{pool: pool, stats: newStatsWithPrices(testPriceSnapshot(t)), width: 160}
 	press := tea.KeyPressMsg(tea.Key{Text: "r", Code: 'r'})
 
 	for _, want := range []struct {
@@ -59,7 +59,7 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 		{routingModeNormal, accountLive, "live"},
 	} {
 		dashboard.Update(press)
-		if got := account.routingMode(); got != want.mode {
+		if got := account.routingCandidate().mode; got != want.mode {
 			t.Fatalf("mode = %s, want %s", got, want.mode)
 		}
 		if got := account.status(time.Now()); got != want.status {
@@ -69,7 +69,7 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 			t.Fatalf("account row missing %q:\n%s", want.text, row)
 		}
 	}
-	if row := dashboard.accounts(1); !strings.Contains(row, "r route") {
+	if row := dashboard.accounts(1); !strings.Contains(row, "r mode") {
 		t.Fatalf("account controls missing routing key:\n%s", row)
 	}
 }
@@ -152,7 +152,7 @@ func TestTotalsColumnsStayCompactOnWideTerminals(t *testing.T) {
 		line := strings.Split(dashboard.totals(width), "\n")[2]
 		return [3]int{
 			strings.Index(line, "turns"),
-			strings.Index(line, "failovers"),
+			strings.Index(line, "connection retries"),
 			strings.Index(line, "rate limits"),
 		}
 	}
@@ -191,20 +191,9 @@ func TestEventsRenderCompactTable(t *testing.T) {
 				Account: "vuonghoainam.work",
 				Detail:  "reset credits returned 429 Too Many Requests",
 			},
-			{
-				Kind:          eventCompactionSwitch,
-				Account:       "target-account",
-				SourceAccount: "source-account",
-				Thread:        "019feea0private",
-			},
 		}},
 	}
 	rendered := dashboard.events(120, 4)
-	for _, hidden := range []string{eventCompactionSwitch, "target-account", "source-account", "019feea0"} {
-		if strings.Contains(rendered, hidden) {
-			t.Fatalf("events contains %q: %q", hidden, rendered)
-		}
-	}
 	lines := strings.Split(rendered, "\n")
 	header := lines[2]
 	row := lines[3]

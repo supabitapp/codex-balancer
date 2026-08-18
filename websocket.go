@@ -18,6 +18,10 @@ import (
 
 const responsesWebSocketBeta = "responses_websockets=2026-02-06"
 
+const noAccountAvailableMessage = "WE ARE OUT OF TOKENS 😭 Go out, touch some grass 🌿 See https://codex-balancer.exe.xyz/dashboard"
+
+var errNoAccountAvailable = errors.New("no account available")
+
 type websocketDial struct {
 	conn    *websocket.Conn
 	resp    *http.Response
@@ -26,58 +30,41 @@ type websocketDial struct {
 
 type websocketMessage struct {
 	downstream bool
-	generation int
 	kind       websocket.MessageType
 	data       []byte
 	err        error
 }
 
 type websocketTurn struct {
-	kind          websocket.MessageType
-	data          []byte
-	sent          time.Time
-	model         string
-	effort        string
-	serviceTier   string
-	metadata      turnMetadata
-	counted       bool
-	created       bool
-	visible       bool
-	modelRetried  bool
-	resetRetried  bool
-	resolution    affinityResolution
-	hardKinds     []string
-	compactReplay bool
-	thread        string
-	statsThread   string
-	rotationFrom  string
-	excluded      map[string]bool
-	reauthed      map[string]bool
+	sent        time.Time
+	model       string
+	effort      string
+	serviceTier string
+	metadata    turnMetadata
+	counted     bool
+	created     bool
+	statsThread string
 }
 
 type websocketEnvelope struct {
 	Type           string                     `json:"type"`
-	ID             string                     `json:"id"`
-	ResponseID     string                     `json:"response_id"`
 	Generate       *bool                      `json:"generate"`
 	Model          string                     `json:"model"`
 	Reasoning      responseReasoning          `json:"reasoning"`
-	Status         int                        `json:"status"`
-	StatusCode     int                        `json:"status_code"`
 	ServiceTier    string                     `json:"service_tier"`
 	ClientMetadata map[string]string          `json:"client_metadata"`
+	Status         int                        `json:"status"`
+	StatusCode     int                        `json:"status_code"`
 	Headers        map[string]json.RawMessage `json:"headers"`
 	Error          struct {
-		Type    string `json:"type"`
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Type string `json:"type"`
+		Code string `json:"code"`
 	} `json:"error"`
 	Response struct {
 		responsePayload
 		Error struct {
-			Type    string `json:"type"`
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Type string `json:"type"`
+			Code string `json:"code"`
 		} `json:"error"`
 	} `json:"response"`
 }
@@ -91,49 +78,9 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	affinity, err := affinityFromRequest(r.Header, nil)
-	if err != nil {
-		s.log.Warn("websocket handshake affinity invalid", "error", err)
-		status, message := affinityErrorStatus(err)
-		writeError(w, status, message)
-		return
-	}
-	resolution, err := s.affinity.resolve(affinity, s.pool)
-	if err != nil {
-		s.log.Warn("websocket handshake affinity unresolved",
-			"thread", affinity.statsKey(r.Header),
-			"hard_affinity", len(affinity.hard) > 0,
-			"hard_affinity_kinds", affinity.hardKinds(),
-			"compaction_replay", affinity.compactionReplay,
-			"error", err,
-		)
-		status, message := affinityErrorStatus(err)
-		writeError(w, status, message)
-		return
-	}
-	thread := affinity.statsKey(r.Header)
-	s.log.Debug("websocket requested", "thread", thread, "required_account", resolution.required, "preferred_account", resolution.preferred)
-	skip, pendingRotation, rotating := s.compactionRotation.handshakeSkip(thread, resolution.hard)
-	dial, failed, err := s.dialResponsesWebSocket(r, thread, resolution, skip, "", "")
-	if rotating && (err != nil || failed != nil) {
-		status := 0
-		if failed != nil {
-			status = failed.StatusCode
-		}
-		s.log.Warn("compaction rotation websocket handshake failed",
-			"thread", thread,
-			"source_account", pendingRotation.account,
-			"compaction_turn", pendingRotation.turn,
-			"status", status,
-			"error", err,
-		)
-		if failed != nil && failed.Body != nil {
-			failed.Body.Close()
-		}
-		s.compactionRotation.finish(pendingRotation.thread, "handshake_failed", "")
-		rotating = false
-		dial, failed, err = s.dialResponsesWebSocket(r, thread, resolution, nil, "", "")
-	}
+	thread := websocketThread(r.Header)
+	s.log.Debug("websocket requested", "thread", thread)
+	dial, failed, err := s.dialResponsesWebSocket(r, thread)
 	if err != nil {
 		message := err.Error()
 		if errors.Is(err, errNoAccountAvailable) {
@@ -151,22 +98,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if rotating {
-		s.log.Info("compaction rotation websocket connected",
-			"thread", thread,
-			"source_account", pendingRotation.account,
-			"target_account", dial.account.id(),
-			"compaction_turn", pendingRotation.turn,
-		)
-	}
-
 	if dial.resp != nil {
-		if err := s.affinity.bind(turnStateAffinity(dial.resp.Header), dial.account.id()); err != nil {
-			dial.conn.CloseNow()
-			status, message := affinityErrorStatus(err)
-			writeError(w, status, message)
-			return
-		}
 		copyWebSocketHeaders(w.Header(), dial.resp.Header)
 	}
 	downstream, err := websocket.Accept(w, r, nil)
@@ -213,28 +145,21 @@ func headerHasToken(headers http.Header, name, target string) bool {
 func (s *server) dialResponsesWebSocket(
 	r *http.Request,
 	thread string,
-	resolution affinityResolution,
-	skip map[string]bool,
-	model string,
-	serviceTier string,
 ) (*websocketDial, *http.Response, error) {
 	upstream, err := responsesWebSocketURL(s.upstream)
 	if err != nil {
 		return nil, nil, err
 	}
-	if skip == nil {
-		skip = map[string]bool{}
-	}
+
+	skip := map[string]bool{}
 	reauthed := map[string]bool{}
 	resetRetried := map[string]bool{}
-
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		account := s.pickAccount(thread, resolution.required, resolution.preferred, model, serviceTier, skip, attempt)
+		account := s.pickAccount(thread, skip, attempt)
 		if account == nil {
 			return nil, nil, errNoAccountAvailable
 		}
 		id := account.id()
-
 		if account.stale(time.Now()) && !reauthed[id] {
 			reauthed[id] = true
 			if !s.refreshed(account, id) {
@@ -245,29 +170,32 @@ func (s *server) dialResponsesWebSocket(
 
 		var conn *websocket.Conn
 		var resp *http.Response
-		var err error
+		var dialErr error
 		var sent time.Time
 		upstreamRetries := 0
 		for {
 			sent = time.Now()
 			ctx, cancel := context.WithTimeout(r.Context(), upstreamWait)
-			conn, resp, err = websocket.Dial(ctx, upstream, &websocket.DialOptions{
+			conn, resp, dialErr = websocket.Dial(ctx, upstream, &websocket.DialOptions{
 				HTTPClient: s.client,
 				HTTPHeader: responsesWebSocketHeaders(r.Header, account),
 			})
 			cancel()
-			if err == nil || resp == nil || resp.StatusCode < 500 || upstreamRetries == maxUpstreamRetries {
+			if dialErr == nil || resp == nil || resp.StatusCode < 500 || upstreamRetries == maxUpstreamRetries {
 				break
 			}
 			status := resp.StatusCode
-			resp.Body.Close()
+			if resp.Body != nil {
+				resp.Body.Close()
+			}
 			upstreamRetries++
 			s.log.Info("retrying upstream websocket server failure", "thread", thread, "account", id, "attempt", attempt+1, "retry", upstreamRetries, "status", status)
 			if !s.waitForUpstreamRetry(r.Context(), upstreamRetries) {
 				return nil, nil, context.Cause(r.Context())
 			}
 		}
-		if err == nil {
+
+		if dialErr == nil {
 			if resp != nil {
 				account.observe(resp.Header)
 			}
@@ -282,9 +210,10 @@ func (s *server) dialResponsesWebSocket(
 			}
 			return nil, nil, cause
 		}
-
 		if resp != nil && resp.StatusCode == http.StatusUnauthorized && !reauthed[id] {
-			resp.Body.Close()
+			if resp.Body != nil {
+				resp.Body.Close()
+			}
 			reauthed[id] = true
 			if !s.refreshed(account, id) {
 				skip[id] = true
@@ -292,9 +221,8 @@ func (s *server) dialResponsesWebSocket(
 			attempt--
 			continue
 		}
-
 		if resp == nil {
-			s.log.Warn("upstream websocket unreachable", "thread", thread, "account", id, "attempt", attempt+1, "error", err)
+			s.log.Warn("upstream websocket unreachable", "thread", thread, "account", id, "attempt", attempt+1, "error", dialErr)
 			s.stats.failedOver(id, "unreachable")
 			account.failed(attempt)
 			skip[id] = true
@@ -303,8 +231,10 @@ func (s *server) dialResponsesWebSocket(
 
 		status := resp.StatusCode
 		if status == http.StatusSwitchingProtocols {
-			resp.Body.Close()
-			s.log.Warn("upstream websocket handshake invalid", "thread", thread, "account", id, "attempt", attempt+1, "error", err)
+			if resp.Body != nil {
+				resp.Body.Close()
+			}
+			s.log.Warn("upstream websocket handshake invalid", "thread", thread, "account", id, "attempt", attempt+1, "error", dialErr)
 			s.stats.failedOver(id, "invalid handshake")
 			account.failed(attempt)
 			skip[id] = true
@@ -316,19 +246,14 @@ func (s *server) dialResponsesWebSocket(
 				account.observe(resp.Header)
 				if usageLimit {
 					if account.markSpent() {
-						s.log.Info("account stopped accepting new websockets",
-							"account", id,
-							"source", "handshake",
-							"thread", thread,
-							"status", status,
-						)
+						s.log.Info("account stopped accepting new websockets", "account", id, "source", "handshake", "thread", thread, "status", status)
 					}
 					resettableUsageLimit := !workspaceUsageLimitReached(resp.Header)
 					if resettableUsageLimit && !resetRetried[id] && s.recoverUsageLimit(r.Context(), account, sent) {
 						resetRetried[id] = true
-						resolution.required = id
-						resolution.preferred = ""
-						resp.Body.Close()
+						if resp.Body != nil {
+							resp.Body.Close()
+						}
 						attempt--
 						continue
 					}
@@ -343,16 +268,16 @@ func (s *server) dialResponsesWebSocket(
 				s.log.Warn("upstream websocket refused the connection", "thread", thread, "account", id, "attempt", attempt+1, "status", status)
 				account.failed(attempt)
 			}
-			if !resolution.hard {
-				s.stats.failedOver(id, resp.Status)
-				skip[id] = true
+			if resp.Body != nil {
 				resp.Body.Close()
-				continue
 			}
+			s.stats.failedOver(id, resp.Status)
+			skip[id] = true
+			continue
 		}
 		return nil, resp, nil
 	}
-	return nil, nil, errors.New("every account failed this websocket")
+	return nil, nil, errNoAccountAvailable
 }
 
 func responsesWebSocketURL(upstream string) (string, error) {
@@ -407,12 +332,7 @@ func ensureResponsesWebSocketBeta(headers http.Header) {
 	headers.Set("OpenAI-Beta", strings.Join(tokens, ", "))
 }
 
-func (s *server) relayResponsesWebSocket(
-	downstream *websocket.Conn,
-	r *http.Request,
-	initial *websocketDial,
-	thread string,
-) {
+func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Request, initial *websocketDial, thread string) {
 	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -420,95 +340,29 @@ func (s *server) relayResponsesWebSocket(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	current := initial
-	currentAcceptingTurns := true
-	generation := 1
 	messages := make(chan websocketMessage, 8)
-	readWebSocketMessages(ctx, downstream, true, 0, messages)
-	readWebSocketMessages(ctx, current.conn, false, generation, messages)
+	readWebSocketMessages(ctx, downstream, true, messages)
+	readWebSocketMessages(ctx, initial.conn, false, messages)
 	liveThreads := map[string]struct{}{}
 	defer func() {
 		for thread := range liveThreads {
 			s.stats.deactivateThread(thread)
 		}
 	}()
-	s.websocketOpened(thread, current.account)
+	s.websocketOpened(thread, initial.account)
 	defer func() {
-		current.conn.CloseNow()
-		s.websocketClosed(thread, current.account)
+		cancel()
+		initial.conn.CloseNow()
+		s.websocketClosed(thread, initial.account)
 	}()
 
+	closeDownstream := func(status websocket.StatusCode, reason string) {
+		if err := downstream.Close(status, reason); err != nil {
+			s.log.Debug("downstream websocket close failed", "thread", thread, "status", status, "error", err)
+		}
+	}
+
 	var turns []websocketTurn
-	switchDial := func(next *websocketDial) {
-		previous := current
-		current = next
-		generation++
-		previous.conn.CloseNow()
-		s.websocketClosed(thread, previous.account)
-		current.conn.SetReadLimit(maxWebSocketMessage)
-		readWebSocketMessages(ctx, current.conn, false, generation, messages)
-		s.websocketOpened(thread, current.account)
-		currentAcceptingTurns = true
-	}
-	redialTurn := func(turn *websocketTurn, resolution affinityResolution, skip map[string]bool, reason string) bool {
-		next, failed, err := s.dialResponsesWebSocket(r, turn.thread, resolution, skip, turn.model, turn.serviceTier)
-		if err != nil || failed != nil {
-			status := 0
-			if failed != nil {
-				status = failed.StatusCode
-			}
-			s.log.Warn("websocket redial failed",
-				"thread", turn.thread,
-				"turn", turn.metadata.TurnID,
-				"account", current.account.id(),
-				"required_account", resolution.required,
-				"preferred_account", resolution.preferred,
-				"reason", reason,
-				"status", status,
-				"error", err,
-			)
-			if failed != nil && failed.Body != nil {
-				failed.Body.Close()
-			}
-			return false
-		}
-		previousAccount := current.account.id()
-		switchDial(next)
-		s.log.Info("websocket redialed",
-			"thread", turn.thread,
-			"turn", turn.metadata.TurnID,
-			"from_account", previousAccount,
-			"to_account", current.account.id(),
-			"reason", reason,
-		)
-		if reason != "" {
-			s.stats.failedOver(previousAccount, reason)
-		}
-		data, _ := s.forceFastTier(current.account, turn.model, turn.serviceTier, turn.data)
-		if err := current.conn.Write(ctx, turn.kind, data); err != nil {
-			s.log.Warn("websocket replay write failed",
-				"thread", turn.thread,
-				"turn", turn.metadata.TurnID,
-				"account", current.account.id(),
-				"reason", reason,
-				"error", err,
-			)
-			return false
-		}
-		turn.sent = time.Now()
-		return true
-	}
-	replayTurn := func(turn *websocketTurn, reason string) bool {
-		turn.excluded[current.account.id()] = true
-		s.log.Debug("websocket replay requested",
-			"thread", turn.thread,
-			"turn", turn.metadata.TurnID,
-			"account", current.account.id(),
-			"reason", reason,
-			"excluded_accounts", len(turn.excluded),
-		)
-		return redialTurn(turn, turn.resolution, turn.excluded, reason)
-	}
 	for {
 		var message websocketMessage
 		select {
@@ -523,435 +377,86 @@ func (s *server) relayResponsesWebSocket(
 				if errors.Is(message.err, context.Canceled) || status == websocket.StatusNormalClosure || status == websocket.StatusGoingAway {
 					level = slog.LevelDebug
 				}
-				s.log.Log(ctx, level, "downstream websocket closed",
-					"thread", thread,
-					"account", current.account.id(),
-					"active_turns", len(turns),
-					"status", status,
-					"error", message.err,
-				)
+				s.log.Log(ctx, level, "downstream websocket closed", "thread", thread, "account", initial.account.id(), "active_turns", len(turns), "status", status, "error", message.err)
 				return
 			}
 			if message.kind != websocket.MessageText {
-				if current.conn.Write(ctx, message.kind, message.data) != nil {
+				if err := initial.conn.Write(ctx, message.kind, message.data); err != nil {
+					closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
 					return
 				}
 				continue
 			}
 			var event websocketEnvelope
 			if json.Unmarshal(message.data, &event) != nil || event.Type != "response.create" {
-				if current.conn.Write(ctx, message.kind, message.data) != nil {
+				if err := initial.conn.Write(ctx, message.kind, message.data); err != nil {
+					closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
 					return
 				}
 				continue
 			}
-
-			requestAffinity, err := affinityFromRequest(r.Header, message.data)
-			if err != nil {
-				s.log.Warn("websocket request affinity invalid",
-					"thread", thread,
-					"account", current.account.id(),
-					"error", err,
-				)
-				writeWebSocketAffinityError(ctx, downstream, err)
-				continue
+			data, forced := s.forceFastTier(initial.account, event.Model, event.ServiceTier, message.data)
+			if forced {
+				s.log.Info("draining account forced fast tier", "thread", thread, "account", initial.account.id())
 			}
-			resolution, err := s.affinity.resolve(requestAffinity, s.pool)
-			if err != nil {
-				s.log.Warn("websocket request affinity unresolved",
-					"thread", requestAffinity.statsKey(r.Header),
-					"account", current.account.id(),
-					"hard_affinity", len(requestAffinity.hard) > 0,
-					"hard_affinity_kinds", requestAffinity.hardKinds(),
-					"compaction_replay", requestAffinity.compactionReplay,
-					"error", err,
-				)
-				writeWebSocketAffinityError(ctx, downstream, err)
-				continue
-			}
-			turnThread := requestAffinity.statsKey(r.Header)
-			if turnThread == "" {
-				turnThread = thread
+			if err := initial.conn.Write(ctx, message.kind, data); err != nil {
+				closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
+				return
 			}
 			metadata := requestTurnMetadata("", event.ClientMetadata)
-			allowed := s.allowedAccounts(event.Model, event.ServiceTier)
-			now := time.Now()
-			candidate := current.account.routingCandidate()
-			existingReason := candidate.existingConnectionReason(now)
-			retainExisting := currentAcceptingTurns && existingReason != "" && accountAllowed(allowed, current.account.id()) && (resolution.required == "" || resolution.required == current.account.id())
-			if retainExisting {
-				s.compactionRotation.yieldToExisting(turnThread, current.account.id(), existingReason)
-				s.log.Debug("websocket existing connection retained",
-					"thread", turnThread,
-					"turn", metadata.TurnID,
-					"account", current.account.id(),
-					"reason", existingReason,
-					"status", candidate.status(now),
-					"hard_affinity", resolution.hard,
-					"hard_affinity_kinds", requestAffinity.hardKinds(),
-					"compaction_replay", requestAffinity.compactionReplay,
-					"model", event.Model,
-					"service_tier", event.ServiceTier,
-				)
-			} else {
-				freshAccount := ""
-				if fresh := s.pool.route("", "", nil, allowed).account; fresh != nil {
-					freshAccount = fresh.id()
-				}
-				if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, requestAffinity, resolution.hard, len(turns), freshAccount) {
-					_ = downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction")
-					s.log.Debug("compaction rotation downstream restart requested",
-						"thread", turnThread,
-						"account", current.account.id(),
-						"request_turn", metadata.TurnID,
-					)
-					return
-				}
-			}
-			rotationFrom := ""
-			var rotationSkip map[string]bool
-			if rotationFrom = s.compactionRotation.routeSource(turnThread, current.account.id(), metadata, requestAffinity, resolution.hard); rotationFrom != "" {
-				resolution.required = ""
-				resolution.preferred = ""
-				rotationSkip = map[string]bool{rotationFrom: true}
-			}
-			target := current.account
-			if !retainExisting {
-				target = s.pool.pick(resolution.required, resolution.preferred, rotationSkip, allowed)
-			}
-			if target == nil {
-				s.log.Warn("websocket turn has no account",
-					"thread", turnThread,
-					"turn", metadata.TurnID,
-					"required_account", resolution.required,
-					"preferred_account", resolution.preferred,
-					"rotation_source", rotationFrom,
-				)
-				writeWebSocketAffinityError(ctx, downstream, errAffinityOwnerUnavailable)
-				continue
-			}
-			if target.id() != current.account.id() {
-				if len(turns) > 0 {
-					s.log.Warn("websocket account switch blocked",
-						"thread", turnThread,
-						"turn", metadata.TurnID,
-						"current_account", current.account.id(),
-						"target_account", target.id(),
-						"active_turns", len(turns),
-						"rotation_source", rotationFrom,
-					)
-					writeWebSocketAffinityError(ctx, downstream, errAffinityOwnerUnavailable)
-					continue
-				}
-				next, failed, err := s.dialResponsesWebSocket(r, turnThread, resolution, rotationSkip, event.Model, event.ServiceTier)
-				if err != nil || failed != nil {
-					status := 0
-					if failed != nil {
-						status = failed.StatusCode
-					}
-					s.log.Warn("websocket account switch failed",
-						"thread", turnThread,
-						"turn", metadata.TurnID,
-						"current_account", current.account.id(),
-						"target_account", target.id(),
-						"rotation_source", rotationFrom,
-						"status", status,
-						"error", err,
-					)
-					if failed != nil && failed.Body != nil {
-						failed.Body.Close()
-					}
-					writeWebSocketAffinityError(ctx, downstream, errAffinityOwnerUnavailable)
-					continue
-				}
-				previousAccount := current.account.id()
-				switchDial(next)
-				s.log.Info("websocket account switched",
-					"thread", turnThread,
-					"turn", metadata.TurnID,
-					"from_account", previousAccount,
-					"to_account", current.account.id(),
-					"rotation_source", rotationFrom,
-				)
-			}
-			if resolution.hard {
-				if err := s.affinity.claimAll(hardAffinityRefs(resolution.bindings), current.account.id()); err != nil {
-					s.log.Warn("websocket hard affinity claim failed",
-						"thread", turnThread,
-						"turn", metadata.TurnID,
-						"account", current.account.id(),
-						"bindings", len(resolution.bindings),
-						"error", err,
-					)
-					writeWebSocketAffinityError(ctx, downstream, err)
-					continue
-				}
-			}
-			data, forced := s.forceFastTier(current.account, event.Model, event.ServiceTier, message.data)
-			if forced {
-				s.log.Info("draining account forced fast tier", "thread", turnThread, "account", current.account.id())
-			}
-			if err := current.conn.Write(ctx, message.kind, data); err != nil {
-				s.log.Warn("upstream websocket request write failed",
-					"thread", turnThread,
-					"turn", metadata.TurnID,
-					"account", current.account.id(),
-					"rotation_source", rotationFrom,
-					"error", err,
-				)
-				return
-			}
+			statsThread := statsThreadKey(thread, metadata)
 			counted := event.Generate == nil || *event.Generate
-			attrs := []any{"thread", turnThread, "service_tier", event.ServiceTier}
-			attrs = append(attrs,
-				"hard_affinity", resolution.hard,
-				"hard_affinity_kinds", requestAffinity.hardKinds(),
-				"compaction_replay", requestAffinity.compactionReplay,
-			)
-			attrs = append(attrs, routingLogAttrs(current.account.routingCandidate(), time.Now())...)
-			s.log.Debug("websocket turn received", attrs...)
 			turns = append(turns, websocketTurn{
-				kind:          message.kind,
-				data:          append([]byte(nil), message.data...),
-				sent:          time.Now(),
-				model:         event.Model,
-				effort:        event.Reasoning.Effort,
-				serviceTier:   event.ServiceTier,
-				metadata:      metadata,
-				counted:       counted,
-				resolution:    resolution,
-				hardKinds:     requestAffinity.hardKinds(),
-				compactReplay: requestAffinity.compactionReplay,
-				thread:        turnThread,
-				statsThread:   statsThreadKey(turnThread, metadata),
-				rotationFrom:  rotationFrom,
-				excluded:      map[string]bool{},
-				reauthed:      map[string]bool{},
+				sent:        time.Now(),
+				model:       event.Model,
+				effort:      event.Reasoning.Effort,
+				serviceTier: event.ServiceTier,
+				metadata:    metadata,
+				counted:     counted,
+				statsThread: statsThread,
 			})
+			attrs := []any{"thread", statsThread, "service_tier", event.ServiceTier}
+			attrs = append(attrs, routingLogAttrs(initial.account.routingCandidate(), time.Now())...)
+			s.log.Debug("websocket turn received", attrs...)
 			continue
 		}
 
-		if message.generation != generation {
-			continue
-		}
 		if message.err != nil {
-			if len(turns) == 1 && !turns[0].created && !turns[0].visible && !turns[0].resolution.hard {
-				current.account.failed(0)
-				if replayTurn(&turns[0], "disconnected") {
-					continue
-				}
-			}
-			if errors.Is(message.err, context.Canceled) || websocket.CloseStatus(message.err) == websocket.StatusNormalClosure {
-				return
-			}
-			turnID := ""
-			rotationFrom := ""
-			if len(turns) > 0 {
-				turnID = turns[0].metadata.TurnID
-				rotationFrom = turns[0].rotationFrom
-			}
-			s.log.Warn("upstream websocket closed",
-				"thread", thread,
-				"turn", turnID,
-				"account", current.account.id(),
-				"active_turns", len(turns),
-				"rotation_source", rotationFrom,
-				"status", websocket.CloseStatus(message.err),
-				"error", message.err,
-			)
+			closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
 			return
 		}
 		var event websocketEnvelope
 		if message.kind == websocket.MessageText && json.Unmarshal(message.data, &event) == nil {
 			headers := websocketEventHeaders(event.Headers)
 			if len(headers) > 0 {
-				current.account.observe(headers)
+				initial.account.observe(headers)
 			}
-			if len(turns) > 0 && websocketResponseVisible(event) {
-				turns[0].visible = true
+			if rejection := websocketRejection(event); rejection != websocketRejectionNone {
+				s.handleWebSocketRejection(initial.account, rejection, headers, thread)
+				closeDownstream(websocket.StatusServiceRestart, "account rejected websocket request")
+				return
 			}
-			previsible := len(turns) == 1 && !turns[0].created && !turns[0].visible
-			identitySafe := websocketReplaySafe(event)
-			if websocketStatus(event) == http.StatusUnauthorized {
-				currentAcceptingTurns = false
-				if previsible && identitySafe {
-					turn := &turns[0]
-					id := current.account.id()
-					if !turn.reauthed[id] {
-						turn.reauthed[id] = true
-						if s.refreshed(current.account, id) {
-							resolution := turn.resolution
-							resolution.required = id
-							if redialTurn(turn, resolution, nil, "") {
-								continue
-							}
-						}
-					}
-					current.account.failed(0)
-					if !turn.resolution.hard && replayTurn(turn, "unauthorized") {
-						continue
-					}
-				} else {
-					current.account.failed(0)
-				}
-			}
-			retryable := false
-			retryReason := ""
-			rateLimited := websocketRateLimited(event)
-			if rateLimited {
-				currentAcceptingTurns = false
-				usageLimit := websocketUsageLimitReached(event)
-				if usageLimit {
-					if current.account.markSpent() {
-						turnThread := thread
-						turnID := ""
-						if len(turns) > 0 {
-							turnThread = turns[0].thread
-							turnID = turns[0].metadata.TurnID
-						}
-						s.log.Info("account stopped accepting new websockets",
-							"account", current.account.id(),
-							"source", "response",
-							"thread", turnThread,
-							"turn", turnID,
-							"status", websocketStatus(event),
-							"code", websocketErrorCode(event),
-						)
-					}
-					resettableUsageLimit := !workspaceUsageLimitReached(headers)
-					if resettableUsageLimit && len(turns) > 0 && !turns[0].resetRetried {
-						turn := &turns[0]
-						turn.resetRetried = true
-						if s.recoverUsageLimit(ctx, current.account, turn.sent) && previsible {
-							resolution := turn.resolution
-							resolution.required = current.account.id()
-							resolution.preferred = ""
-							if redialTurn(turn, resolution, nil, "account reset") {
-								continue
-							}
-						}
-					}
-				} else {
-					current.account.rateLimited(headers, 0)
-				}
-				s.stats.rateLimited(current.account.id())
-				attrs := []any{"thread", thread, "status", websocketStatus(event), "code", websocketErrorCode(event)}
-				attrs = append(attrs, routingLogAttrs(current.account.routingCandidate(), time.Now())...)
-				s.log.Info("account rate limited", attrs...)
-				retryable = true
-				retryReason = "rate limited"
-			} else if websocketStatus(event) >= 500 {
-				current.account.failed(0)
-				retryable = true
-				retryReason = "server failure"
-			} else if len(turns) == 1 && !turns[0].modelRetried && websocketAccountModelUnsupported(event, turns[0].model) {
-				retryable = true
-				retryReason = "model unsupported"
-			}
-			if retryable && previsible && !turns[0].resolution.hard && (identitySafe || rateLimited) {
-				if retryReason == "model unsupported" {
-					turns[0].modelRetried = true
-				}
-				if replayTurn(&turns[0], retryReason) {
-					continue
-				}
-			}
-			if previsible && turns[0].rotationFrom != "" && websocketInvalidEncryptedContent(event) {
-				turn := &turns[0]
-				s.log.Warn("compaction rotation context rejected",
-					"thread", turn.thread,
-					"turn", turn.metadata.TurnID,
-					"source_account", turn.rotationFrom,
-					"target_account", current.account.id(),
-					"status", websocketStatus(event),
-					"code", websocketErrorCode(event),
-					"hard_affinity_kinds", turn.hardKinds,
-					"compaction_replay", turn.compactReplay,
-				)
-				resolution := turn.resolution
-				resolution.required = turn.rotationFrom
-				resolution.preferred = ""
-				if redialTurn(turn, resolution, nil, "encrypted content rejected") {
-					continue
-				}
-			}
-			switch event.Type {
-			case "response.created":
+			if event.Type == "response.created" {
 				for index := range turns {
 					if turns[index].created {
 						continue
 					}
 					turns[index].created = true
-					bindings := turns[index].resolution.bindings
-					if turnState := turnStateAffinity(headers); turnState.valid() {
-						bindings = append(bindings, turnState)
-					}
-					if err := s.affinity.bindAll(bindings, current.account.id()); err != nil {
-						s.log.Warn("affinity save failed", "thread", turns[index].thread, "account", current.account.id(), "error", err)
-					}
-					if event.Response.ID != "" {
-						if err := s.affinity.bind(affinityRef{kind: affinityResponse, value: event.Response.ID}, current.account.id()); err != nil {
-							s.log.Warn("response affinity save failed", "response", event.Response.ID, "account", current.account.id(), "error", err)
+					turn := &turns[index]
+					if turn.counted {
+						if _, live := liveThreads[turn.statsThread]; !live {
+							s.stats.activateThread(turn.statsThread)
+							liveThreads[turn.statsThread] = struct{}{}
 						}
+						s.stats.routed(turn.statsThread, requestIP(r), initial.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata)
+						s.stats.answered(turn.statsThread, initial.account.id(), time.Since(turn.sent))
 					}
-					if turns[index].counted {
-						if _, live := liveThreads[turns[index].statsThread]; !live {
-							s.stats.activateThread(turns[index].statsThread)
-							liveThreads[turns[index].statsThread] = struct{}{}
-						}
-						s.stats.routed(turns[index].statsThread, requestIP(r), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, turns[index].metadata)
-						s.stats.answered(turns[index].statsThread, current.account.id(), time.Since(turns[index].sent))
-					}
-					s.log.Debug("websocket response created",
-						"thread", turns[index].thread,
-						"turn", turns[index].metadata.TurnID,
-						"request_kind", turns[index].metadata.RequestKind,
-						"account", current.account.id(),
-						"rotation_source", turns[index].rotationFrom,
-						"hard_affinity_kinds", turns[index].hardKinds,
-						"compaction_replay", turns[index].compactReplay,
-						"latency", time.Since(turns[index].sent),
-					)
-					if turns[index].rotationFrom != "" {
-						outcome := "source_fallback"
-						if current.account.id() != turns[index].rotationFrom {
-							s.stats.compactionSwitched(turns[index].metadata.ThreadID, turns[index].rotationFrom, current.account.id())
-							outcome = "rotated"
-						}
-						s.compactionRotation.finish(turns[index].metadata.ThreadID, outcome, current.account.id())
-					}
+					s.log.Debug("websocket response created", "thread", turn.statsThread, "turn", turn.metadata.TurnID, "account", initial.account.id(), "latency", time.Since(turn.sent))
 					break
 				}
-			case "error", "response.completed", "response.failed", "response.incomplete":
+			} else if event.Type == "error" || event.Type == "response.completed" || event.Type == "response.failed" || event.Type == "response.incomplete" {
 				if len(turns) > 0 {
 					turn := turns[0]
-					if event.Type != "response.completed" {
-						s.log.Warn("websocket turn ended without completion",
-							"event", event.Type,
-							"thread", turn.thread,
-							"turn", turn.metadata.TurnID,
-							"request_kind", turn.metadata.RequestKind,
-							"account", current.account.id(),
-							"rotation_source", turn.rotationFrom,
-							"hard_affinity_kinds", turn.hardKinds,
-							"compaction_replay", turn.compactReplay,
-							"created", turn.created,
-							"visible", turn.visible,
-							"status", websocketStatus(event),
-							"code", websocketErrorCode(event),
-						)
-					} else {
-						s.log.Debug("websocket turn completed",
-							"thread", turn.thread,
-							"turn", turn.metadata.TurnID,
-							"request_kind", turn.metadata.RequestKind,
-							"account", current.account.id(),
-							"rotation_source", turn.rotationFrom,
-							"hard_affinity_kinds", turn.hardKinds,
-							"compaction_replay", turn.compactReplay,
-							"duration", time.Since(turn.sent),
-						)
-					}
 					if turn.counted && event.Type != "error" {
 						model := event.Response.Model
 						if model == "" {
@@ -962,50 +467,72 @@ func (s *server) relayResponsesWebSocket(
 							serviceTier = turn.serviceTier
 						}
 						if !event.Response.Usage.empty() {
-							logResponseUsage(s.log, turn.thread, current.account.id(), model, serviceTier, turn.metadata, turn.rotationFrom, turn.compactReplay, time.Since(turn.sent), event.Response.Usage)
+							logResponseUsage(s.log, turn.statsThread, initial.account.id(), model, serviceTier, turn.metadata, time.Since(turn.sent), event.Response.Usage)
 						}
-						s.stats.recordUsage(turn.statsThread, current.account.id(), model, turn.effort, serviceTier, event.Response.Usage)
+						s.stats.recordUsage(turn.statsThread, initial.account.id(), model, turn.effort, serviceTier, event.Response.Usage)
 						if event.Type == "response.completed" {
-							s.stats.completed(turn.statsThread, current.account.id(), turn.metadata, time.Since(turn.sent))
-							s.compactionRotation.arm(turn.thread, current.account.id(), turn.metadata)
+							s.stats.completed(turn.statsThread, initial.account.id(), turn.metadata, time.Since(turn.sent))
 						}
-					}
-					if turn.rotationFrom != "" {
-						s.compactionRotation.finish(turn.metadata.ThreadID, "terminal_before_acceptance", current.account.id())
 					}
 					turns = turns[1:]
 				}
 			}
 		}
 		if err := downstream.Write(ctx, message.kind, message.data); err != nil {
-			s.log.Warn("downstream websocket response write failed",
-				"thread", thread,
-				"account", current.account.id(),
-				"active_turns", len(turns),
-				"error", err,
-			)
+			s.log.Warn("downstream websocket response write failed", "thread", thread, "account", initial.account.id(), "active_turns", len(turns), "error", err)
 			return
 		}
 	}
 }
 
-func readWebSocketMessages(
-	ctx context.Context,
-	conn *websocket.Conn,
-	downstream bool,
-	generation int,
-	messages chan<- websocketMessage,
-) {
+type websocketRejectionKind string
+
+const (
+	websocketRejectionNone            websocketRejectionKind = ""
+	websocketRejectionUnauthorized    websocketRejectionKind = "unauthorized"
+	websocketRejectionRateLimited     websocketRejectionKind = "rate limited"
+	websocketRejectionUsageLimit      websocketRejectionKind = "usage limit reached"
+	websocketRejectionConnectionLimit websocketRejectionKind = "connection limit reached"
+)
+
+func websocketRejection(event websocketEnvelope) websocketRejectionKind {
+	if websocketErrorIs(event, "websocket_connection_limit_reached") {
+		return websocketRejectionConnectionLimit
+	}
+	if websocketStatus(event) == http.StatusUnauthorized {
+		return websocketRejectionUnauthorized
+	}
+	if websocketErrorIs(event, "usage_limit_reached") {
+		return websocketRejectionUsageLimit
+	}
+	if websocketStatus(event) == http.StatusTooManyRequests || websocketErrorIs(event, "rate_limit_exceeded") {
+		return websocketRejectionRateLimited
+	}
+	return websocketRejectionNone
+}
+
+func (s *server) handleWebSocketRejection(account *Account, kind websocketRejectionKind, headers http.Header, thread string) {
+	id := account.id()
+	s.log.Info("account rejected websocket request", "thread", thread, "account", id, "reason", kind)
+	switch kind {
+	case websocketRejectionUnauthorized:
+		account.failed(0)
+	case websocketRejectionRateLimited:
+		account.rateLimited(headers, 0)
+		s.stats.rateLimited(id)
+	case websocketRejectionUsageLimit:
+		if account.markSpent() {
+			s.log.Info("account stopped accepting new websockets", "account", id, "source", "response", "thread", thread)
+		}
+		s.stats.rateLimited(id)
+	}
+}
+
+func readWebSocketMessages(ctx context.Context, conn *websocket.Conn, downstream bool, messages chan<- websocketMessage) {
 	go func() {
 		for {
 			kind, data, err := conn.Read(ctx)
-			message := websocketMessage{
-				downstream: downstream,
-				generation: generation,
-				kind:       kind,
-				data:       data,
-				err:        err,
-			}
+			message := websocketMessage{downstream: downstream, kind: kind, data: data, err: err}
 			select {
 			case messages <- message:
 			case <-ctx.Done():
@@ -1028,21 +555,6 @@ func (s *server) websocketClosed(thread string, account *Account) {
 	s.log.Debug("websocket closed", "thread", thread, "account", account.id())
 }
 
-func writeWebSocketAffinityError(ctx context.Context, conn *websocket.Conn, err error) {
-	status, message := affinityErrorStatus(err)
-	data, marshalErr := json.Marshal(map[string]any{
-		"type":   "error",
-		"status": status,
-		"error": map[string]string{
-			"code":    "affinity_error",
-			"message": message,
-		},
-	})
-	if marshalErr == nil {
-		conn.Write(ctx, websocket.MessageText, data)
-	}
-}
-
 func websocketStatus(event websocketEnvelope) int {
 	if event.Status != 0 {
 		return event.Status
@@ -1050,49 +562,17 @@ func websocketStatus(event websocketEnvelope) int {
 	return event.StatusCode
 }
 
-func websocketErrorCode(event websocketEnvelope) string {
-	if event.Error.Type != "" {
-		return event.Error.Type
+func websocketErrorIs(event websocketEnvelope, code string) bool {
+	return event.Error.Type == code || event.Error.Code == code || event.Response.Error.Type == code || event.Response.Error.Code == code
+}
+
+func websocketThread(headers http.Header) string {
+	for _, name := range []string{"session_id", "session-id", "x-codex-session-id", "x-codex-conversation-id", "thread-id"} {
+		if value := strings.TrimSpace(headers.Get(name)); value != "" {
+			return value
+		}
 	}
-	if event.Error.Code != "" {
-		return event.Error.Code
-	}
-	if event.Response.Error.Type != "" {
-		return event.Response.Error.Type
-	}
-	return event.Response.Error.Code
-}
-
-func websocketErrorMessage(event websocketEnvelope) string {
-	if event.Error.Message != "" {
-		return event.Error.Message
-	}
-	return event.Response.Error.Message
-}
-
-func websocketAccountModelUnsupported(event websocketEnvelope, model string) bool {
-	return accountModelUnsupported(websocketErrorCode(event), websocketErrorMessage(event), model)
-}
-
-func websocketRateLimited(event websocketEnvelope) bool {
-	code := websocketErrorCode(event)
-	return websocketStatus(event) == http.StatusTooManyRequests || code == "rate_limit_exceeded" || code == "usage_limit_reached"
-}
-
-func websocketUsageLimitReached(event websocketEnvelope) bool {
-	return websocketErrorCode(event) == "usage_limit_reached"
-}
-
-func websocketInvalidEncryptedContent(event websocketEnvelope) bool {
-	return websocketErrorCode(event) == "invalid_encrypted_content"
-}
-
-func websocketReplaySafe(event websocketEnvelope) bool {
-	return event.ID == "" && event.ResponseID == "" && event.Response.ID == ""
-}
-
-func websocketResponseVisible(event websocketEnvelope) bool {
-	return strings.HasPrefix(event.Type, "response.") && event.Type != "response.failed" && event.Type != "response.incomplete"
+	return ""
 }
 
 func websocketEventHeaders(values map[string]json.RawMessage) http.Header {

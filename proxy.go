@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"math/rand/v2"
@@ -37,8 +36,6 @@ type server struct {
 	pool                 *Pool
 	catalog              *modelCatalog
 	prices               *priceCatalog
-	affinity             *AffinityStore
-	compactionRotation   *compactionRotation
 	stats                *Stats
 	logins               accountLoginStore
 	upstream             string
@@ -175,9 +172,8 @@ func (s *server) forceFastTier(account *Account, model, serviceTier string, mess
 }
 
 type responseErrorPayload struct {
-	Type    string `json:"type"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Type string `json:"type"`
+	Code string `json:"code"`
 }
 
 func responseError(resp *http.Response) responseErrorPayload {
@@ -206,14 +202,6 @@ func responseUsageLimitReached(resp *http.Response) bool {
 
 func workspaceUsageLimitReached(headers http.Header) bool {
 	return strings.HasPrefix(strings.ToLower(headers.Get("x-codex-rate-limit-reached-type")), "workspace_")
-}
-
-func accountModelUnsupported(code, message, model string) bool {
-	if code != "invalid_request_error" || model == "" {
-		return false
-	}
-	want := fmt.Sprintf("The '%s' model is not supported when using Codex with a ChatGPT account.", model)
-	return strings.TrimSpace(message) == want
 }
 
 func (s *server) refreshed(account *Account, id string) bool {

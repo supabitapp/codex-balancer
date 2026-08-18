@@ -3,7 +3,7 @@
 <img width="3024" height="1898" alt="CleanShot 2026-08-14 at 12 20 51@2x" src="https://github.com/user-attachments/assets/9df4be94-7c98-406c-9af5-6ad5d97e4ca0" />
 
 
-Spread Codex turns across several ChatGPT accounts. 
+Spread Codex WebSocket connections across several ChatGPT accounts.
 
 Dead simple, one WebSocket-only proxied endpoint, 1 SQLite database.
 
@@ -24,7 +24,7 @@ Or open `/accounts` in a browser to do it on the web.
 
 State lives in `~/.codex-balancer/state.db`.
 
-SQLite stores credentials, affinity owners, routed turns, and events. The
+SQLite stores credentials, routed turns, and events. The
 server fetches current limits, reset credits, auth state, and model lists. It
 derives status, totals, activity, response time, and current-month cost from
 those facts.
@@ -39,15 +39,16 @@ codex-balancer server           # serve the proxy
 The usage poll redeems the earliest available rate-limit reset credit once it
 is within one hour of expiry.
 
-Hard account ownership always wins. Portable work normally keeps soft affinity,
-then prefers accounts with a banked reset that expires within 24 hours. When a
-rate-limit window drops below 5%, that account enters draining and takes all
-portable work. WebSocket clients stay connected while the proxy switches
-upstream accounts between turns. Once an account stops accepting new sockets,
-its existing sockets keep serving until each socket rejects a turn or closes.
-Turns on a draining account are forced to the fast service tier when the
-account's model catalog supports it, so the remaining quota empties sooner.
-Remaining routes use the lowest limit use, then the account used least recently.
+Balancing applies to new client WebSocket connections. The proxy selects one
+account for each connection and keeps it pinned until the connection closes or
+the proxy confirms that the account rejected a request. A rejection causes the
+client to reconnect and the proxy to reroute the new connection. Draining and
+priority affect new connections. New connections placed on a draining account
+use the fast service tier when that account's model catalog supports it. Turns
+on existing pinned connections also use the fast tier while their account is
+draining, so the remaining quota empties sooner. Other new connections first
+prefer an account with a banked reset that expires within 24 hours, then use the
+lowest limit use and the account used least recently.
 
 In the TUI, select an account and press `r` to cycle its routing mode through
 normal, priority, and draining. Press Space to pause it.

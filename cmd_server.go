@@ -101,33 +101,29 @@ func serverCmd(args []string) error {
 			prices.install(snapshot)
 		}
 	}
-	compactionRotation := newCompactionRotation(log)
 	stats, err := newPersistentStats(store, prices.current(), func(err error) {
 		log.Error("state write failed", "error", err)
 	})
 	if err != nil {
 		return fmt.Errorf("load dashboard state: %w", err)
 	}
-	affinity := &AffinityStore{store: store}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv := &server{
-		ctx:                ctx,
-		pool:               pool,
-		catalog:            newModelCatalog(),
-		prices:             prices,
-		affinity:           affinity,
-		compactionRotation: compactionRotation,
-		stats:              stats,
-		upstream:           *upstream,
-		key:                *key,
-		clientIDKey:        clientIDKey,
-		client:             newProxyClient(),
-		log:                log,
-		admission:          newAdmissionGate(maxActiveProxyRequests),
-		resources:          newResourceMonitor(),
+		ctx:         ctx,
+		pool:        pool,
+		catalog:     newModelCatalog(),
+		prices:      prices,
+		stats:       stats,
+		upstream:    *upstream,
+		key:         *key,
+		clientIDKey: clientIDKey,
+		client:      newProxyClient(),
+		log:         log,
+		admission:   newAdmissionGate(maxActiveProxyRequests),
+		resources:   newResourceMonitor(),
 	}
 	pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)

@@ -10,7 +10,7 @@ import (
 )
 
 func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
-	stats := newStats()
+	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()
 	stats.applyRouted(now, "inactive", "", "account", "", "", "", turnMetadata{})
 	for i := range 150 {
@@ -33,7 +33,7 @@ func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
 func TestStatsEndpointReportsDrainingRoutingMode(t *testing.T) {
 	account := testAccount("account-a", 20)
 	account.RoutingMode = routingModeDraining
-	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(priceSnapshot{})}
 	request := httptest.NewRequest(http.MethodGet, "/stats", nil)
 	response := httptest.NewRecorder()
 
@@ -48,7 +48,7 @@ func TestStatsEndpointReportsDrainingRoutingMode(t *testing.T) {
 }
 
 func TestSnapshotKeepsThreadsUntilTheirLastLiveReferenceCloses(t *testing.T) {
-	stats := newStats()
+	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()
 	stats.activateThread("019f02")
 	stats.activateThread("019f02")
@@ -72,7 +72,7 @@ func TestSnapshotKeepsThreadsUntilTheirLastLiveReferenceCloses(t *testing.T) {
 }
 
 func TestSnapshotSortsActiveThreadsByLastActivity(t *testing.T) {
-	stats := newStats()
+	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()
 	for _, thread := range []struct {
 		key  string
@@ -93,7 +93,7 @@ func TestSnapshotSortsActiveThreadsByLastActivity(t *testing.T) {
 }
 
 func TestAccountSnapshotUsesLast24Hours(t *testing.T) {
-	stats := newStats()
+	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()
 	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", turnMetadata{})
 	stats.applyRouted(now.Add(-23*time.Hour-30*time.Minute), "", "", "account-a", "", "", "", turnMetadata{})
@@ -116,7 +116,7 @@ func TestAccountSnapshotUsesLast24Hours(t *testing.T) {
 }
 
 func TestThreadUsageFollowsCurrentLiveRoute(t *testing.T) {
-	stats := newStats()
+	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()
 	old := now.Add(-time.Hour)
 	stats.activateThread("thread")
@@ -140,7 +140,7 @@ func TestThreadUsageFollowsCurrentLiveRoute(t *testing.T) {
 }
 
 func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
-	stats := newStats()
+	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "compact-turn"}
 	stats.activateThread("thread")
@@ -173,7 +173,7 @@ func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
 }
 
 func TestCodexThreadsKeepSeparateMetadataWithinOneRoute(t *testing.T) {
-	stats := newStats()
+	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()
 	mainMetadata := turnMetadata{RequestKind: "turn", ThreadID: "main-thread"}
 	subagentMetadata := turnMetadata{RequestKind: "turn", ThreadID: "subagent-thread", SubagentKind: "thread_spawn"}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -36,7 +37,7 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	want := []string{"accounts", "attempts", "bindings", "client_identity", "events", "price_catalog"}
+	want := []string{"accounts", "attempts", "client_identity", "events", "price_catalog"}
 	if !slices.Equal(tables, want) {
 		t.Fatalf("tables = %v, want %v", tables, want)
 	}
@@ -95,7 +96,7 @@ func TestPoolCyclesRoutingModeAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded) != 1 || reloaded[0].routingMode() != routingModeDraining {
+	if len(reloaded) != 1 || reloaded[0].routingCandidate().mode != routingModeDraining {
 		t.Fatalf("reloaded accounts = %+v", reloaded)
 	}
 }
@@ -180,26 +181,38 @@ func TestStateStoreMigratesClientIDsToIPs(t *testing.T) {
 	}
 }
 
-func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
+func TestStateStoreRemovesLegacyAffinityAndRotationData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`DROP TABLE price_catalog;
-		ALTER TABLE accounts DROP COLUMN routing_mode;
-		ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
-		ALTER TABLE bindings DROP COLUMN last_used_at_ns;
-		ALTER TABLE events DROP COLUMN thread_key;
-		ALTER TABLE events DROP COLUMN total_tokens;
-		ALTER TABLE events DROP COLUMN reasoning_tokens;
-	ALTER TABLE events DROP COLUMN reasoning_effort;
-	ALTER TABLE attempts ADD COLUMN transport TEXT NOT NULL DEFAULT 'ws';
-	ALTER TABLE attempts DROP COLUMN reasoning_effort;
-		ALTER TABLE attempts DROP COLUMN turn_metadata;
-		ALTER TABLE attempts DROP COLUMN client_ip;
-		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
-		PRAGMA user_version = 5;`); err != nil {
+	if _, err := store.db.Exec(`CREATE TABLE bindings (
+		id INTEGER PRIMARY KEY,
+		kind TEXT NOT NULL,
+		value TEXT NOT NULL,
+		account_id TEXT NOT NULL,
+		created_at_ns INTEGER NOT NULL,
+		last_used_at_ns INTEGER NOT NULL,
+		abandoned_at_ns INTEGER,
+		UNIQUE (kind, value)
+	) STRICT;
+	INSERT INTO bindings (kind, value, account_id, created_at_ns, last_used_at_ns, abandoned_at_ns)
+		VALUES ('session', 'legacy-session', 'account-a', 1, 1, NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []storedEvent{
+		{At: time.Unix(0, 2), Kind: "compaction switch", Account: "account-a"},
+		{At: time.Unix(0, 3), Kind: "rotation reconnect", Account: "account-a"},
+		{At: time.Unix(0, 4), Kind: "rotated", Account: "account-a"},
+		{At: time.Unix(0, 5), Kind: eventResponseCompleted, Account: "account-a", Thread: "thread", Detail: "compaction"},
+		{At: time.Unix(0, 6), Kind: eventFailover, Account: "account-a", Detail: "kept"},
+	} {
+		if err := store.recordEvent(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(stateMigrations)-1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -211,13 +224,29 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	var columns int
-	if err := reopened.db.QueryRow(`SELECT count(*) FROM pragma_table_info('bindings')
-		WHERE name IN ('last_used_at_ns', 'abandoned_at_ns')`).Scan(&columns); err != nil {
+	var bindings int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'bindings'`).Scan(&bindings); err != nil {
 		t.Fatal(err)
 	}
-	if columns != 2 {
-		t.Fatalf("affinity lifecycle columns = %d, want 2", columns)
+	if bindings != 0 {
+		t.Fatal("bindings table remains")
+	}
+	var legacy int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM events WHERE kind IN ('compaction switch', 'rotation reconnect', 'rotated')`).Scan(&legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy != 0 {
+		t.Fatalf("legacy rotation events = %d, want 0", legacy)
+	}
+	var normal, failover int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM events WHERE kind = ? AND detail = 'compaction'`, eventResponseCompleted).Scan(&normal); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM events WHERE kind = ? AND detail = 'kept'`, eventFailover).Scan(&failover); err != nil {
+		t.Fatal(err)
+	}
+	if normal != 1 || failover != 1 {
+		t.Fatalf("preserved events = compaction %d, failover %d", normal, failover)
 	}
 }
 
@@ -229,6 +258,16 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`DROP TABLE price_catalog;
 	ALTER TABLE accounts DROP COLUMN routing_mode;
+	CREATE TABLE bindings (
+		id INTEGER PRIMARY KEY,
+		kind TEXT NOT NULL,
+		value TEXT NOT NULL,
+		account_id TEXT NOT NULL,
+		created_at_ns INTEGER NOT NULL,
+		last_used_at_ns INTEGER NOT NULL,
+		abandoned_at_ns INTEGER,
+		UNIQUE (kind, value)
+	) STRICT;
 	ALTER TABLE attempts ADD COLUMN transport TEXT NOT NULL DEFAULT 'ws';
 	ALTER TABLE attempts DROP COLUMN client_ip;
 		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
@@ -329,7 +368,6 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 		t.Fatalf("stored reasoning effort = %q, want xhigh", effort)
 	}
 	stats.note("account added", "account-a", "")
-	stats.compactionSwitched("codex-thread", "account-a", "account-b")
 	stats.websocketOpened("account-a")
 	wantCost, _ := prices.estimate("gpt-5.6-sol", serviceTierFast, usage)
 	if err := store.Close(); err != nil {
@@ -361,12 +399,11 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	if len(snapshot.Threads) != 0 {
 		t.Fatalf("restored inactive threads = %+v", snapshot.Threads)
 	}
-	if len(snapshot.Events) != 4 {
+	if len(snapshot.Events) != 3 {
 		t.Fatalf("events = %+v", snapshot.Events)
 	}
-	switchEvent := snapshot.Events[3]
-	if switchEvent.Kind != eventCompactionSwitch || switchEvent.Thread != "codex-thread" || switchEvent.SourceAccount != "account-a" || switchEvent.Account != "account-b" {
-		t.Fatalf("compaction switch = %+v", switchEvent)
+	if snapshot.Events[2].Kind != "account added" || snapshot.Events[2].Account != "account-a" {
+		t.Fatalf("account event = %+v", snapshot.Events[2])
 	}
 }
 
@@ -392,7 +429,6 @@ func TestStatsRestoreDoesNotMarkHistoricalThreadsLive(t *testing.T) {
 	target := turnMetadata{RequestKind: "normal", ThreadID: "codex-thread", TurnID: "next-turn"}
 	targetUsage := responseUsage{InputTokens: 100, OutputTokens: 20}
 	stats.routed("thread", "client", "account-b", "gpt-5.6-sol", "xhigh", "default", target)
-	stats.compactionSwitched("codex-thread", "account-a", "account-b")
 	stats.answered("thread", "account-b", 200*time.Millisecond)
 	stats.completed("thread", "account-b", target, 2*time.Second)
 	stats.recordUsage("thread", "account-b", "gpt-5.6-sol", "xhigh", "default", targetUsage)

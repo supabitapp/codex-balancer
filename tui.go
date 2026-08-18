@@ -302,7 +302,7 @@ func (d dashboard) accounts(limit int) string {
 	if limit < len(accounts) {
 		title = fmt.Sprintf("ACCOUNTS  %d-%d/%d", start+1, end, len(accounts))
 	}
-	rows := []string{styles.section.Render(title) + styles.dim.Render("   ↑↓ pick · r route · space pauses"), "", hdr, sep}
+	rows := []string{styles.section.Render(title) + styles.dim.Render("   ↑↓ pick · r mode · space pauses"), "", hdr, sep}
 
 	for i, a := range accounts[start:end] {
 		primary, secondary, _, reauth := a.health()
@@ -408,13 +408,6 @@ func formatDecimal(value float64) string {
 
 func formatPercent(value float64) string {
 	return formatDecimal(value) + "%"
-}
-
-func plural(n int64, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func label(a *Account) string {
@@ -552,10 +545,6 @@ func (d dashboard) events(width, height int) string {
 	views := make([]eventView, 0, min(len(d.snap.Events), limit))
 	for i := len(d.snap.Events) - 1; i >= 0 && len(views) < limit; i-- {
 		e := d.snap.Events[i]
-		account, detail, visible := eventText(e, names)
-		if !visible {
-			continue
-		}
 		style := styles.dim
 		switch e.Kind {
 		case eventFailover:
@@ -563,7 +552,7 @@ func (d dashboard) events(width, height int) string {
 		case eventRateLimited:
 			style = styles.hot
 		}
-		views = append(views, eventView{e.At.Format("15:04:05"), e.Kind, account, detail, style})
+		views = append(views, eventView{e.At.Format("15:04:05"), displayEventKind(e.Kind), eventAccountName(names, e.Account), e.Detail, style})
 	}
 	timeWidth := len("Time")
 	kindWidth := len("Event")
@@ -620,7 +609,7 @@ func (d dashboard) totals(width int) string {
 	stats := [3][3]total{
 		{
 			{"turns", fmt.Sprintf("%d", s.Turns)},
-			{"failovers", fmt.Sprintf("%d", s.Failures)},
+			{"connection retries", fmt.Sprintf("%d", s.Failures)},
 			{"rate limits", fmt.Sprintf("%d", s.Limited)},
 		},
 		{
@@ -716,10 +705,6 @@ func short(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd%dh", int(d.Hours())/24, int(d.Hours())%24)
 	}
-}
-
-func ago(t time.Time) string {
-	return agoAt(time.Now(), t)
 }
 
 func agoAt(now, then time.Time) string {

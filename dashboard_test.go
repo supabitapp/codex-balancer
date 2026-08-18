@@ -15,7 +15,7 @@ import (
 )
 
 func TestRootRedirectsToDashboard(t *testing.T) {
-	server := &server{pool: &Pool{}, stats: newStats()}
+	server := &server{pool: &Pool{}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
 
@@ -27,7 +27,7 @@ func TestRootRedirectsToDashboard(t *testing.T) {
 }
 
 func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
-	server := &server{pool: &Pool{}, stats: newStats()}
+	server := &server{pool: &Pool{}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
 
@@ -70,7 +70,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 }
 
 func TestWebAssetsAreServedFromBinary(t *testing.T) {
-	server := &server{pool: &Pool{}, stats: newStats()}
+	server := &server{pool: &Pool{}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
 
@@ -109,14 +109,10 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats.routed("019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, turnMetadata{})
 	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "high", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
-	stats.note(eventLegacyReconnect, "source", "019fe701-7a55-7760-8d38-d1cd74544ef8")
-	stats.note(eventLegacyRotated, "unused", "after compaction")
-	stats.compactionSwitched("019fe827-9296-7f82-b526-180a27ca764c", "source", "unused")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
 	account := accountFromState(accountState{IDToken: "x." + tokenPayload + ".x"})
-	source := testAccount("source", 20)
 	server := &server{
-		pool:        &Pool{accounts: []*Account{account, source}},
+		pool:        &Pool{accounts: []*Account{account}},
 		stats:       stats,
 		key:         "secret",
 		clientIDKey: []byte("secret"),
@@ -159,7 +155,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`aria-label="Fast"`,
 		`API estimate`,
 		`$30.00`,
-		`<td>failover</td>`,
+		`<td>connection retry</td>`,
 		`&lt;script&gt;upstream unavailable&lt;/script&gt;`,
 	} {
 		if !strings.Contains(body, expected) {
@@ -171,7 +167,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 			t.Fatalf("dashboard update replaces stable container %q", replaced)
 		}
 	}
-	for _, private := range []string{"alice@example.com", "source@example.com", "019fe5c2private", "019fe701-7a55-7760-8d38-d1cd74544ef8", "019fe827-9296-7f82-b526-180a27ca764c", "019fe827", "rotation reconnect", "<td>rotated</td>", "<td>compaction switch</td>", "after compaction", "203.0.113.42", "<script>"} {
+	for _, private := range []string{"alice@example.com", "019fe5c2private", "203.0.113.42", "<script>"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard update exposed %q", private)
 		}
@@ -183,7 +179,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	account := testAccount("account-a", 20)
 	account.adoptResetCredits(0, nil)
 	other := testAccount("account-b", 20)
-	stats := newStats()
+	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", turnMetadata{})
 	stats.applyRouted(now, "", "", "account-a", "", "", "", turnMetadata{})
 	for range 100 {
@@ -244,7 +240,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 				}
 				accounts[i] = account
 			}
-			server := &server{pool: &Pool{accounts: accounts}, stats: newStats()}
+			server := &server{pool: &Pool{accounts: accounts}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 
 			view := server.currentDashboard(now)
 			if view.Overview[0].Name != "Capacity" || view.Overview[0].Value != test.want || view.Overview[0].ValueClass != test.wantClass || view.Overview[0].Info != test.wantInfo || view.Overview[0].InfoStrong != test.wantInfoStrong {
@@ -288,7 +284,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		resetsAt:    now.Add(6 * 24 * time.Hour),
 		seenAt:      now,
 	}
-	poolServer := &server{pool: &Pool{accounts: []*Account{monthly, weekly}}, stats: newStats()}
+	poolServer := &server{pool: &Pool{accounts: []*Account{monthly, weekly}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 	if got := poolServer.currentDashboard(now).Overview[0].Value; !strings.HasPrefix(got, "⚠️ Runs out in ") {
 		t.Fatalf("mixed limit windows on track = %q, want close", got)
 	}
@@ -307,7 +303,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			pro.secondary = window{usedPercent: test.proUsed, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
 			goAccount := testAccountWithPlan("go", test.goUsed, "go")
 			goAccount.secondary = window{usedPercent: test.goUsed, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
-			server := &server{pool: &Pool{accounts: []*Account{pro, goAccount}}, stats: newStats()}
+			server := &server{pool: &Pool{accounts: []*Account{pro, goAccount}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 			if got := server.currentDashboard(now).Overview[0].Value; !strings.HasPrefix(got, test.want) {
 				t.Fatalf("plan-weighted on track = %q, want %q", got, test.want)
 			}
@@ -365,7 +361,7 @@ func TestDashboardBankedResetTooltipShowsExpirations(t *testing.T) {
 			Description: "More detail",
 		},
 	})
-	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 
 	stats := server.currentStats(now)
 	if len(stats.Accounts) != 1 || len(stats.Accounts[0].ResetCredits) != 2 {
@@ -402,7 +398,7 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 	account.primary = window{usedPercent: 10, minutes: 300, resetsAt: now.Add(4 * time.Hour), seenAt: now}
 	account.secondary = window{usedPercent: 80, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
 	adoptTestResetCredit(account, now.Add(30*time.Minute))
-	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 
 	payload, err := renderDashboard("dashboard", server.currentDashboard(now))
 	if err != nil {
@@ -413,7 +409,7 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 		`<span>1 priority</span>`,
 		`class="status-mark status-priority"`,
 		`>◆</span> priority</span>`,
-		`data-tooltip="Prioritized for new routing: a banked reset expires in 30m; 20% weekly capacity remains."`,
+		`data-tooltip="Prioritized for new connections: a banked reset expires in 30m; 20% weekly capacity remains."`,
 		`aria-describedby="dashboard-tooltip"`,
 		`tabindex="0"`,
 	} {
@@ -426,7 +422,7 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 func TestDashboardExplainsAutomaticDrainingStatus(t *testing.T) {
 	now := time.Date(2026, time.August, 12, 20, 0, 0, 0, time.UTC)
 	account := testAccount("account-a", 96)
-	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 
 	stats := server.currentStats(now)
 	if len(stats.Accounts) != 1 || stats.Accounts[0].Status != accountDraining || stats.Accounts[0].RoutingMode != routingModeNormal {
@@ -441,7 +437,7 @@ func TestDashboardExplainsAutomaticDrainingStatus(t *testing.T) {
 		`<span>1 draining</span>`,
 		`class="status-mark status-draining"`,
 		`>▼</span> draining</span>`,
-		`data-tooltip="A rate-limit window has less than 5% left. Portable turns use this account on the fast tier. Clients stay connected while upstream accounts switch between turns."`,
+		`data-tooltip="A rate-limit window has less than 5% left. Turns on pinned connections use the fast service tier when the model catalog for this account supports it."`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q:\n%s", expected, body)
@@ -452,14 +448,14 @@ func TestDashboardExplainsAutomaticDrainingStatus(t *testing.T) {
 func TestDashboardExplainsManualRoutingStatus(t *testing.T) {
 	now := time.Date(2026, time.August, 12, 20, 0, 0, 0, time.UTC)
 	account := testAccount("account-a", 20)
-	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStats()}
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 
 	for _, test := range []struct {
 		mode routingMode
 		info string
 	}{
-		{routingModePriority, "Manual priority for fresh portable work. Existing soft-affined threads stay on their account."},
-		{routingModeDraining, "Manual draining. Portable turns use this account on the fast tier. Clients stay connected while upstream accounts switch between turns."},
+		{routingModePriority, "Manual priority for new connections."},
+		{routingModeDraining, "Manual draining. Turns on pinned connections use the fast service tier when the model catalog for this account supports it."},
 	} {
 		account.RoutingMode = test.mode
 		view := server.currentDashboard(now)
@@ -721,7 +717,7 @@ func TestDashboardContextShowsPercentAndCompactions(t *testing.T) {
 }
 
 func TestDashboardWebSocketRejectsWhenFull(t *testing.T) {
-	server := &server{pool: &Pool{}, stats: newStats()}
+	server := &server{pool: &Pool{}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 	server.dashboardConnections.Store(dashboardMaxConnections)
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()

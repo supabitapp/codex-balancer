@@ -248,15 +248,11 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	events := make([]dashboardEventView, 0, len(snapshot.Events))
 	for i := len(snapshot.Events) - 1; i >= 0; i-- {
 		event := snapshot.Events[i]
-		account, detail, visible := eventText(event, names)
-		if !visible {
-			continue
-		}
 		events = append(events, dashboardEventView{
 			At:      event.At.UTC().Format("15:04:05") + " UTC",
-			Kind:    event.Kind,
-			Account: account,
-			Detail:  detail,
+			Kind:    displayEventKind(event.Kind),
+			Account: eventAccountName(names, event.Account),
+			Detail:  event.Detail,
 		})
 	}
 
@@ -569,12 +565,12 @@ func dashboardAccountStatusInfo(now time.Time, account accountStatsResponse) str
 	switch account.Status {
 	case accountDraining:
 		if account.RoutingMode == routingModeDraining {
-			return "Manual draining. Portable turns use this account on the fast tier. Clients stay connected while upstream accounts switch between turns."
+			return "Manual draining. Turns on pinned connections use the fast service tier when the model catalog for this account supports it."
 		}
-		return "A rate-limit window has less than 5% left. Portable turns use this account on the fast tier. Clients stay connected while upstream accounts switch between turns."
+		return "A rate-limit window has less than 5% left. Turns on pinned connections use the fast service tier when the model catalog for this account supports it."
 	case accountPriority:
 		if account.RoutingMode == routingModePriority {
-			return "Manual priority for fresh portable work. Existing soft-affined threads stay on their account."
+			return "Manual priority for new connections."
 		}
 		return dashboardRoutingPriorityInfo(now, account.RoutingPriority)
 	default:
@@ -587,10 +583,17 @@ func dashboardRoutingPriorityInfo(now time.Time, priority *routingPriorityStatsR
 		return ""
 	}
 	return fmt.Sprintf(
-		"Prioritized for new routing: a banked reset expires in %s; %s weekly capacity remains.",
+		"Prioritized for new connections: a banked reset expires in %s; %s weekly capacity remains.",
 		short(priority.ExpiresAt.Sub(now)),
 		formatPercent(priority.RemainingPercent),
 	)
+}
+
+func displayEventKind(kind string) string {
+	if kind == eventFailover {
+		return "connection retry"
+	}
+	return kind
 }
 
 func dashboardNumber(value int64) string {

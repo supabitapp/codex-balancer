@@ -26,9 +26,6 @@ const (
 	eventResponseAnswered  = "response answered"
 	eventResponseCompleted = "response completed"
 	eventResponseUsage     = "response usage"
-	eventCompactionSwitch  = "compaction switch"
-	eventLegacyReconnect   = "rotation reconnect"
-	eventLegacyRotated     = "rotated"
 )
 
 const serviceTierFast = "priority"
@@ -96,16 +93,10 @@ type threadModel struct {
 }
 
 type Event struct {
-	At            time.Time `json:"at"`
-	Kind          string    `json:"kind"`
-	Account       string    `json:"account"`
-	SourceAccount string    `json:"source_account,omitempty"`
-	Thread        string    `json:"thread,omitempty"`
-	Detail        string    `json:"detail"`
-}
-
-func newStats() *Stats {
-	return newStatsWithPrices(priceSnapshot{})
+	At      time.Time `json:"at"`
+	Kind    string    `json:"kind"`
+	Account string    `json:"account"`
+	Detail  string    `json:"detail"`
 }
 
 func newStatsWithPrices(prices priceSnapshot) *Stats {
@@ -145,22 +136,6 @@ func (s *Stats) note(kind, account, detail string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.appendEvent(Event{At: now, Kind: kind, Account: account, Detail: detail})
-}
-
-func (s *Stats) compactionSwitched(thread, source, target string) {
-	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventCompactionSwitch, Account: target, Thread: thread, Detail: source})
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.appendEvent(Event{At: now, Kind: eventCompactionSwitch, Account: target, SourceAccount: source, Thread: thread})
-}
-
-func eventText(event Event, names map[string]string) (string, string, bool) {
-	switch event.Kind {
-	case eventCompactionSwitch, eventLegacyReconnect, eventLegacyRotated:
-		return "", "", false
-	}
-	return eventAccountName(names, event.Account), event.Detail, true
 }
 
 func eventAccountName(names map[string]string, account string) string {

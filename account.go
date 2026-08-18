@@ -296,12 +296,6 @@ func (a *Account) applyPersisted(next accountState) bool {
 	return a.accountState != before
 }
 
-func (a *Account) routingMode() routingMode {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.RoutingMode.normalized()
-}
-
 type authClaims struct {
 	Email string `json:"email"`
 	Auth  struct {
@@ -350,20 +344,6 @@ func (a *Account) expires() time.Time {
 func (a *Account) id() string    { return a.claims().Auth.AccountID }
 func (a *Account) email() string { return a.claims().Email }
 func (a *Account) plan() string  { return a.claims().Auth.Plan }
-
-func (a *Account) available(now time.Time) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return accountAvailableAt(a.Paused, a.dead, a.cooldown, a.spent, a.quotaKnown(), now)
-}
-
-func (a *Account) quotaKnown() bool {
-	return a.primary.known() || a.secondary.known()
-}
-
-func accountAvailableAt(paused bool, reauth string, cooldown time.Time, spent, known bool, now time.Time) bool {
-	return !paused && reauth == "" && !spent && known && now.After(cooldown)
-}
 
 func (a *Account) paused() bool {
 	a.mu.Lock()

@@ -168,37 +168,16 @@ func (p *Pool) persistTokens(state accountState) (accountState, error) {
 	return persisted, err
 }
 
-func (p *Pool) pick(required, preferred string, skip, allowed map[string]bool) *Account {
-	return p.route(required, preferred, skip, allowed).account
-}
-
-func (p *Pool) drainTarget(allowed map[string]bool) *Account {
-	account := p.route("", "", nil, allowed).account
-	if account == nil || !account.routingCandidate().draining() {
-		return nil
-	}
-	return account
-}
-
-func (p *Pool) route(required, preferred string, skip, allowed map[string]bool) routingDecision {
+func (p *Pool) route(skip map[string]bool) routingDecision {
 	now := time.Now()
 	decision := routingDecision{now: now}
 	for _, account := range p.all() {
 		decision.candidates = append(decision.candidates, account.routingCandidate())
 	}
-	if required != "" {
-		for _, candidate := range decision.candidates {
-			if candidate.id == required && !skip[required] && accountAllowed(allowed, required) && candidate.available(now) {
-				decision.account = candidate.account
-				break
-			}
-		}
-		return decision
-	}
 	var draining *routingCandidate
 	for i := range decision.candidates {
 		candidate := &decision.candidates[i]
-		if skip[candidate.id] || !accountAllowed(allowed, candidate.id) || !candidate.available(now) || !candidate.draining() {
+		if skip[candidate.id] || !candidate.available(now) || !candidate.draining() {
 			continue
 		}
 		if draining == nil || candidate.drainsBefore(*draining) {
@@ -209,19 +188,10 @@ func (p *Pool) route(required, preferred string, skip, allowed map[string]bool) 
 		decision.account = draining.account
 		return decision
 	}
-	if preferred != "" && !skip[preferred] && accountAllowed(allowed, preferred) {
-		for _, candidate := range decision.candidates {
-			if candidate.id == preferred && candidate.available(now) {
-				decision.account = candidate.account
-				return decision
-			}
-		}
-	}
-
 	var best *routingCandidate
 	for i := range decision.candidates {
 		candidate := &decision.candidates[i]
-		if skip[candidate.id] || !accountAllowed(allowed, candidate.id) || !candidate.available(now) {
+		if skip[candidate.id] || !candidate.available(now) {
 			continue
 		}
 		if best == nil || candidate.routesBefore(*best, now) {
@@ -232,10 +202,6 @@ func (p *Pool) route(required, preferred string, skip, allowed map[string]bool) 
 		decision.account = best.account
 	}
 	return decision
-}
-
-func accountAllowed(allowed map[string]bool, id string) bool {
-	return allowed == nil || allowed[id]
 }
 
 func (a *Account) routingCandidate() routingCandidate {
@@ -262,7 +228,7 @@ func (a *Account) routingCandidate() routingCandidate {
 }
 
 func (c routingCandidate) available(now time.Time) bool {
-	return accountAvailableAt(c.paused, c.reauth, c.cooldown, c.spent, c.quotaKnown(), now)
+	return !c.paused && c.reauth == "" && !c.spent && c.quotaKnown() && now.After(c.cooldown)
 }
 
 func (c routingCandidate) status(now time.Time) accountStatus {
@@ -330,22 +296,6 @@ func (c routingCandidate) drainReset() time.Time {
 		}
 	}
 	return reset
-}
-
-func (c routingCandidate) existingConnectionReason(now time.Time) string {
-	if c.paused || c.reauth != "" {
-		return ""
-	}
-	if c.spent {
-		return "spent"
-	}
-	if now.Before(c.cooldown) {
-		return "cooling"
-	}
-	if c.draining() {
-		return "draining"
-	}
-	return ""
 }
 
 func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool) {

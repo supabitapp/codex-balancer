@@ -67,39 +67,6 @@ func (c *modelCatalog) replace(active []string, fresh map[string][]modelEntry, c
 	c.refreshedAt = time.Now()
 }
 
-func (c *modelCatalog) allowedAccounts(accounts []*Account, model, serviceTier string) map[string]bool {
-	model = strings.ToLower(strings.TrimSpace(model))
-	if model == "" {
-		return nil
-	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	now := time.Now()
-	for _, account := range accounts {
-		if !account.available(now) {
-			continue
-		}
-		if _, ok := c.accounts[account.id()]; !ok {
-			return nil
-		}
-	}
-
-	serviceTier = canonicalServiceTier(serviceTier)
-	allowed := map[string]bool{}
-	for _, account := range accounts {
-		entry, ok := c.accounts[account.id()][model]
-		if !ok {
-			continue
-		}
-		if serviceTier != "" && !modelSupportsServiceTier(entry, serviceTier) {
-			continue
-		}
-		allowed[account.id()] = true
-	}
-	return allowed
-}
-
 func (c *modelCatalog) accountSupportsServiceTier(accountID, model, serviceTier string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	c.mu.RLock()
@@ -112,24 +79,73 @@ func (c *modelCatalog) entries() []modelEntry {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	merged := map[string]modelEntry{}
-	for _, account := range c.accounts {
-		for slug, entry := range account {
-			if existing, ok := merged[slug]; ok {
-				mergeModelServiceTiers(existing, entry)
-				continue
-			}
-			merged[slug] = cloneModelEntry(entry)
+	if len(c.active) == 0 {
+		return []modelEntry{}
+	}
+	accountIDs := make([]string, 0, len(c.active))
+	for id := range c.active {
+		accountIDs = append(accountIDs, id)
+	}
+	slices.Sort(accountIDs)
+	base, ok := c.accounts[accountIDs[0]]
+	if !ok {
+		return []modelEntry{}
+	}
+	for _, id := range accountIDs[1:] {
+		if _, ok := c.accounts[id]; !ok {
+			return []modelEntry{}
 		}
 	}
-	entries := make([]modelEntry, 0, len(merged))
-	for _, entry := range merged {
+	entries := make([]modelEntry, 0, len(base))
+	for slug, entry := range base {
+		covered := true
+		for _, id := range accountIDs[1:] {
+			if _, ok := c.accounts[id][slug]; !ok {
+				covered = false
+				break
+			}
+		}
+		if !covered {
+			continue
+		}
+		entry = cloneModelEntry(entry)
+		tiers := c.commonServiceTiers(accountIDs, slug)
+		if len(tiers) == 0 {
+			delete(entry, "service_tiers")
+		} else {
+			entry["service_tiers"] = tiers
+		}
 		entries = append(entries, entry)
 	}
 	slices.SortFunc(entries, func(a, b modelEntry) int {
 		return strings.Compare(modelSlug(a), modelSlug(b))
 	})
 	return entries
+}
+
+func (c *modelCatalog) commonServiceTiers(accountIDs []string, slug string) []any {
+	base := c.accounts[accountIDs[0]][slug]
+	values, _ := base["service_tiers"].([]any)
+	tiers := make([]any, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		id := modelServiceTierID(value)
+		if id == "" || seen[id] {
+			continue
+		}
+		covered := true
+		for _, accountID := range accountIDs[1:] {
+			if !modelSupportsServiceTier(c.accounts[accountID][slug], id) {
+				covered = false
+				break
+			}
+		}
+		if covered {
+			seen[id] = true
+			tiers = append(tiers, value)
+		}
+	}
+	return tiers
 }
 
 func (c *modelCatalog) accountModelCount(id string) int {
@@ -423,14 +439,18 @@ func modelServiceTiers(entry modelEntry) []string {
 	values, _ := entry["service_tiers"].([]any)
 	tiers := make([]string, 0, len(values))
 	for _, value := range values {
-		tier, _ := value.(map[string]any)
-		id, _ := tier["id"].(string)
-		id = canonicalServiceTier(id)
+		id := modelServiceTierID(value)
 		if id != "" {
 			tiers = append(tiers, id)
 		}
 	}
 	return tiers
+}
+
+func modelServiceTierID(value any) string {
+	tier, _ := value.(map[string]any)
+	id, _ := tier["id"].(string)
+	return canonicalServiceTier(id)
 }
 
 func cloneModelEntry(entry modelEntry) modelEntry {
@@ -439,25 +459,4 @@ func cloneModelEntry(entry modelEntry) modelEntry {
 		clone[key] = value
 	}
 	return clone
-}
-
-func mergeModelServiceTiers(target, source modelEntry) {
-	seen := map[string]bool{}
-	merged := []any{}
-	for _, entry := range []modelEntry{target, source} {
-		values, _ := entry["service_tiers"].([]any)
-		for _, value := range values {
-			tier, _ := value.(map[string]any)
-			id, _ := tier["id"].(string)
-			id = canonicalServiceTier(id)
-			if id == "" || seen[id] {
-				continue
-			}
-			seen[id] = true
-			merged = append(merged, value)
-		}
-	}
-	if len(merged) > 0 {
-		target["service_tiers"] = merged
-	}
 }

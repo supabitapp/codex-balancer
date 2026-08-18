@@ -86,6 +86,8 @@ var stateMigrations = []string{
 	`ALTER TABLE accounts ADD COLUMN routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (routing_mode IN ('normal', 'priority', 'draining'));`,
 	`ALTER TABLE events ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT '';`,
 	`ALTER TABLE attempts DROP COLUMN transport;`,
+	`DROP TABLE IF EXISTS bindings;
+	DELETE FROM events WHERE kind IN ('compaction switch', 'rotation reconnect', 'rotated');`,
 }
 
 type StateStore struct {
@@ -477,10 +479,6 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 			stats.applyRateLimited(event.At, event.Account)
 		case eventFailover:
 			stats.failures++
-		}
-		if event.Kind == eventCompactionSwitch {
-			stats.appendEvent(Event{At: event.At, Kind: event.Kind, Account: event.Account, SourceAccount: event.Detail, Thread: event.Thread})
-			continue
 		}
 		stats.appendEvent(Event{At: event.At, Kind: event.Kind, Account: event.Account, Detail: event.Detail})
 	}
