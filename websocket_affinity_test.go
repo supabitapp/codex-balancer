@@ -96,6 +96,44 @@ func TestWebSocketIdleSoftSessionReconnectsToDrainingAccount(t *testing.T) {
 	}
 }
 
+func TestWebSocketDrainingAccountForcesFastTier(t *testing.T) {
+	var mu sync.Mutex
+	tiers := []string{}
+	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		mu.Lock()
+		tiers = append(tiers, request.ServiceTier)
+		mu.Unlock()
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "resp_" + account},
+		})
+	})
+	defer upstream.Close()
+	draining := testAccount("account-draining", 96)
+	server, _, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{draining}, func(http.ResponseWriter, *http.Request) {})
+	closeUnusedUpstream()
+	server.upstream = upstream.URL
+	server.catalog.replace(
+		[]string{draining.id()},
+		map[string][]modelEntry{draining.id(): {testModelEntry("gpt-5.6-sol", "priority")}},
+		"0.1.0",
+	)
+	proxy := httptest.NewServer(server.routes())
+	defer proxy.Close()
+
+	conn := dialAffinityWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-5.6-sol", "input": []any{}})
+	if event := readWebSocketEvent(t, conn); event.Type != "response.created" {
+		t.Fatalf("event = %+v", event)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if fmt.Sprint(tiers) != "[priority]" {
+		t.Fatalf("service tiers = %v, want priority", tiers)
+	}
+}
+
 func TestWebSocketDrainingTakesOverPassiveCompactionHandoff(t *testing.T) {
 	upstream := newAffinityWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{

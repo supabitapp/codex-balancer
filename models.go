@@ -98,6 +98,14 @@ func (c *modelCatalog) allowedAccounts(accounts []*Account, model, serviceTier s
 	return allowed
 }
 
+func (c *modelCatalog) accountSupportsServiceTier(accountID, model, serviceTier string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.accounts[accountID][model]
+	return ok && modelSupportsServiceTier(entry, serviceTier)
+}
+
 func (c *modelCatalog) entries() []modelEntry {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -345,13 +353,15 @@ func modelSlug(entry modelEntry) string {
 	return strings.ToLower(strings.TrimSpace(slug))
 }
 
+const serviceTierPriority = "priority"
+
 func canonicalServiceTier(serviceTier string) string {
 	serviceTier = strings.ToLower(strings.TrimSpace(serviceTier))
 	switch serviceTier {
 	case "", "auto", "default":
 		return ""
 	case "fast":
-		return "priority"
+		return serviceTierPriority
 	default:
 		return serviceTier
 	}

@@ -12,6 +12,7 @@ import (
 	"maps"
 	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,6 +43,16 @@ func newRequestBodyDecoder() *zstd.Decoder {
 		panic(err)
 	}
 	return decoder
+}
+
+var requestBodyEncoder = newRequestBodyEncoder()
+
+func newRequestBodyEncoder() *zstd.Encoder {
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		panic(err)
+	}
+	return encoder
 }
 
 func newProxyClient() *http.Client {
@@ -243,13 +254,19 @@ func (s *server) responses(w http.ResponseWriter, r *http.Request) {
 			resolution.required = id
 		}
 
+		outgoing := body
+		if forced, ok := s.fastTierBody(account, request.Model, request.ServiceTier, inspectionBody); ok {
+			outgoing = encodeRequestBody(r.Header, forced)
+			s.log.Info("draining account forced fast tier", "transport", transportHTTP, "thread", key, "account", id)
+		}
+
 		var sent time.Time
 		var resp *http.Response
 		var err error
 		upstreamRetries := 0
 		for {
 			sent = time.Now()
-			resp, err = s.forward(r, body, account)
+			resp, err = s.forward(r, outgoing, account)
 			if err != nil {
 				break
 			}
@@ -397,6 +414,13 @@ func decodeRequestBody(headers http.Header, body []byte) ([]byte, error) {
 	return decoded, nil
 }
 
+func encodeRequestBody(headers http.Header, body []byte) []byte {
+	if strings.EqualFold(strings.TrimSpace(headers.Get("Content-Encoding")), "zstd") {
+		return requestBodyEncoder.EncodeAll(body, nil)
+	}
+	return body
+}
+
 type responseRequestData struct {
 	Model          string            `json:"model"`
 	Reasoning      responseReasoning `json:"reasoning"`
@@ -412,6 +436,28 @@ func responseRequest(body []byte) responseRequestData {
 	var request responseRequestData
 	json.Unmarshal(body, &request)
 	return request
+}
+
+func (s *server) fastTierBody(account *Account, model, serviceTier string, body []byte) ([]byte, bool) {
+	if canonicalServiceTier(serviceTier) == serviceTierPriority {
+		return body, false
+	}
+	if !account.routingCandidate().draining() {
+		return body, false
+	}
+	if s.catalog == nil || !s.catalog.accountSupportsServiceTier(account.id(), model, serviceTierPriority) {
+		return body, false
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(body, &payload) != nil || payload == nil {
+		return body, false
+	}
+	payload["service_tier"] = json.RawMessage(strconv.Quote(serviceTierPriority))
+	forced, err := json.Marshal(payload)
+	if err != nil {
+		return body, false
+	}
+	return forced, true
 }
 
 type responseErrorPayload struct {

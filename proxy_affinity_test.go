@@ -95,6 +95,96 @@ func TestHTTPNewWorkDrainsOnlyAccountsBelowFivePercent(t *testing.T) {
 	}
 }
 
+func TestHTTPDrainingAccountForcesFastTier(t *testing.T) {
+	tests := []struct {
+		name        string
+		usedPercent float64
+		tiers       []string
+		body        string
+		want        string
+	}{
+		{name: "forces unset tier", usedPercent: 96, tiers: []string{"priority"}, body: `{"model":"gpt-5.6-sol","input":[]}`, want: "priority"},
+		{name: "overrides explicit default", usedPercent: 96, tiers: []string{"priority"}, body: `{"model":"gpt-5.6-sol","service_tier":"default","input":[]}`, want: "priority"},
+		{name: "keeps tier when not draining", usedPercent: 50, tiers: []string{"priority"}, body: `{"model":"gpt-5.6-sol","input":[]}`, want: ""},
+		{name: "keeps tier when model lacks priority", usedPercent: 96, tiers: nil, body: `{"model":"gpt-5.6-sol","input":[]}`, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			drain := testAccount("account-drain", tt.usedPercent)
+			tiers := []string{}
+			server, _, closeServer := newAffinityHTTPServer(t, []*Account{drain}, func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				tiers = append(tiers, responseRequest(body).ServiceTier)
+				writeResponseCreated(w, "resp")
+			})
+			defer closeServer()
+			server.catalog.replace(
+				[]string{drain.id()},
+				map[string][]modelEntry{drain.id(): {testModelEntry("gpt-5.6-sol", tt.tiers...)}},
+				"0.1.0",
+			)
+
+			response := serveHTTPResponse(t, server, "", "", tt.body)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			if fmt.Sprint(tiers) != fmt.Sprintf("[%s]", tt.want) {
+				t.Fatalf("service tiers = %v, want %q", tiers, tt.want)
+			}
+		})
+	}
+}
+
+func TestHTTPDrainingAccountForcesFastTierInZstdBody(t *testing.T) {
+	drain := testAccount("account-drain", 96)
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := encoder.EncodeAll([]byte(`{"model":"gpt-5.6-sol","input":[]}`), nil)
+	encoder.Close()
+	tiers := []string{}
+	server, _, closeServer := newAffinityHTTPServer(t, []*Account{drain}, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Content-Encoding"); got != "zstd" {
+			t.Errorf("content encoding = %q, want zstd", got)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		decoded, err := decodeRequestBody(r.Header, body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		tiers = append(tiers, responseRequest(decoded).ServiceTier)
+		writeResponseCreated(w, "resp")
+	})
+	defer closeServer()
+	server.catalog.replace(
+		[]string{drain.id()},
+		map[string][]modelEntry{drain.id(): {testModelEntry("gpt-5.6-sol", "priority")}},
+		"0.1.0",
+	)
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(compressed))
+	request.Header.Set("Content-Encoding", "zstd")
+	response := httptest.NewRecorder()
+	server.responses(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if fmt.Sprint(tiers) != "[priority]" {
+		t.Fatalf("service tiers = %v, want priority", tiers)
+	}
+}
+
 func TestHTTPNewWorkDrainsLowestRemainingAccountFirst(t *testing.T) {
 	onePercent := testAccount("account-one-percent", 99)
 	oneAndHalfPercent := testAccount("account-one-half-percent", 98.5)

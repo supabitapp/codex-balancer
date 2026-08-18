@@ -481,7 +481,8 @@ func (s *server) relayResponsesWebSocket(
 		if reason != "" {
 			s.stats.failedOver(previousAccount, reason)
 		}
-		if err := current.conn.Write(ctx, turn.kind, turn.data); err != nil {
+		data, _ := s.fastTierBody(current.account, turn.model, turn.serviceTier, turn.data)
+		if err := current.conn.Write(ctx, turn.kind, data); err != nil {
 			s.log.Warn("websocket replay write failed",
 				"thread", turn.thread,
 				"turn", turn.metadata.TurnID,
@@ -672,7 +673,11 @@ func (s *server) relayResponsesWebSocket(
 					continue
 				}
 			}
-			if err := current.conn.Write(ctx, message.kind, message.data); err != nil {
+			data, forced := s.fastTierBody(current.account, event.Model, event.ServiceTier, message.data)
+			if forced {
+				s.log.Info("draining account forced fast tier", "transport", transportWebSocket, "thread", turnThread, "account", current.account.id())
+			}
+			if err := current.conn.Write(ctx, message.kind, data); err != nil {
 				s.log.Warn("upstream websocket request write failed",
 					"thread", turnThread,
 					"turn", metadata.TurnID,
