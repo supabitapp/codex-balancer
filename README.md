@@ -44,13 +44,14 @@ account for each connection and keeps it pinned until the connection closes or
 the proxy confirms that the account rejected a request. A rejection causes the
 client to reconnect and the proxy to reroute the new connection. When an
 account enters draining, the proxy restarts sockets pinned to other accounts;
-idle sockets restart at once, while active sockets finish their current turns
-first. Their new connections prefer the draining account. Sockets already
-pinned to it stay connected. Their turns use the fast service tier when that
-account's model catalog supports it, so the remaining quota empties sooner.
-Priority affects new connections. Other new connections first prefer an
-account with a banked reset that expires within 24 hours, then use the lowest
-limit use and the account used least recently.
+they finish active requests, keep account-owned continuations on their pinned
+account, and restart before their next portable request. Their new connections
+prefer the draining account. Sockets already pinned to it stay connected.
+Their turns use the fast service tier when that account's model catalog
+supports it, so the remaining quota empties sooner. Priority affects new
+connections. Other new connections first prefer an account with a banked reset
+that expires within 24 hours, then use the lowest limit use and the account used
+least recently.
 
 In the TUI, select an account and press `r` to cycle its routing mode through
 normal, priority, and draining. Press Space to pause it.
