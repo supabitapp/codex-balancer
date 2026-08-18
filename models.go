@@ -219,7 +219,7 @@ func (c *modelCatalog) needsRefresh(active []string, clientVersion string, now t
 	if clientVersion == "" {
 		return false
 	}
-	if c.clientVersion != clientVersion || now.Sub(c.refreshedAt) >= modelRefreshInterval {
+	if c.clientVersion == "" || now.Sub(c.refreshedAt) >= modelRefreshInterval {
 		return true
 	}
 	for _, id := range active {
@@ -279,6 +279,7 @@ func (s *server) refreshModels(ctx context.Context, clientVersion string) error 
 	for _, account := range skipped {
 		s.log.Debug("model refresh skipped account",
 			"account", account.id,
+			"client_version", clientVersion,
 			"reason", account.reason,
 		)
 	}
@@ -303,6 +304,7 @@ func (s *server) refreshModels(ctx context.Context, clientVersion string) error 
 			errs = append(errs, fmt.Errorf("%s: %w", result.id, result.err))
 			s.log.Debug("model catalog retained after refresh failure",
 				"account", result.id,
+				"client_version", clientVersion,
 				"models", s.catalog.accountModelCount(result.id),
 				"retry_in", modelRefreshInterval,
 				"error", result.err,
@@ -312,6 +314,13 @@ func (s *server) refreshModels(ctx context.Context, clientVersion string) error 
 		fresh[result.id] = result.models
 	}
 	s.catalog.replace(activeIDs, fresh, clientVersion)
+	s.log.Debug("model catalog refreshed",
+		"accounts", len(activeIDs),
+		"client_version", clientVersion,
+		"failures", len(errs),
+		"models", len(s.catalog.entries()),
+		"refresh_in", modelRefreshInterval,
+	)
 	return errors.Join(errs...)
 }
 

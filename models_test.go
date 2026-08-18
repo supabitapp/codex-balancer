@@ -110,6 +110,23 @@ func TestModelCatalogInvalidationForcesRefresh(t *testing.T) {
 	}
 }
 
+func TestModelCatalogCoalescesClientVersionsWithinRefreshInterval(t *testing.T) {
+	a := testAccount("account-a", 0)
+	catalog := newModelCatalog()
+	catalog.replace(
+		[]string{a.id()},
+		map[string][]modelEntry{a.id(): {testModelEntry("gpt-5.6-sol")}},
+		"0.1.0",
+	)
+	refreshedAt := catalog.refreshedAt
+	if catalog.needsRefresh([]string{a.id()}, "0.2.0", refreshedAt.Add(modelRefreshInterval-time.Second)) {
+		t.Fatal("new client version bypassed refresh interval")
+	}
+	if !catalog.needsRefresh([]string{a.id()}, "0.2.0", refreshedAt.Add(modelRefreshInterval)) {
+		t.Fatal("catalog did not refresh after interval")
+	}
+}
+
 func TestModelCatalogDerivesContextLimits(t *testing.T) {
 	catalog := newModelCatalog()
 	entry := testModelEntry("gpt-5.6-sol")
@@ -200,8 +217,8 @@ func TestModelsRefreshSkipsReauthAccount(t *testing.T) {
 		client:   upstream.Client(),
 		log:      slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	}
-	for range 2 {
-		request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.1.0", nil)
+	for _, version := range []string{"0.1.0", "0.2.0"} {
+		request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version="+version, nil)
 		response := httptest.NewRecorder()
 		server.models(response, request)
 		if response.Code != http.StatusOK {
@@ -215,8 +232,15 @@ func TestModelsRefreshSkipsReauthAccount(t *testing.T) {
 		t.Fatalf("account requests = %s", gotRequests)
 	}
 	requireLogRecord(t, logs.records(t), "model refresh skipped account", map[string]any{
-		"account": "account-b",
-		"reason":  "needs_reauth",
+		"account":        "account-b",
+		"client_version": "0.1.0",
+		"reason":         "needs_reauth",
+	})
+	requireLogRecord(t, logs.records(t), "model catalog refreshed", map[string]any{
+		"accounts":       float64(1),
+		"client_version": "0.1.0",
+		"failures":       float64(0),
+		"models":         float64(1),
 	})
 }
 
@@ -257,8 +281,9 @@ func TestModelsRefreshFailureWaitsForRefreshInterval(t *testing.T) {
 		t.Fatalf("allowed accounts = %v, want unknown", allowed)
 	}
 	requireLogRecord(t, logs.records(t), "model catalog retained after refresh failure", map[string]any{
-		"account": "account-a",
-		"models":  float64(0),
+		"account":        "account-a",
+		"client_version": "0.1.0",
+		"models":         float64(0),
 	})
 }
 
