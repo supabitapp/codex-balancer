@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestUsagePollLimitReachedDoesNotRemoveAccountFromRouting(t *testing.T) {
+func TestUsagePollLimitReachedRemovesAccountFromNewRouting(t *testing.T) {
 	account := testAccount("account-a", 50)
 	roomier := testAccount("account-b", 20)
 	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -43,8 +43,8 @@ func TestUsagePollLimitReachedDoesNotRemoveAccountFromRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if picked := server.pool.pick("", "", nil, nil); picked == nil || picked.id() != "account-a" {
-		t.Fatalf("picked = %v, want account-a", picked)
+	if picked := server.pool.pick("", "", nil, nil); picked == nil || picked.id() != "account-b" {
+		t.Fatalf("picked = %v, want account-b", picked)
 	}
 }
 

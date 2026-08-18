@@ -141,6 +141,36 @@ func TestPoolRouteChoosesLowestRemainingDrainingAccount(t *testing.T) {
 	}
 }
 
+func TestPoolRouteKeepsEqualPressureDrainLeader(t *testing.T) {
+	a := testAccount("account-a", 96)
+	b := testAccount("account-b", 96)
+	pool := &Pool{accounts: []*Account{b, a}}
+
+	if got := pool.route("", "", nil, nil).account; got != a {
+		t.Fatalf("first account = %s, want account-a", got.id())
+	}
+	a.lastUsed = time.Now()
+	b.lastUsed = time.Time{}
+	if got := pool.route("", "", nil, nil).account; got != a {
+		t.Fatalf("account after use = %s, want stable account-a", got.id())
+	}
+}
+
+func TestPoolRouteDrainsEarliestResetFirst(t *testing.T) {
+	now := time.Now()
+	earlier := testAccount("account-b", 96)
+	earlier.primary.resetsAt = now.Add(time.Hour)
+	earlier.secondary.resetsAt = now.Add(time.Hour)
+	later := testAccount("account-a", 96)
+	later.primary.resetsAt = now.Add(2 * time.Hour)
+	later.secondary.resetsAt = now.Add(2 * time.Hour)
+	pool := &Pool{accounts: []*Account{later, earlier}}
+
+	if got := pool.route("", "", nil, nil).account; got != earlier {
+		t.Fatalf("account = %s, want earliest reset", got.id())
+	}
+}
+
 func TestPoolRouteDrainingOverridesResetPriority(t *testing.T) {
 	now := time.Now()
 	priority := testAccount("account-priority", 20)

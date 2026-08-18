@@ -305,7 +305,47 @@ func (c routingCandidate) drainsBefore(other routingCandidate) bool {
 	if c.pressure != other.pressure {
 		return c.pressure > other.pressure
 	}
-	return c.roomierThan(other)
+	reset := c.drainReset()
+	otherReset := other.drainReset()
+	if !reset.Equal(otherReset) {
+		if reset.IsZero() {
+			return false
+		}
+		if otherReset.IsZero() {
+			return true
+		}
+		return reset.Before(otherReset)
+	}
+	return c.id < other.id
+}
+
+func (c routingCandidate) drainReset() time.Time {
+	var reset time.Time
+	for _, window := range []window{c.primary, c.secondary} {
+		if !window.known() || window.usedPercent != c.pressure || window.resetsAt.IsZero() {
+			continue
+		}
+		if reset.IsZero() || window.resetsAt.Before(reset) {
+			reset = window.resetsAt
+		}
+	}
+	return reset
+}
+
+func (c routingCandidate) existingConnectionReason(now time.Time) string {
+	if c.paused || c.reauth != "" {
+		return ""
+	}
+	if c.spent {
+		return "spent"
+	}
+	if now.Before(c.cooldown) {
+		return "cooling"
+	}
+	if c.draining() {
+		return "draining"
+	}
+	return ""
 }
 
 func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool) {

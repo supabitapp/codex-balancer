@@ -42,7 +42,9 @@ is within one hour of expiry.
 Hard account ownership always wins. Portable work normally keeps soft affinity,
 then prefers accounts with a banked reset that expires within 24 hours. When a
 rate-limit window drops below 5%, that account enters draining and takes all
-portable work. Active WebSocket turns finish before their connections restart.
+portable work. WebSocket clients stay connected while the proxy switches
+upstream accounts between turns. Once an account stops accepting new sockets,
+its existing sockets keep serving until each socket rejects a turn or closes.
 Turns on a draining account are forced to the fast service tier when the
 account's model catalog supports it, so the remaining quota empties sooner.
 Remaining routes use the lowest limit use, then the account used least recently.

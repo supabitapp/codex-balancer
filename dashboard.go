@@ -569,9 +569,9 @@ func dashboardAccountStatusInfo(now time.Time, account accountStatsResponse) str
 	switch account.Status {
 	case accountDraining:
 		if account.RoutingMode == routingModeDraining {
-			return "Manual draining. Portable threads move to this account and run on the fast tier; active turns finish before reconnecting."
+			return "Manual draining. Portable turns use this account on the fast tier. Clients stay connected while upstream accounts switch between turns."
 		}
-		return "A rate-limit window has less than 5% left. Portable threads move to this account and run on the fast tier; active turns finish before reconnecting."
+		return "A rate-limit window has less than 5% left. Portable turns use this account on the fast tier. Clients stay connected while upstream accounts switch between turns."
 	case accountPriority:
 		if account.RoutingMode == routingModePriority {
 			return "Manual priority for fresh portable work. Existing soft-affined threads stay on their account."

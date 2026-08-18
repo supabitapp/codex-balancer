@@ -441,7 +441,7 @@ func TestDashboardExplainsAutomaticDrainingStatus(t *testing.T) {
 		`<span>1 draining</span>`,
 		`class="status-mark status-draining"`,
 		`>▼</span> draining</span>`,
-		`data-tooltip="A rate-limit window has less than 5% left. Portable threads move to this account and run on the fast tier; active turns finish before reconnecting."`,
+		`data-tooltip="A rate-limit window has less than 5% left. Portable turns use this account on the fast tier. Clients stay connected while upstream accounts switch between turns."`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q:\n%s", expected, body)
@@ -459,7 +459,7 @@ func TestDashboardExplainsManualRoutingStatus(t *testing.T) {
 		info string
 	}{
 		{routingModePriority, "Manual priority for fresh portable work. Existing soft-affined threads stay on their account."},
-		{routingModeDraining, "Manual draining. Portable threads move to this account and run on the fast tier; active turns finish before reconnecting."},
+		{routingModeDraining, "Manual draining. Portable turns use this account on the fast tier. Clients stay connected while upstream accounts switch between turns."},
 	} {
 		account.RoutingMode = test.mode
 		view := server.currentDashboard(now)

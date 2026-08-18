@@ -205,10 +205,12 @@ func (a *Account) health() (primary, secondary window, cooldown time.Time, reaut
 	return a.primary, a.secondary, a.cooldown, a.dead
 }
 
-func (a *Account) markSpent() {
+func (a *Account) markSpent() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	changed := !a.spent
 	a.spent = true
+	return changed
 }
 
 func (a *Account) restoreFromUsageAfter(t time.Time) bool {

@@ -210,30 +210,26 @@ func (r *compactionRotation) reconnectingForSession(session string) (pendingComp
 	return pendingCompactionRotation{}, false
 }
 
-func (r *compactionRotation) yieldToDrain(session string) bool {
+func (r *compactionRotation) yieldToExisting(session, account, reason string) {
 	if r == nil {
-		return true
+		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, pending := range r.pending {
-		if pending.session == session && pending.reconnecting {
-			return false
-		}
-	}
 	for thread, pending := range r.pending {
 		if pending.session != session {
 			continue
 		}
 		delete(r.pending, thread)
-		r.log.Info("compaction rotation yielded to drain",
+		r.log.Info("compaction rotation yielded to existing websocket",
 			"session", session,
 			"thread", pending.thread,
 			"source_account", pending.account,
+			"account", account,
+			"reason", reason,
 			"compaction_turn", pending.turn,
 		)
 	}
-	return true
 }
 
 func (r *compactionRotation) otherReconnectingThread(session, thread string) string {

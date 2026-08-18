@@ -101,6 +101,12 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 	var limitReached any
 	if payload.RateLimit.LimitReached != nil {
 		limitReached = *payload.RateLimit.LimitReached
+		if *payload.RateLimit.LimitReached && account.markSpent() {
+			s.log.Info("account stopped accepting new websockets",
+				"account", account.id(),
+				"source", "usage_poll",
+			)
+		}
 	}
 	attrs := []any{"reported_limit_reached", limitReached}
 	attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)

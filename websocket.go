@@ -16,10 +16,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-const (
-	responsesWebSocketBeta = "responses_websockets=2026-02-06"
-	websocketHandoffFrame  = 500 * time.Millisecond
-)
+const responsesWebSocketBeta = "responses_websockets=2026-02-06"
 
 type websocketDial struct {
 	conn    *websocket.Conn
@@ -181,7 +178,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer downstream.CloseNow()
 	downstream.SetReadLimit(maxWebSocketMessage)
 	dial.conn.SetReadLimit(maxWebSocketMessage)
-	s.relayResponsesWebSocket(downstream, r, dial, thread, resolution.hard)
+	s.relayResponsesWebSocket(downstream, r, dial, thread)
 }
 
 func websocketHandshake(w http.ResponseWriter, r *http.Request) bool {
@@ -313,12 +310,19 @@ func (s *server) dialResponsesWebSocket(
 			skip[id] = true
 			continue
 		}
-		if status == http.StatusTooManyRequests || status == http.StatusUnauthorized || status >= 500 {
-			if status == http.StatusTooManyRequests {
+		usageLimit := (status == http.StatusTooManyRequests || status == http.StatusForbidden) && responseUsageLimitReached(resp)
+		if status == http.StatusTooManyRequests || usageLimit || status == http.StatusUnauthorized || status >= 500 {
+			if status == http.StatusTooManyRequests || usageLimit {
 				account.observe(resp.Header)
-				usageLimit := responseUsageLimitReached(resp)
 				if usageLimit {
-					account.markSpent()
+					if account.markSpent() {
+						s.log.Info("account stopped accepting new websockets",
+							"account", id,
+							"source", "handshake",
+							"thread", thread,
+							"status", status,
+						)
+					}
 					resettableUsageLimit := !workspaceUsageLimitReached(resp.Header)
 					if resettableUsageLimit && !resetRetried[id] && s.recoverUsageLimit(r.Context(), account, sent) {
 						resetRetried[id] = true
@@ -408,7 +412,6 @@ func (s *server) relayResponsesWebSocket(
 	r *http.Request,
 	initial *websocketDial,
 	thread string,
-	handshakeHard bool,
 ) {
 	ctx := s.ctx
 	if ctx == nil {
@@ -418,10 +421,9 @@ func (s *server) relayResponsesWebSocket(
 	defer cancel()
 
 	current := initial
+	currentAcceptingTurns := true
 	generation := 1
 	messages := make(chan websocketMessage, 8)
-	handoffTicker := time.NewTicker(websocketHandoffFrame)
-	defer handoffTicker.Stop()
 	readWebSocketMessages(ctx, downstream, true, 0, messages)
 	readWebSocketMessages(ctx, current.conn, false, generation, messages)
 	liveThreads := map[string]struct{}{}
@@ -446,6 +448,7 @@ func (s *server) relayResponsesWebSocket(
 		current.conn.SetReadLimit(maxWebSocketMessage)
 		readWebSocketMessages(ctx, current.conn, false, generation, messages)
 		s.websocketOpened(thread, current.account)
+		currentAcceptingTurns = true
 	}
 	redialTurn := func(turn *websocketTurn, resolution affinityResolution, skip map[string]bool, reason string) bool {
 		next, failed, err := s.dialResponsesWebSocket(r, turn.thread, resolution, skip, turn.model, turn.serviceTier)
@@ -510,18 +513,6 @@ func (s *server) relayResponsesWebSocket(
 		var message websocketMessage
 		select {
 		case message = <-messages:
-		case <-handoffTicker.C:
-			target := s.pool.drainTarget(nil)
-			if !handshakeHard && len(turns) == 0 && target != nil && target.id() != current.account.id() && s.compactionRotation.yieldToDrain(thread) {
-				_ = downstream.Close(websocket.StatusServiceRestart, "account draining")
-				s.log.Info("draining websocket restart requested",
-					"thread", thread,
-					"source_account", current.account.id(),
-					"target_account", target.id(),
-				)
-				return
-			}
-			continue
 		case <-ctx.Done():
 			return
 		}
@@ -584,18 +575,38 @@ func (s *server) relayResponsesWebSocket(
 			}
 			metadata := requestTurnMetadata("", event.ClientMetadata)
 			allowed := s.allowedAccounts(event.Model, event.ServiceTier)
-			freshAccount := ""
-			if fresh := s.pool.route("", "", nil, allowed).account; fresh != nil {
-				freshAccount = fresh.id()
-			}
-			if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, requestAffinity, resolution.hard, len(turns), freshAccount) {
-				_ = downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction")
-				s.log.Debug("compaction rotation downstream restart requested",
+			now := time.Now()
+			candidate := current.account.routingCandidate()
+			existingReason := candidate.existingConnectionReason(now)
+			retainExisting := currentAcceptingTurns && existingReason != "" && accountAllowed(allowed, current.account.id()) && (resolution.required == "" || resolution.required == current.account.id())
+			if retainExisting {
+				s.compactionRotation.yieldToExisting(turnThread, current.account.id(), existingReason)
+				s.log.Debug("websocket existing connection retained",
 					"thread", turnThread,
+					"turn", metadata.TurnID,
 					"account", current.account.id(),
-					"request_turn", metadata.TurnID,
+					"reason", existingReason,
+					"status", candidate.status(now),
+					"hard_affinity", resolution.hard,
+					"hard_affinity_kinds", requestAffinity.hardKinds(),
+					"compaction_replay", requestAffinity.compactionReplay,
+					"model", event.Model,
+					"service_tier", event.ServiceTier,
 				)
-				return
+			} else {
+				freshAccount := ""
+				if fresh := s.pool.route("", "", nil, allowed).account; fresh != nil {
+					freshAccount = fresh.id()
+				}
+				if s.compactionRotation.shouldReconnect(turnThread, current.account.id(), metadata, requestAffinity, resolution.hard, len(turns), freshAccount) {
+					_ = downstream.Close(websocket.StatusServiceRestart, "account rotation after compaction")
+					s.log.Debug("compaction rotation downstream restart requested",
+						"thread", turnThread,
+						"account", current.account.id(),
+						"request_turn", metadata.TurnID,
+					)
+					return
+				}
 			}
 			rotationFrom := ""
 			var rotationSkip map[string]bool
@@ -604,7 +615,10 @@ func (s *server) relayResponsesWebSocket(
 				resolution.preferred = ""
 				rotationSkip = map[string]bool{rotationFrom: true}
 			}
-			target := s.pool.pick(resolution.required, resolution.preferred, rotationSkip, allowed)
+			target := current.account
+			if !retainExisting {
+				target = s.pool.pick(resolution.required, resolution.preferred, rotationSkip, allowed)
+			}
 			if target == nil {
 				s.log.Warn("websocket turn has no account",
 					"thread", turnThread,
@@ -759,6 +773,7 @@ func (s *server) relayResponsesWebSocket(
 			previsible := len(turns) == 1 && !turns[0].created && !turns[0].visible
 			identitySafe := websocketReplaySafe(event)
 			if websocketStatus(event) == http.StatusUnauthorized {
+				currentAcceptingTurns = false
 				if previsible && identitySafe {
 					turn := &turns[0]
 					id := current.account.id()
@@ -784,9 +799,25 @@ func (s *server) relayResponsesWebSocket(
 			retryReason := ""
 			rateLimited := websocketRateLimited(event)
 			if rateLimited {
+				currentAcceptingTurns = false
 				usageLimit := websocketUsageLimitReached(event)
 				if usageLimit {
-					current.account.markSpent()
+					if current.account.markSpent() {
+						turnThread := thread
+						turnID := ""
+						if len(turns) > 0 {
+							turnThread = turns[0].thread
+							turnID = turns[0].metadata.TurnID
+						}
+						s.log.Info("account stopped accepting new websockets",
+							"account", current.account.id(),
+							"source", "response",
+							"thread", turnThread,
+							"turn", turnID,
+							"status", websocketStatus(event),
+							"code", websocketErrorCode(event),
+						)
+					}
 					resettableUsageLimit := !workspaceUsageLimitReached(headers)
 					if resettableUsageLimit && len(turns) > 0 && !turns[0].resetRetried {
 						turn := &turns[0]
