@@ -26,12 +26,13 @@ type modelCatalog struct {
 	mu            sync.RWMutex
 	refreshMu     sync.Mutex
 	accounts      map[string]map[string]modelEntry
+	active        map[string]bool
 	clientVersion string
 	refreshedAt   time.Time
 }
 
 func newModelCatalog() *modelCatalog {
-	return &modelCatalog{accounts: map[string]map[string]modelEntry{}}
+	return &modelCatalog{accounts: map[string]map[string]modelEntry{}, active: map[string]bool{}}
 }
 
 func (c *modelCatalog) replace(active []string, fresh map[string][]modelEntry, clientVersion string) {
@@ -61,6 +62,7 @@ func (c *modelCatalog) replace(active []string, fresh map[string][]modelEntry, c
 		nextAccounts[id] = models
 	}
 	c.accounts = nextAccounts
+	c.active = activeIDs
 	c.clientVersion = clientVersion
 	c.refreshedAt = time.Now()
 }
@@ -128,6 +130,12 @@ func (c *modelCatalog) entries() []modelEntry {
 		return strings.Compare(modelSlug(a), modelSlug(b))
 	})
 	return entries
+}
+
+func (c *modelCatalog) accountModelCount(id string) int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.accounts[id])
 }
 
 type modelContextLimits struct {
@@ -215,11 +223,11 @@ func (c *modelCatalog) needsRefresh(active []string, clientVersion string, now t
 		return true
 	}
 	for _, id := range active {
-		if _, ok := c.accounts[id]; !ok {
+		if !c.active[id] {
 			return true
 		}
 	}
-	return len(c.accounts) != len(active)
+	return len(c.active) != len(active)
 }
 
 func (c *modelCatalog) version() string {
@@ -244,15 +252,35 @@ func (s *server) refreshModels(ctx context.Context, clientVersion string) error 
 	accounts := s.pool.all()
 	active := make([]*Account, 0, len(accounts))
 	activeIDs := make([]string, 0, len(accounts))
+	type skippedAccount struct {
+		id     string
+		reason string
+	}
+	skipped := make([]skippedAccount, 0, len(accounts))
 	for _, account := range accounts {
-		if account.paused() || account.id() == "" {
+		candidate := account.routingCandidate()
+		if candidate.id == "" {
+			continue
+		}
+		if candidate.paused || candidate.reauth != "" {
+			reason := "paused"
+			if candidate.reauth != "" {
+				reason = "needs_reauth"
+			}
+			skipped = append(skipped, skippedAccount{id: candidate.id, reason: reason})
 			continue
 		}
 		active = append(active, account)
-		activeIDs = append(activeIDs, account.id())
+		activeIDs = append(activeIDs, candidate.id)
 	}
 	if !s.catalog.needsRefresh(activeIDs, clientVersion, time.Now()) {
 		return nil
+	}
+	for _, account := range skipped {
+		s.log.Debug("model refresh skipped account",
+			"account", account.id,
+			"reason", account.reason,
+		)
 	}
 
 	type fetchResult struct {
@@ -273,6 +301,12 @@ func (s *server) refreshModels(ctx context.Context, clientVersion string) error 
 		result := <-results
 		if result.err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", result.id, result.err))
+			s.log.Debug("model catalog retained after refresh failure",
+				"account", result.id,
+				"models", s.catalog.accountModelCount(result.id),
+				"retry_in", modelRefreshInterval,
+				"error", result.err,
+			)
 			continue
 		}
 		fresh[result.id] = result.models

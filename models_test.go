@@ -179,6 +179,89 @@ func TestModelsRefreshesEveryAccountAndServesUnion(t *testing.T) {
 	}
 }
 
+func TestModelsRefreshSkipsReauthAccount(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	b.dead = "refresh_token_invalidated"
+	var mu sync.Mutex
+	requests := []string{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.Header.Get("chatgpt-account-id"))
+		mu.Unlock()
+		fmt.Fprint(w, `{"models":[{"slug":"gpt-5.6-sol"}]}`)
+	}))
+	defer upstream.Close()
+	logs := &testLogBuffer{}
+	server := &server{
+		pool:     &Pool{accounts: []*Account{a, b}},
+		catalog:  newModelCatalog(),
+		upstream: upstream.URL,
+		client:   upstream.Client(),
+		log:      slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	}
+	for range 2 {
+		request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.1.0", nil)
+		response := httptest.NewRecorder()
+		server.models(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+	mu.Lock()
+	gotRequests := fmt.Sprint(requests)
+	mu.Unlock()
+	if gotRequests != "[account-a]" {
+		t.Fatalf("account requests = %s", gotRequests)
+	}
+	requireLogRecord(t, logs.records(t), "model refresh skipped account", map[string]any{
+		"account": "account-b",
+		"reason":  "needs_reauth",
+	})
+}
+
+func TestModelsRefreshFailureWaitsForRefreshInterval(t *testing.T) {
+	a := testAccount("account-a", 0)
+	var mu sync.Mutex
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer upstream.Close()
+	logs := &testLogBuffer{}
+	server := &server{
+		pool:     &Pool{accounts: []*Account{a}},
+		catalog:  newModelCatalog(),
+		upstream: upstream.URL,
+		client:   upstream.Client(),
+		log:      slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	}
+	for range 2 {
+		request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.1.0", nil)
+		response := httptest.NewRecorder()
+		server.models(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+	mu.Lock()
+	gotRequests := requests
+	mu.Unlock()
+	if gotRequests != 1 {
+		t.Fatalf("requests = %d, want one fetch", gotRequests)
+	}
+	if allowed := server.catalog.allowedAccounts([]*Account{a}, "gpt-5.6-sol", ""); allowed != nil {
+		t.Fatalf("allowed accounts = %v, want unknown", allowed)
+	}
+	requireLogRecord(t, logs.records(t), "model catalog retained after refresh failure", map[string]any{
+		"account": "account-a",
+		"models":  float64(0),
+	})
+}
+
 func testModelEntry(slug string, serviceTiers ...string) modelEntry {
 	entry := modelEntry{"slug": slug}
 	if len(serviceTiers) == 0 {
