@@ -87,6 +87,76 @@ func TestWebSocketSocketsChooseIndependentAccounts(t *testing.T) {
 	}
 }
 
+func TestWebSocketDrainingRestartsOtherPinnedSockets(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		event := map[string]any{"type": "response.created"}
+		if account == "account-b" {
+			event["headers"] = map[string]any{
+				"x-codex-primary-used-percent":   "96",
+				"x-codex-primary-window-minutes": "300",
+			}
+		}
+		writeWebSocketEvent(t, conn, event)
+	})
+	defer upstream.Close()
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("account-a", 0), testAccount("account-b", 0)})
+	first, _ := dialWebSocket(t, proxy.URL, nil)
+	defer first.CloseNow()
+	second, _ := dialWebSocket(t, proxy.URL, nil)
+	defer second.CloseNow()
+	waitForWebSocketCounts(t, server, map[string]int64{"account-a": 1, "account-b": 1})
+
+	writeWebSocketEvent(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, second)
+	readCloseStatus(t, first, websocket.StatusServiceRestart)
+	writeWebSocketEvent(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, second)
+
+	reconnected, _ := dialWebSocket(t, proxy.URL, nil)
+	defer reconnected.CloseNow()
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-b account-b]" {
+		t.Fatalf("connection accounts = %s", got)
+	}
+}
+
+func TestWebSocketDrainingWaitsForActiveTurn(t *testing.T) {
+	complete := make(chan struct{})
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(complete) }) })
+	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		if account == "account-a" {
+			<-complete
+		}
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	accountA := testAccount("account-a", 0)
+	accountB := testAccount("account-b", 0)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{accountA, accountB})
+	first, _ := dialWebSocket(t, proxy.URL, nil)
+	defer first.CloseNow()
+	second, _ := dialWebSocket(t, proxy.URL, nil)
+	defer second.CloseNow()
+	waitForWebSocketCounts(t, server, map[string]int64{"account-a": 1, "account-b": 1})
+
+	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	if event := readWebSocketEvent(t, first); event.Type != "response.created" {
+		t.Fatalf("first event = %q, want response.created", event.Type)
+	}
+	for range 2 {
+		if _, err := server.pool.cycleRoutingMode(accountB); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server.restartSocketsForDraining()
+	release.Do(func() { close(complete) })
+	if event := readWebSocketEvent(t, first); event.Type != "response.completed" {
+		t.Fatalf("event before restart = %q, want response.completed", event.Type)
+	}
+	readCloseStatus(t, first, websocket.StatusServiceRestart)
+}
+
 func TestWebSocketRejectionClosesWithoutReplayAndReconnects(t *testing.T) {
 	requests := 0
 	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
@@ -340,5 +410,24 @@ func readCloseStatus(t *testing.T, conn *websocket.Conn, want websocket.StatusCo
 	_, _, err := conn.Read(ctx)
 	if got := websocket.CloseStatus(err); got != want {
 		t.Fatalf("close status = %d, error = %v, want %d", got, err, want)
+	}
+}
+
+func waitForWebSocketCounts(t *testing.T, server *server, want map[string]int64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		snapshot := server.stats.snapshot()
+		matched := true
+		for account, count := range want {
+			matched = matched && snapshot.Accounts[account].WSOpen == count
+		}
+		if matched {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("open sockets = %+v, want %v", snapshot.Accounts, want)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

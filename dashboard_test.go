@@ -437,7 +437,7 @@ func TestDashboardExplainsAutomaticDrainingStatus(t *testing.T) {
 		`<span>1 draining</span>`,
 		`class="status-mark status-draining"`,
 		`>▼</span> draining</span>`,
-		`data-tooltip="A rate-limit window has less than 5% left. Turns on pinned connections use the fast service tier when the model catalog for this account supports it."`,
+		`data-tooltip="A rate-limit window has less than 5% left. Other pinned connections restart toward this account. Its turns use the fast service tier when supported."`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q:\n%s", expected, body)
@@ -455,7 +455,7 @@ func TestDashboardExplainsManualRoutingStatus(t *testing.T) {
 		info string
 	}{
 		{routingModePriority, "Manual priority for new connections."},
-		{routingModeDraining, "Manual draining. Turns on pinned connections use the fast service tier when the model catalog for this account supports it."},
+		{routingModeDraining, "Manual draining. Other pinned connections restart toward this account. Its turns use the fast service tier when supported."},
 	} {
 		account.RoutingMode = test.mode
 		view := server.currentDashboard(now)

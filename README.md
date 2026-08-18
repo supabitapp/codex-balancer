@@ -42,13 +42,15 @@ is within one hour of expiry.
 Balancing applies to new client WebSocket connections. The proxy selects one
 account for each connection and keeps it pinned until the connection closes or
 the proxy confirms that the account rejected a request. A rejection causes the
-client to reconnect and the proxy to reroute the new connection. Draining and
-priority affect new connections. New connections placed on a draining account
-use the fast service tier when that account's model catalog supports it. Turns
-on existing pinned connections also use the fast tier while their account is
-draining, so the remaining quota empties sooner. Other new connections first
-prefer an account with a banked reset that expires within 24 hours, then use the
-lowest limit use and the account used least recently.
+client to reconnect and the proxy to reroute the new connection. When an
+account enters draining, the proxy restarts sockets pinned to other accounts;
+idle sockets restart at once, while active sockets finish their current turns
+first. Their new connections prefer the draining account. Sockets already
+pinned to it stay connected. Their turns use the fast service tier when that
+account's model catalog supports it, so the remaining quota empties sooner.
+Priority affects new connections. Other new connections first prefer an
+account with a banked reset that expires within 24 hours, then use the lowest
+limit use and the account used least recently.
 
 In the TUI, select an account and press `r` to cycle its routing mode through
 normal, priority, and draining. Press Space to pause it.

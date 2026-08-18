@@ -565,9 +565,9 @@ func dashboardAccountStatusInfo(now time.Time, account accountStatsResponse) str
 	switch account.Status {
 	case accountDraining:
 		if account.RoutingMode == routingModeDraining {
-			return "Manual draining. Turns on pinned connections use the fast service tier when the model catalog for this account supports it."
+			return "Manual draining. Other pinned connections restart toward this account. Its turns use the fast service tier when supported."
 		}
-		return "A rate-limit window has less than 5% left. Turns on pinned connections use the fast service tier when the model catalog for this account supports it."
+		return "A rate-limit window has less than 5% left. Other pinned connections restart toward this account. Its turns use the fast service tier when supported."
 	case accountPriority:
 		if account.RoutingMode == routingModePriority {
 			return "Manual priority for new connections."
