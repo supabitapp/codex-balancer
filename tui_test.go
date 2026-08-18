@@ -187,20 +187,26 @@ func TestEventsRenderCompactTable(t *testing.T) {
 		pool: &Pool{},
 		snap: Snapshot{Events: []Event{
 			{
-				Kind:          eventCompactionSwitch,
-				Account:       "target-account",
-				SourceAccount: "source-account",
-				Thread:        "019feea0private",
-			},
-			{
 				At:      time.Date(2026, time.August, 11, 9, 26, 15, 0, time.UTC),
 				Kind:    "account reset failed",
 				Account: "vuonghoainam.work",
 				Detail:  "reset credits returned 429 Too Many Requests",
 			},
+			{
+				Kind:          eventCompactionSwitch,
+				Account:       "target-account",
+				SourceAccount: "source-account",
+				Thread:        "019feea0private",
+			},
 		}},
 	}
-	lines := strings.Split(dashboard.events(120, 4), "\n")
+	rendered := dashboard.events(120, 4)
+	for _, hidden := range []string{eventCompactionSwitch, "target-account", "source-account", "019feea0"} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("events contains %q: %q", hidden, rendered)
+		}
+	}
+	lines := strings.Split(rendered, "\n")
 	header := lines[2]
 	row := lines[3]
 	for label, value := range map[string]string{

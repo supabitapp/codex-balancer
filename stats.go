@@ -165,10 +165,8 @@ func (s *Stats) compactionSwitched(thread, source, target string) {
 
 func eventText(event Event, names map[string]string) (string, string, bool) {
 	switch event.Kind {
-	case eventLegacyReconnect, eventLegacyRotated:
+	case eventCompactionSwitch, eventLegacyReconnect, eventLegacyRotated:
 		return "", "", false
-	case eventCompactionSwitch:
-		return eventAccountName(names, event.SourceAccount) + " → " + eventAccountName(names, event.Account), shortKey(event.Thread), true
 	}
 	return eventAccountName(names, event.Account), event.Detail, true
 }

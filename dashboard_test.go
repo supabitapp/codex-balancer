@@ -161,9 +161,6 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`$30.00`,
 		`<td>failover</td>`,
 		`&lt;script&gt;upstream unavailable&lt;/script&gt;`,
-		`<td>compaction switch</td>`,
-		`<td>s***e@***.com → a***e@***.com</td>`,
-		`<td class="dim">019fe827</td>`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard update missing %q:\n%s", expected, body)
@@ -174,7 +171,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 			t.Fatalf("dashboard update replaces stable container %q", replaced)
 		}
 	}
-	for _, private := range []string{"alice@example.com", "source@example.com", "019fe5c2private", "019fe701-7a55-7760-8d38-d1cd74544ef8", "019fe827-9296-7f82-b526-180a27ca764c", "rotation reconnect", "<td>rotated</td>", "after compaction", "203.0.113.42", "<script>"} {
+	for _, private := range []string{"alice@example.com", "source@example.com", "019fe5c2private", "019fe701-7a55-7760-8d38-d1cd74544ef8", "019fe827-9296-7f82-b526-180a27ca764c", "019fe827", "rotation reconnect", "<td>rotated</td>", "<td>compaction switch</td>", "after compaction", "203.0.113.42", "<script>"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard update exposed %q", private)
 		}
