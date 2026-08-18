@@ -491,7 +491,6 @@ func (d dashboard) threads(width, height int) string {
 		{"IP", ipWidth, styles.dim, func(view routingThreadView) string { return view.clientIP }},
 		{"Account", accountWidth, styles.spark, func(view routingThreadView) string { return view.Account }},
 		{"Model", modelWidth, styles.text, func(view routingThreadView) string { return view.Model }},
-		{"Via", 4, styles.good, func(view routingThreadView) string { return view.Via }},
 		{"Fast", 4, styles.warn, func(view routingThreadView) string {
 			if view.Fast {
 				return "⚡"
@@ -621,8 +620,8 @@ func (d dashboard) totals(width int) string {
 	stats := [3][3]total{
 		{
 			{"turns", fmt.Sprintf("%d", s.Turns)},
-			{"http", fmt.Sprintf("%d", s.Turns-s.WSTurns)},
-			{"ws turns", fmt.Sprintf("%d", s.WSTurns)},
+			{"failovers", fmt.Sprintf("%d", s.Failures)},
+			{"rate limits", fmt.Sprintf("%d", s.Limited)},
 		},
 		{
 			{"ws open", fmt.Sprintf("%d", s.WSOpen)},

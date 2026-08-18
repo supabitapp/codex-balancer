@@ -31,13 +31,7 @@ const (
 	eventLegacyRotated     = "rotated"
 )
 
-type transport string
-
-const (
-	transportHTTP      transport = "http"
-	transportWebSocket transport = "ws"
-	serviceTierFast              = "priority"
-)
+const serviceTierFast = "priority"
 
 type Stats struct {
 	mu                 sync.Mutex
@@ -51,7 +45,6 @@ type Stats struct {
 	limited            int64
 	ttfbSum            time.Duration
 	ttfbN              int64
-	wsTurns            int64
 	wsOpen             int64
 	usageMonth         int
 	monthlyUsage       responseUsage
@@ -95,7 +88,6 @@ type threadStats struct {
 	createdAt          time.Time
 	segmentStartedAt   time.Time
 	last               time.Time
-	via                transport
 }
 
 type threadModel struct {
@@ -201,19 +193,16 @@ func (s *Stats) failedOver(account, reason string) {
 	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
-func (s *Stats) routed(thread, clientIP, account, model, effort, serviceTier string, via transport, metadata turnMetadata) {
+func (s *Stats) routed(thread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata) {
 	now := time.Now()
-	s.persistAttempt(storedAttempt{At: now, Thread: thread, ClientIP: clientIP, Account: account, Effort: effort, ServiceTier: serviceTier, Transport: via, Metadata: encodeTurnMetadata(metadata)})
+	s.persistAttempt(storedAttempt{At: now, Thread: thread, ClientIP: clientIP, Account: account, Effort: effort, ServiceTier: serviceTier, Metadata: encodeTurnMetadata(metadata)})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applyRouted(now, thread, clientIP, account, model, effort, serviceTier, via, metadata)
+	s.applyRouted(now, thread, clientIP, account, model, effort, serviceTier, metadata)
 }
 
-func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, effort, serviceTier string, via transport, metadata turnMetadata) {
+func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata) {
 	s.turns++
-	if via == transportWebSocket {
-		s.wsTurns++
-	}
 	a := s.account(account)
 	a.turns++
 	a.activity.add(now)
@@ -245,7 +234,6 @@ func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, eff
 	t.metadata = metadata
 	t.turns++
 	t.last = now
-	t.via = via
 }
 
 func (s *Stats) activateThread(thread string) {
@@ -481,7 +469,6 @@ type Snapshot struct {
 	Failures           int64
 	Limited            int64
 	TTFB               time.Duration
-	WSTurns            int64
 	WSOpen             int64
 	MonthlyUsage       responseUsage
 	APICostNanoDollars int64
@@ -517,7 +504,6 @@ type ThreadSnapshot struct {
 	TTFB               time.Duration
 	Latency            time.Duration
 	Last               time.Time `json:"last"`
-	Via                transport `json:"via"`
 }
 
 func (s *Stats) snapshot() Snapshot {
@@ -532,7 +518,6 @@ func (s *Stats) snapshot() Snapshot {
 		Turns:              s.turns,
 		Failures:           s.failures,
 		Limited:            s.limited,
-		WSTurns:            s.wsTurns,
 		WSOpen:             s.wsOpen,
 		MonthlyUsage:       s.monthlyUsage,
 		APICostNanoDollars: s.apiCostNanoDollars,
@@ -581,7 +566,6 @@ func (s *Stats) snapshot() Snapshot {
 			TTFB:               t.ttfb,
 			Latency:            t.latency,
 			Last:               t.last,
-			Via:                t.via,
 		})
 	}
 	slices.SortFunc(out.Threads, func(left, right ThreadSnapshot) int {
@@ -662,7 +646,6 @@ func activityTotal(activity []int64) int64 {
 type statsResponse struct {
 	UptimeSeconds           float64                `json:"uptime_seconds"`
 	Turns                   int64                  `json:"turns"`
-	WebSocketTurns          int64                  `json:"websocket_turns"`
 	OpenWebSockets          int64                  `json:"open_websockets"`
 	Threads                 int                    `json:"threads"`
 	Failovers               int64                  `json:"failovers"`
@@ -710,7 +693,6 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 	out := statsResponse{
 		UptimeSeconds:           snapshot.Uptime.Seconds(),
 		Turns:                   snapshot.Turns,
-		WebSocketTurns:          snapshot.WSTurns,
 		OpenWebSockets:          snapshot.WSOpen,
 		Threads:                 len(snapshot.Threads),
 		Failovers:               snapshot.Failures,

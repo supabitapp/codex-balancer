@@ -117,14 +117,13 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 			apiCostNanoDollars: 24_500_000,
 			Latency:            5420 * time.Millisecond,
 			Last:               time.Now(),
-			Via:                transportHTTP,
 		}}},
 	}
 
 	view := dashboard.threads(220, 8)
 	for _, expected := range []string{
-		"Thread", "Client", "IP", "Account", "Model", "Via", "Fast", "Uncached", "Cache%", "Output", "Used/Cmp", "Latency", "Reqs", "Cost", "Active",
-		"019fe5c2", "🇺🇸 US-1", "203.0.113.42", "account-a@example.com", "☀️ xhigh", "HTTP", "⚡", "500", "75", "300", "-- (2)", "5.42s", "39", "$0.025",
+		"Thread", "Client", "IP", "Account", "Model", "Fast", "Uncached", "Cache%", "Output", "Used/Cmp", "Latency", "Reqs", "Cost", "Active",
+		"019fe5c2", "🇺🇸 US-1", "203.0.113.42", "account-a@example.com", "☀️ xhigh", "⚡", "500", "75", "300", "-- (2)", "5.42s", "39", "$0.025",
 	} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("routing missing %q:\n%s", expected, view)
@@ -153,8 +152,8 @@ func TestTotalsColumnsStayCompactOnWideTerminals(t *testing.T) {
 		line := strings.Split(dashboard.totals(width), "\n")[2]
 		return [3]int{
 			strings.Index(line, "turns"),
-			strings.Index(line, "http"),
-			strings.Index(line, "ws turns"),
+			strings.Index(line, "failovers"),
+			strings.Index(line, "rate limits"),
 		}
 	}
 
@@ -166,7 +165,7 @@ func TestTotalsColumnsStayCompactOnWideTerminals(t *testing.T) {
 }
 
 func TestTotalsRenderLabelValueTable(t *testing.T) {
-	dashboard := dashboard{snap: Snapshot{Turns: 70_600, WSTurns: 65_168, WSOpen: 777}}
+	dashboard := dashboard{snap: Snapshot{Turns: 70_600, Failures: 12, Limited: 34, WSOpen: 777}}
 	dashboard.snap.MonthlyUsage.InputDetails.CachedTokens = 8_510_000_000
 	lines := strings.Split(dashboard.totals(120), "\n")
 

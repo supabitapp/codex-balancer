@@ -110,8 +110,7 @@ func TestWebSocketDrainingAccountForcesFastTier(t *testing.T) {
 	})
 	defer upstream.Close()
 	draining := testAccount("account-draining", 96)
-	server, _, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{draining}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, _ := newTestServer(t, []*Account{draining})
 	server.upstream = upstream.URL
 	server.catalog.replace(
 		[]string{draining.id()},
@@ -145,8 +144,7 @@ func TestWebSocketDrainingTakesOverPassiveCompactionHandoff(t *testing.T) {
 	defer upstream.Close()
 	owner := testAccount("account-owner", 10)
 	draining := testAccount("account-draining", 20)
-	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{owner, draining}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, store := newTestServer(t, []*Account{owner, draining})
 	server.compactionRotation = newCompactionRotation(server.log)
 	server.upstream = upstream.URL
 	proxy := httptest.NewServer(server.routes())
@@ -216,8 +214,7 @@ func TestWebSocketUsageHeadersRestartOtherIdleSessions(t *testing.T) {
 	defer upstream.Close()
 	a := testAccount("account-a", 20)
 	b := testAccount("account-b", 30)
-	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, store := newTestServer(t, []*Account{a, b})
 	server.upstream = upstream.URL
 	if err := store.bind(affinityRef{kind: affinitySession, value: "session-a"}, a.id()); err != nil {
 		t.Fatal(err)
@@ -543,8 +540,7 @@ func TestWebSocketFollowUpsKeepStableSessionStats(t *testing.T) {
 	})
 	defer upstream.Close()
 	account := testAccount("account", 0)
-	server, _, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{account}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, _ := newTestServer(t, []*Account{account})
 	server.upstream = upstream.URL
 	proxy := httptest.NewServer(server.routes())
 	defer proxy.Close()
@@ -572,7 +568,7 @@ func TestWebSocketFollowUpsKeepStableSessionStats(t *testing.T) {
 		t.Fatalf("threads = %+v, want one session", snapshot.Threads)
 	}
 	thread := snapshot.Threads[0]
-	if thread.Key != "session" || thread.ClientIP != "203.0.113.42" || thread.Model != "gpt-5.6-terra" || thread.Effort != "xhigh" || thread.Turns != 2 || thread.Via != transportWebSocket {
+	if thread.Key != "session" || thread.ClientIP != "203.0.113.42" || thread.Model != "gpt-5.6-terra" || thread.Effort != "xhigh" || thread.Turns != 2 {
 		t.Fatalf("thread = %+v, want session with two WebSocket turns", thread)
 	}
 	conn.CloseNow()
@@ -604,8 +600,7 @@ func TestWebSocketCompletedResponseTracksAPIEstimate(t *testing.T) {
 	})
 	defer upstream.Close()
 	account := testAccount("account", 0)
-	server, _, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{account}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, _ := newTestServer(t, []*Account{account})
 	server.upstream = upstream.URL
 	proxy := httptest.NewServer(server.routes())
 	defer proxy.Close()
@@ -663,8 +658,7 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 	defer upstream.Close()
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
-	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, store := newTestServer(t, []*Account{a, b})
 	logs := &testLogBuffer{}
 	server.log = slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	rotation := newCompactionRotation(server.log)
@@ -795,7 +789,6 @@ func TestWebSocketRotatesAfterCompactionOnNewTurn(t *testing.T) {
 		"compaction_replay":   true,
 	})
 	requireLogRecord(t, records, "response usage", map[string]any{
-		"transport":          "ws",
 		"thread":             "session",
 		"turn":               "turn-b",
 		"request_kind":       "normal",
@@ -826,8 +819,7 @@ func TestWebSocketCompactionRotationKeepsFreshRouteSource(t *testing.T) {
 	defer upstream.Close()
 	a := testAccount("account-a", 60)
 	b := testAccount("account-b", 80)
-	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, store := newTestServer(t, []*Account{a, b})
 	logs := &testLogBuffer{}
 	server.log = slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	rotation := newCompactionRotation(server.log)
@@ -898,8 +890,7 @@ func TestWebSocketCompactionRotationFallsBackOnInvalidEncryptedContent(t *testin
 	defer upstream.Close()
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
-	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, store := newTestServer(t, []*Account{a, b})
 	logs := &testLogBuffer{}
 	server.log = slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	rotation := newCompactionRotation(server.log)
@@ -1090,8 +1081,7 @@ func TestWebSocketModelCatalogRoutesBeforeSendingTurn(t *testing.T) {
 	defer upstream.Close()
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
-	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, store := newTestServer(t, []*Account{a, b})
 	server.upstream = upstream.URL
 	server.catalog.replace(
 		[]string{a.id(), b.id()},
@@ -1623,8 +1613,7 @@ func TestWebSocketHardOwnerUnauthorizedNeverFailsOver(t *testing.T) {
 	oauthCalls := useOAuthRefreshServer(t)
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
-	server, store, closeUnusedUpstream := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, store := newTestServer(t, []*Account{a, b})
 	server.upstream = upstream.URL
 	if err := store.bind(affinityRef{kind: affinityTurnState, value: "turn"}, "account-a"); err != nil {
 		t.Fatal(err)
@@ -1875,8 +1864,7 @@ func TestWebSocketHandshakeServerFailureRetriesThenUsesAnotherAccount(t *testing
 func TestWebSocketCanceledHandshakeDoesNotFailOver(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
-	server, _, closeServer := newAffinityHTTPServer(t, []*Account{a, b}, func(http.ResponseWriter, *http.Request) {})
-	defer closeServer()
+	server, _ := newTestServer(t, []*Account{a, b})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	request := httptest.NewRequest(http.MethodGet, "/v1/responses", nil).WithContext(ctx)
@@ -1996,8 +1984,7 @@ func newAffinityProxyWebSocketServer(
 	accounts []*Account,
 ) (*httptest.Server, *AffinityStore, func()) {
 	t.Helper()
-	server, store, closeUpstream := newAffinityHTTPServer(t, accounts, func(http.ResponseWriter, *http.Request) {})
-	closeUpstream()
+	server, store := newTestServer(t, accounts)
 	server.upstream = upstream
 	proxy := httptest.NewServer(server.routes())
 	return proxy, store, proxy.Close
@@ -2009,8 +1996,7 @@ func newRefreshableAffinityProxyWebSocketServer(
 	accounts []*Account,
 ) *httptest.Server {
 	t.Helper()
-	server, _, closeUnusedUpstream := newAffinityHTTPServer(t, accounts, func(http.ResponseWriter, *http.Request) {})
-	closeUnusedUpstream()
+	server, _ := newTestServer(t, accounts)
 	server.upstream = upstream
 	return httptest.NewServer(server.routes())
 }

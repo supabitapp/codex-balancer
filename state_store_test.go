@@ -114,6 +114,7 @@ func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
 	DROP TABLE price_catalog;
 	ALTER TABLE accounts DROP COLUMN routing_mode;
 	ALTER TABLE events DROP COLUMN reasoning_effort;
+	ALTER TABLE attempts ADD COLUMN transport TEXT NOT NULL DEFAULT 'ws';
 	ALTER TABLE attempts DROP COLUMN client_ip;
 	ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 	PRAGMA user_version = 10;`); err != nil {
@@ -145,11 +146,12 @@ func TestStateStoreMigratesClientIDsToIPs(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`DROP TABLE price_catalog;
 		ALTER TABLE accounts DROP COLUMN routing_mode;
-		ALTER TABLE events DROP COLUMN reasoning_effort;
-		ALTER TABLE attempts DROP COLUMN client_ip;
+	ALTER TABLE events DROP COLUMN reasoning_effort;
+	ALTER TABLE attempts ADD COLUMN transport TEXT NOT NULL DEFAULT 'ws';
+	ALTER TABLE attempts DROP COLUMN client_ip;
 		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 		INSERT INTO attempts (at_ns, thread_key, account_id, service_tier, transport, reasoning_effort, turn_metadata, client_id)
-		VALUES (1, 'thread', 'account', '', 'http', '', '', '52f3c1d8');
+		VALUES (1, 'thread', 'account', '', 'ws', '', '', '52f3c1d8');
 		PRAGMA user_version = 11;`); err != nil {
 		t.Fatal(err)
 	}
@@ -191,8 +193,9 @@ func TestStateStoreAddsAffinityLifecycleToVersionFive(t *testing.T) {
 		ALTER TABLE events DROP COLUMN thread_key;
 		ALTER TABLE events DROP COLUMN total_tokens;
 		ALTER TABLE events DROP COLUMN reasoning_tokens;
-		ALTER TABLE events DROP COLUMN reasoning_effort;
-		ALTER TABLE attempts DROP COLUMN reasoning_effort;
+	ALTER TABLE events DROP COLUMN reasoning_effort;
+	ALTER TABLE attempts ADD COLUMN transport TEXT NOT NULL DEFAULT 'ws';
+	ALTER TABLE attempts DROP COLUMN reasoning_effort;
 		ALTER TABLE attempts DROP COLUMN turn_metadata;
 		ALTER TABLE attempts DROP COLUMN client_ip;
 		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
@@ -225,12 +228,13 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`DROP TABLE price_catalog;
-		ALTER TABLE accounts DROP COLUMN routing_mode;
-		ALTER TABLE attempts DROP COLUMN client_ip;
+	ALTER TABLE accounts DROP COLUMN routing_mode;
+	ALTER TABLE attempts ADD COLUMN transport TEXT NOT NULL DEFAULT 'ws';
+	ALTER TABLE attempts DROP COLUMN client_ip;
 		ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';
 		INSERT INTO attempts (
 		at_ns, thread_key, account_id, service_tier, transport, client_id
-	) VALUES (1, 'thread', 'account', '', 'http', 'legacy')`); err != nil {
+	) VALUES (1, 'thread', 'account', '', 'ws', 'legacy')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`ALTER TABLE bindings DROP COLUMN abandoned_at_ns;
@@ -308,8 +312,8 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "codex-turn", SubagentKind: "compact"}
-	stats.routed("thread", "203.0.113.41", "account-a", "gpt-5.6-sol", "high", serviceTierFast, transportHTTP, metadata)
-	stats.routed("thread", "203.0.113.42", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, transportWebSocket, metadata)
+	stats.routed("thread", "203.0.113.41", "account-a", "gpt-5.6-sol", "high", serviceTierFast, metadata)
+	stats.routed("thread", "203.0.113.42", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, metadata)
 	stats.failedOver("account-a", "unreachable")
 	stats.rateLimited("account-a")
 	stats.answered("thread", "account-a", 2*time.Second)
@@ -341,7 +345,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := restored.snapshot()
-	if snapshot.Turns != 2 || snapshot.WSTurns != 1 || snapshot.Failures != 1 || snapshot.Limited != 1 {
+	if snapshot.Turns != 2 || snapshot.Failures != 1 || snapshot.Limited != 1 {
 		t.Fatalf("totals = %+v", snapshot)
 	}
 	if snapshot.TTFB != 2*time.Second || snapshot.APICostNanoDollars != wantCost || snapshot.UnpricedResponses != 0 {
@@ -380,14 +384,14 @@ func TestStatsRestoreDoesNotMarkHistoricalThreadsLive(t *testing.T) {
 	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "compact-turn"}
 	sourceUsage := responseUsage{InputTokens: 100, OutputTokens: 10}
 	sourceUsage.InputDetails.CachedTokens = 90
-	stats.routed("thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "default", transportWebSocket, compaction)
+	stats.routed("thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "default", compaction)
 	stats.answered("thread", "account-a", 100*time.Millisecond)
 	stats.completed("thread", "account-a", compaction, time.Second)
 	stats.recordUsage("thread", "account-a", "gpt-5.6-sol", "xhigh", "default", sourceUsage)
 
 	target := turnMetadata{RequestKind: "normal", ThreadID: "codex-thread", TurnID: "next-turn"}
 	targetUsage := responseUsage{InputTokens: 100, OutputTokens: 20}
-	stats.routed("thread", "client", "account-b", "gpt-5.6-sol", "xhigh", "default", transportWebSocket, target)
+	stats.routed("thread", "client", "account-b", "gpt-5.6-sol", "xhigh", "default", target)
 	stats.compactionSwitched("codex-thread", "account-a", "account-b")
 	stats.answered("thread", "account-b", 200*time.Millisecond)
 	stats.completed("thread", "account-b", target, 2*time.Second)
@@ -501,7 +505,7 @@ func TestPoolDerivesLastUsedFromAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := time.Now().Add(-time.Minute).Round(0)
-	if err := store.recordAttempt(storedAttempt{At: want, Account: "account-a", Transport: transportHTTP}); err != nil {
+	if err := store.recordAttempt(storedAttempt{At: want, Account: "account-a"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

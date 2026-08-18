@@ -12,11 +12,11 @@ import (
 func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
-	stats.applyRouted(now, "inactive", "", "account", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now, "inactive", "", "account", "", "", "", turnMetadata{})
 	for i := range 150 {
 		thread := fmt.Sprintf("active-%d", i)
 		stats.activateThread(thread)
-		stats.applyRouted(now, thread, "", "account", "", "", "", transportHTTP, turnMetadata{})
+		stats.applyRouted(now, thread, "", "account", "", "", "", turnMetadata{})
 	}
 
 	snapshot := stats.snapshot()
@@ -53,8 +53,8 @@ func TestSnapshotKeepsThreadsUntilTheirLastLiveReferenceCloses(t *testing.T) {
 	stats.activateThread("019f02")
 	stats.activateThread("019f02")
 	stats.activateThread("019f01")
-	stats.applyRouted(now.Add(-24*time.Hour), "019f02", "", "account", "", "", "", transportWebSocket, turnMetadata{})
-	stats.applyRouted(now, "019f01", "", "account", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now.Add(-24*time.Hour), "019f02", "", "account", "", "", "", turnMetadata{})
+	stats.applyRouted(now, "019f01", "", "account", "", "", "", turnMetadata{})
 
 	snapshot := stats.snapshot()
 	if len(snapshot.Threads) != 2 || snapshot.Threads[0].Key != "019f01" || snapshot.Threads[1].Key != "019f02" {
@@ -83,7 +83,7 @@ func TestSnapshotSortsActiveThreadsByLastActivity(t *testing.T) {
 		{"middle", now.Add(-time.Minute)},
 	} {
 		stats.activateThread(thread.key)
-		stats.applyRouted(thread.last, thread.key, "", "account", "", "", "", transportHTTP, turnMetadata{})
+		stats.applyRouted(thread.last, thread.key, "", "account", "", "", "", turnMetadata{})
 	}
 
 	threads := stats.snapshot().Threads
@@ -95,10 +95,10 @@ func TestSnapshotSortsActiveThreadsByLastActivity(t *testing.T) {
 func TestAccountSnapshotUsesLast24Hours(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
-	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
-	stats.applyRouted(now.Add(-23*time.Hour-30*time.Minute), "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
-	stats.applyRouted(now.Add(-30*time.Minute), "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
-	stats.applyRouted(now.Add(-30*time.Minute), "", "", "account-b", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", turnMetadata{})
+	stats.applyRouted(now.Add(-23*time.Hour-30*time.Minute), "", "", "account-a", "", "", "", turnMetadata{})
+	stats.applyRouted(now.Add(-30*time.Minute), "", "", "account-a", "", "", "", turnMetadata{})
+	stats.applyRouted(now.Add(-30*time.Minute), "", "", "account-b", "", "", "", turnMetadata{})
 	stats.applyRateLimited(now.Add(-25*time.Hour), "account-a")
 	stats.applyRateLimited(now.Add(-time.Hour), "account-a")
 
@@ -120,11 +120,11 @@ func TestThreadUsageFollowsCurrentLiveRoute(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)
 	stats.activateThread("thread")
-	stats.applyRouted(old, "thread", "", "account", "old", "medium", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(old, "thread", "", "account", "old", "medium", "", turnMetadata{})
 	stats.applyUsageAt(old, "thread", "account", "unknown", "medium", "default", responseUsage{InputTokens: 100})
 	stats.deactivateThread("thread")
 	stats.activateThread("thread")
-	stats.applyRouted(now, "thread", "", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now, "thread", "", "account", "gpt-5.6-sol", "xhigh", "", turnMetadata{})
 	routed := stats.snapshot()
 	if len(routed.Threads) != 1 || routed.Threads[0].Model != "gpt-5.6-sol" || routed.Threads[0].Effort != "xhigh" {
 		t.Fatalf("routed thread = %+v", routed.Threads)
@@ -144,14 +144,14 @@ func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
 	now := time.Now()
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "compact-turn"}
 	stats.activateThread("thread")
-	stats.applyRouted(now, "thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "", transportWebSocket, metadata)
+	stats.applyRouted(now, "thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "", metadata)
 	sourceUsage := responseUsage{InputTokens: 100, OutputTokens: 10}
 	sourceUsage.InputDetails.CachedTokens = 90
 	stats.applyUsageAt(now.Add(time.Second), "thread", "account-a", "gpt-5.6-sol", "xhigh", "default", sourceUsage)
 	stats.applyAnswered(now.Add(time.Second), "thread", "account-a", 100*time.Millisecond)
 	stats.applyCompleted(now.Add(time.Second), "thread", "account-a", metadata.RequestKind, time.Second)
 
-	stats.applyRouted(now.Add(2*time.Second), "thread", "client", "account-b", "gpt-5.6-sol", "xhigh", "", transportWebSocket, turnMetadata{RequestKind: "normal", ThreadID: "codex-thread", TurnID: "next-turn"})
+	stats.applyRouted(now.Add(2*time.Second), "thread", "client", "account-b", "gpt-5.6-sol", "xhigh", "", turnMetadata{RequestKind: "normal", ThreadID: "codex-thread", TurnID: "next-turn"})
 	switched := stats.snapshot().Threads[0]
 	if switched.Account != "account-b" || switched.Turns != 1 || !switched.Usage.empty() || !switched.LatestUsage.empty() || len(switched.models) != 0 || switched.TTFB != 0 || switched.Latency != 0 || switched.Compactions != 1 {
 		t.Fatalf("switched segment = %+v", switched)
@@ -172,18 +172,18 @@ func TestThreadRouteSegmentResetsWhenAccountChanges(t *testing.T) {
 	}
 }
 
-func TestCodexThreadsKeepSeparateTransportsWithinOneRoute(t *testing.T) {
+func TestCodexThreadsKeepSeparateMetadataWithinOneRoute(t *testing.T) {
 	stats := newStats()
 	now := time.Now()
-	httpMetadata := turnMetadata{RequestKind: "turn", ThreadID: "http-thread"}
-	webSocketMetadata := turnMetadata{RequestKind: "turn", ThreadID: "ws-thread", SubagentKind: "thread_spawn"}
-	stats.activateThread("http-thread")
-	stats.activateThread("ws-thread")
-	stats.applyRouted(now, statsThreadKey("session", httpMetadata), "client", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, httpMetadata)
-	stats.applyRouted(now, statsThreadKey("session", webSocketMetadata), "client", "account", "gpt-5.6-sol", "xhigh", "", transportWebSocket, webSocketMetadata)
+	mainMetadata := turnMetadata{RequestKind: "turn", ThreadID: "main-thread"}
+	subagentMetadata := turnMetadata{RequestKind: "turn", ThreadID: "subagent-thread", SubagentKind: "thread_spawn"}
+	stats.activateThread("main-thread")
+	stats.activateThread("subagent-thread")
+	stats.applyRouted(now, statsThreadKey("session", mainMetadata), "client", "account", "gpt-5.6-sol", "xhigh", "", mainMetadata)
+	stats.applyRouted(now, statsThreadKey("session", subagentMetadata), "client", "account", "gpt-5.6-sol", "xhigh", "", subagentMetadata)
 
 	threads := stats.snapshot().Threads
-	if len(threads) != 2 || threads[0].Key != "http-thread" || threads[0].Via != transportHTTP || threads[1].Key != "ws-thread" || threads[1].Via != transportWebSocket {
+	if len(threads) != 2 || threads[0].Key != "main-thread" || threads[1].Key != "subagent-thread" {
 		t.Fatalf("threads = %+v", threads)
 	}
 }
@@ -235,7 +235,7 @@ func TestThreadCostPricesEachResponse(t *testing.T) {
 	stats := newStatsWithPrices(prices)
 	stats.activateThread("thread")
 	now := time.Now()
-	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "xhigh", "default", transportWebSocket, turnMetadata{})
+	stats.applyRouted(now, "thread", "client", "account", "gpt-5.6-sol", "xhigh", "default", turnMetadata{})
 	usage := responseUsage{InputTokens: 200_000, OutputTokens: 1_000}
 	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "xhigh", "default", usage)
 	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "xhigh", "default", usage)
@@ -261,7 +261,7 @@ func TestThreadCostRepricesAfterCatalogRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats.activateThread("thread")
-	stats.routed("thread", "client", "account", "gpt-5.4", "high", "default", transportWebSocket, turnMetadata{})
+	stats.routed("thread", "client", "account", "gpt-5.4", "high", "default", turnMetadata{})
 	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
 	stats.recordUsage("thread", "account", "gpt-5.4", "high", "default", usage)
 	before := stats.snapshot().Threads[0]

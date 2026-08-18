@@ -179,8 +179,8 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer downstream.CloseNow()
-	downstream.SetReadLimit(maxRequestBody)
-	dial.conn.SetReadLimit(maxRequestBody)
+	downstream.SetReadLimit(maxWebSocketMessage)
+	dial.conn.SetReadLimit(maxWebSocketMessage)
 	s.relayResponsesWebSocket(downstream, r, dial, thread, resolution.hard)
 }
 
@@ -232,7 +232,7 @@ func (s *server) dialResponsesWebSocket(
 	resetRetried := map[string]bool{}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		account := s.pickAccount(thread, resolution.required, resolution.preferred, model, serviceTier, skip, attempt, transportWebSocket)
+		account := s.pickAccount(thread, resolution.required, resolution.preferred, model, serviceTier, skip, attempt)
 		if account == nil {
 			return nil, nil, errNoAccountAvailable
 		}
@@ -274,7 +274,7 @@ func (s *server) dialResponsesWebSocket(
 			if resp != nil {
 				account.observe(resp.Header)
 			}
-			attrs := []any{"transport", transportWebSocket, "thread", thread, "attempt", attempt + 1}
+			attrs := []any{"thread", thread, "attempt", attempt + 1}
 			attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 			s.log.Debug("websocket routed", attrs...)
 			return &websocketDial{conn: conn, resp: resp, account: account}, nil, nil
@@ -332,7 +332,7 @@ func (s *server) dialResponsesWebSocket(
 					account.rateLimited(resp.Header, attempt)
 				}
 				s.stats.rateLimited(id)
-				attrs := []any{"transport", transportWebSocket, "thread", thread, "attempt", attempt + 1}
+				attrs := []any{"thread", thread, "attempt", attempt + 1}
 				attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 				s.log.Info("account rate limited", attrs...)
 			} else {
@@ -443,7 +443,7 @@ func (s *server) relayResponsesWebSocket(
 		generation++
 		previous.conn.CloseNow()
 		s.websocketClosed(thread, previous.account)
-		current.conn.SetReadLimit(maxRequestBody)
+		current.conn.SetReadLimit(maxWebSocketMessage)
 		readWebSocketMessages(ctx, current.conn, false, generation, messages)
 		s.websocketOpened(thread, current.account)
 	}
@@ -481,7 +481,7 @@ func (s *server) relayResponsesWebSocket(
 		if reason != "" {
 			s.stats.failedOver(previousAccount, reason)
 		}
-		data, _ := s.fastTierBody(current.account, turn.model, turn.serviceTier, turn.data)
+		data, _ := s.forceFastTier(current.account, turn.model, turn.serviceTier, turn.data)
 		if err := current.conn.Write(ctx, turn.kind, data); err != nil {
 			s.log.Warn("websocket replay write failed",
 				"thread", turn.thread,
@@ -673,9 +673,9 @@ func (s *server) relayResponsesWebSocket(
 					continue
 				}
 			}
-			data, forced := s.fastTierBody(current.account, event.Model, event.ServiceTier, message.data)
+			data, forced := s.forceFastTier(current.account, event.Model, event.ServiceTier, message.data)
 			if forced {
-				s.log.Info("draining account forced fast tier", "transport", transportWebSocket, "thread", turnThread, "account", current.account.id())
+				s.log.Info("draining account forced fast tier", "thread", turnThread, "account", current.account.id())
 			}
 			if err := current.conn.Write(ctx, message.kind, data); err != nil {
 				s.log.Warn("upstream websocket request write failed",
@@ -688,7 +688,7 @@ func (s *server) relayResponsesWebSocket(
 				return
 			}
 			counted := event.Generate == nil || *event.Generate
-			attrs := []any{"transport", transportWebSocket, "thread", turnThread, "service_tier", event.ServiceTier}
+			attrs := []any{"thread", turnThread, "service_tier", event.ServiceTier}
 			attrs = append(attrs,
 				"hard_affinity", resolution.hard,
 				"hard_affinity_kinds", requestAffinity.hardKinds(),
@@ -804,7 +804,7 @@ func (s *server) relayResponsesWebSocket(
 					current.account.rateLimited(headers, 0)
 				}
 				s.stats.rateLimited(current.account.id())
-				attrs := []any{"transport", transportWebSocket, "thread", thread, "status", websocketStatus(event), "code", websocketErrorCode(event)}
+				attrs := []any{"thread", thread, "status", websocketStatus(event), "code", websocketErrorCode(event)}
 				attrs = append(attrs, routingLogAttrs(current.account.routingCandidate(), time.Now())...)
 				s.log.Info("account rate limited", attrs...)
 				retryable = true
@@ -868,7 +868,7 @@ func (s *server) relayResponsesWebSocket(
 							s.stats.activateThread(turns[index].statsThread)
 							liveThreads[turns[index].statsThread] = struct{}{}
 						}
-						s.stats.routed(turns[index].statsThread, requestIP(r), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, transportWebSocket, turns[index].metadata)
+						s.stats.routed(turns[index].statsThread, requestIP(r), current.account.id(), turns[index].model, turns[index].effort, turns[index].serviceTier, turns[index].metadata)
 						s.stats.answered(turns[index].statsThread, current.account.id(), time.Since(turns[index].sent))
 					}
 					s.log.Debug("websocket response created",
@@ -931,7 +931,7 @@ func (s *server) relayResponsesWebSocket(
 							serviceTier = turn.serviceTier
 						}
 						if !event.Response.Usage.empty() {
-							logResponseUsage(s.log, transportWebSocket, turn.thread, current.account.id(), model, serviceTier, turn.metadata, turn.rotationFrom, turn.compactReplay, time.Since(turn.sent), event.Response.Usage)
+							logResponseUsage(s.log, turn.thread, current.account.id(), model, serviceTier, turn.metadata, turn.rotationFrom, turn.compactReplay, time.Since(turn.sent), event.Response.Usage)
 						}
 						s.stats.recordUsage(turn.statsThread, current.account.id(), model, turn.effort, serviceTier, event.Response.Usage)
 						if event.Type == "response.completed" {

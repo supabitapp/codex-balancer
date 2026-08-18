@@ -85,6 +85,7 @@ var stateMigrations = []string{
 	) STRICT;`,
 	`ALTER TABLE accounts ADD COLUMN routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (routing_mode IN ('normal', 'priority', 'draining'));`,
 	`ALTER TABLE events ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT '';`,
+	`ALTER TABLE attempts DROP COLUMN transport;`,
 }
 
 type StateStore struct {
@@ -99,7 +100,6 @@ type storedAttempt struct {
 	Account     string
 	Effort      string
 	ServiceTier string
-	Transport   transport
 	Metadata    string
 }
 
@@ -394,8 +394,8 @@ func decodeTime(value int64) time.Time {
 }
 
 func (s *StateStore) recordAttempt(attempt storedAttempt) error {
-	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, thread_key, client_ip, account_id, reasoning_effort, service_tier, transport, turn_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		attempt.At.UnixNano(), attempt.Thread, attempt.ClientIP, attempt.Account, attempt.Effort, attempt.ServiceTier, attempt.Transport, attempt.Metadata)
+	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, thread_key, client_ip, account_id, reasoning_effort, service_tier, turn_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		attempt.At.UnixNano(), attempt.Thread, attempt.ClientIP, attempt.Account, attempt.Effort, attempt.ServiceTier, attempt.Metadata)
 	return err
 }
 
@@ -431,19 +431,18 @@ func (s *StateStore) usageEventsSince(start time.Time) ([]storedEvent, error) {
 }
 
 func (s *StateStore) restoreStats(stats *Stats) error {
-	attempts, err := s.db.Query(`SELECT at_ns, thread_key, client_ip, account_id, reasoning_effort, service_tier, transport, turn_metadata FROM attempts ORDER BY id`)
+	attempts, err := s.db.Query(`SELECT at_ns, thread_key, client_ip, account_id, reasoning_effort, service_tier, turn_metadata FROM attempts ORDER BY id`)
 	if err != nil {
 		return err
 	}
 	for attempts.Next() {
 		var at int64
 		var thread, clientIP, account, effort, tier, metadata string
-		var via transport
-		if err := attempts.Scan(&at, &thread, &clientIP, &account, &effort, &tier, &via, &metadata); err != nil {
+		if err := attempts.Scan(&at, &thread, &clientIP, &account, &effort, &tier, &metadata); err != nil {
 			attempts.Close()
 			return err
 		}
-		stats.applyRouted(time.Unix(0, at), thread, clientIP, account, "", effort, tier, via, decodeTurnMetadata(metadata))
+		stats.applyRouted(time.Unix(0, at), thread, clientIP, account, "", effort, tier, decodeTurnMetadata(metadata))
 	}
 	if err := attempts.Close(); err != nil {
 		return err

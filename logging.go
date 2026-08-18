@@ -5,11 +5,10 @@ import (
 	"time"
 )
 
-func (s *server) pickAccount(thread, required, preferred, model, serviceTier string, skip map[string]bool, attempt int, via transport) *Account {
+func (s *server) pickAccount(thread, required, preferred, model, serviceTier string, skip map[string]bool, attempt int) *Account {
 	allowed := s.allowedAccounts(model, serviceTier)
 	decision := s.pool.route(required, preferred, skip, allowed)
 	s.log.Debug("routing attempt",
-		"transport", via,
 		"thread", thread,
 		"attempt", attempt+1,
 		"required_account", required,
@@ -20,7 +19,6 @@ func (s *server) pickAccount(thread, required, preferred, model, serviceTier str
 	)
 	for _, candidate := range decision.candidates {
 		attrs := []any{
-			"transport", via,
 			"thread", thread,
 			"attempt", attempt + 1,
 			"selected", candidate.account == decision.account,
@@ -34,7 +32,6 @@ func (s *server) pickAccount(thread, required, preferred, model, serviceTier str
 	}
 	if decision.account == nil {
 		s.log.Warn("no account available",
-			"transport", via,
 			"thread", thread,
 			"attempt", attempt+1,
 			"required_account", required,
@@ -81,9 +78,8 @@ func routingLogAttrs(candidate routingCandidate, now time.Time) []any {
 	return attrs
 }
 
-func logResponseUsage(log *slog.Logger, via transport, thread, account, model, serviceTier string, metadata turnMetadata, rotationSource string, compactionReplay bool, duration time.Duration, usage responseUsage) {
+func logResponseUsage(log *slog.Logger, thread, account, model, serviceTier string, metadata turnMetadata, rotationSource string, compactionReplay bool, duration time.Duration, usage responseUsage) {
 	log.Debug("response usage",
-		"transport", via,
 		"thread", thread,
 		"turn", metadata.TurnID,
 		"request_kind", metadata.RequestKind,

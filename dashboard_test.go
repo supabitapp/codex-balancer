@@ -106,7 +106,7 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("019fe5c2private")
-	stats.routed("019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{})
+	stats.routed("019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, turnMetadata{})
 	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "high", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	stats.note(eventLegacyReconnect, "source", "019fe701-7a55-7760-8d38-d1cd74544ef8")
@@ -154,7 +154,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`<td>☀️ high</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<span>1 checking</span>`,
-		`<td>WS</td>`,
+		`<th>WS</th>`,
 		`class="fast-icon"`,
 		`aria-label="Fast"`,
 		`API estimate`,
@@ -184,10 +184,10 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	account.adoptResetCredits(0, nil)
 	other := testAccount("account-b", 20)
 	stats := newStats()
-	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
-	stats.applyRouted(now, "", "", "account-a", "", "", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", turnMetadata{})
+	stats.applyRouted(now, "", "", "account-a", "", "", "", turnMetadata{})
 	for range 100 {
-		stats.applyRouted(now, "", "", "account-b", "", "", "", transportHTTP, turnMetadata{})
+		stats.applyRouted(now, "", "", "account-b", "", "", "", turnMetadata{})
 	}
 	server := &server{pool: &Pool{accounts: []*Account{account, other}}, stats: stats}
 
@@ -554,7 +554,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "019fe5c2private", TurnID: "019fe730private", SubagentKind: "compact"}
 	stats.activateThread("thread")
-	stats.applyRouted(now, "thread", "203.0.113.42", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, metadata)
+	stats.applyRouted(now, "thread", "203.0.113.42", "account", "gpt-5.6-sol", "xhigh", "", metadata)
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300, TotalTokens: 2_300}
 	usage.InputDetails.CachedTokens = 1_500
 	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "xhigh", "default", usage)
@@ -615,8 +615,8 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 	now := time.Now()
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("thread")
-	stats.applyRouted(now, "thread", "203.0.113.42", "account", "gpt-5.6-sol", "xhigh", "", transportHTTP, turnMetadata{})
-	stats.applyRouted(now.Add(time.Second), "thread", "203.0.113.42", "account", "gpt-5.6-luna", "low", "", transportHTTP, turnMetadata{})
+	stats.applyRouted(now, "thread", "203.0.113.42", "account", "gpt-5.6-sol", "xhigh", "", turnMetadata{})
+	stats.applyRouted(now.Add(time.Second), "thread", "203.0.113.42", "account", "gpt-5.6-luna", "low", "", turnMetadata{})
 	stats.applyUsageAt(now.Add(2*time.Second), "thread", "account", "gpt-5.6-sol", "xhigh", "default", responseUsage{InputTokens: 1_000})
 	stats.applyUsageAt(now.Add(3*time.Second), "thread", "account", "gpt-5.6-luna", "low", "default", responseUsage{InputTokens: 1_000})
 	server := &server{

@@ -5,7 +5,7 @@
 
 Spread Codex turns across several ChatGPT accounts. 
 
-Dead simple, one proxied endpoint, 1 SQLite database.
+Dead simple, one WebSocket-only proxied endpoint, 1 SQLite database.
 
 ## Install
 

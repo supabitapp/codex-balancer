@@ -34,22 +34,17 @@ func TestUsagePollLimitReachedDoesNotRemoveAccountFromRouting(t *testing.T) {
 	accountAPIBaseURL = usage.URL
 	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
 
-	calls := []string{}
-	server, _, closeServer := newAffinityHTTPServer(t, []*Account{roomier, account}, func(w http.ResponseWriter, r *http.Request) {
-		calls = append(calls, r.Header.Get("chatgpt-account-id"))
-		writeResponseCreated(w, "resp")
-	})
-	defer closeServer()
+	server := &server{
+		pool:   &Pool{accounts: []*Account{roomier, account}},
+		client: usage.Client(),
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
 	if err := server.pollUsage(context.Background(), account); err != nil {
 		t.Fatal(err)
 	}
 
-	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if !reflect.DeepEqual(calls, []string{"account-a"}) {
-		t.Fatalf("calls = %v", calls)
+	if picked := server.pool.pick("", "", nil, nil); picked == nil || picked.id() != "account-a" {
+		t.Fatalf("picked = %v, want account-a", picked)
 	}
 }
 
@@ -71,22 +66,17 @@ func TestUsagePollPositiveCapacityReturnsSpentAccountToRouting(t *testing.T) {
 	accountAPIBaseURL = usage.URL
 	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
 
-	calls := []string{}
-	server, _, closeServer := newAffinityHTTPServer(t, []*Account{roomier, account}, func(w http.ResponseWriter, r *http.Request) {
-		calls = append(calls, r.Header.Get("chatgpt-account-id"))
-		writeResponseCreated(w, "resp")
-	})
-	defer closeServer()
+	server := &server{
+		pool:   &Pool{accounts: []*Account{roomier, account}},
+		client: usage.Client(),
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
 	if err := server.pollUsage(context.Background(), account); err != nil {
 		t.Fatal(err)
 	}
 
-	response := serveHTTPResponse(t, server, "", "", `{"model":"gpt","input":[]}`)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
-	}
-	if !reflect.DeepEqual(calls, []string{"account-a"}) {
-		t.Fatalf("calls = %v", calls)
+	if picked := server.pool.pick("", "", nil, nil); picked == nil || picked.id() != "account-a" {
+		t.Fatalf("picked = %v, want account-a", picked)
 	}
 }
 
