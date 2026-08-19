@@ -36,9 +36,7 @@ codex-balancer accounts list
 
 State lives in `~/.codex-balancer/state.db`.
 
-SQLite stores credentials, routed turns, and events.
-The server fetches current limits, reset credits, auth state, and model lists.
-It derives status, totals, activity, response time, and current-month cost from those facts.
+SQLite stores credentials, routed turns, and events. The server fetches current limits, reset credits, auth state, and model lists. It derives status, totals, activity, response time, and current-month cost from those facts.
 
 ## Point Codex at it
 
@@ -62,3 +60,6 @@ supports_websockets = true
 command = "/bin/sh"
 args = ["-c", "exec /bin/cat \"$HOME/.codex/balancer-api-key\""]
 ```
+
+## Routing
+Routing logic is in ROUTING.md, keep that up to date and simple, human readable
