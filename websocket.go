@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -27,45 +26,6 @@ type websocketDial struct {
 	conn    *websocket.Conn
 	resp    *http.Response
 	account *Account
-}
-
-type websocketRegistry struct {
-	mu          sync.Mutex
-	connections map[chan struct{}]string
-}
-
-func (r *websocketRegistry) add(account string) chan struct{} {
-	restart := make(chan struct{}, 1)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.connections == nil {
-		r.connections = map[chan struct{}]string{}
-	}
-	r.connections[restart] = account
-	return restart
-}
-
-func (r *websocketRegistry) remove(restart chan struct{}) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.connections, restart)
-}
-
-func (r *websocketRegistry) restartExcept(account string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	restarted := 0
-	for restart, current := range r.connections {
-		if current == account {
-			continue
-		}
-		select {
-		case restart <- struct{}{}:
-			restarted++
-		default:
-		}
-	}
-	return restarted
 }
 
 type websocketMessage struct {
@@ -393,14 +353,11 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 		}
 	}()
 	s.websocketOpened(thread, initial.account)
-	restart := s.websockets.add(initial.account.id())
 	defer func() {
-		s.websockets.remove(restart)
 		cancel()
 		initial.conn.CloseNow()
 		s.websocketClosed(thread, initial.account)
 	}()
-	s.restartSocketsForDraining()
 
 	closeDownstream := func(status websocket.StatusCode, reason string) {
 		if err := downstream.Close(status, reason); err != nil {
@@ -409,35 +366,12 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 	}
 
 	var turns []websocketTurn
-	restartPending := false
 	for {
-		if !restartPending {
-			select {
-			case <-restart:
-				restartPending = true
-			default:
-			}
-		}
-		if restartPending && len(turns) == 0 {
-			if !s.shouldRestartSocketForDraining(initial.account.id()) {
-				restartPending = false
-			}
-		}
 		var message websocketMessage
 		select {
 		case message = <-messages:
-		case <-restart:
-			restartPending = true
-			continue
 		case <-ctx.Done():
 			return
-		}
-		if !restartPending {
-			select {
-			case <-restart:
-				restartPending = true
-			default:
-			}
 		}
 		if message.downstream {
 			if message.err != nil {
@@ -464,12 +398,9 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 				}
 				continue
 			}
-			if restartPending && len(turns) == 0 && websocketRequestPortable(r.Header, event) {
-				if s.shouldRestartSocketForDraining(initial.account.id()) {
-					closeDownstream(websocket.StatusServiceRestart, "routing to draining account")
-					return
-				}
-				restartPending = false
+			if len(turns) == 0 && websocketRequestPortable(r.Header, event) && s.shouldRestartSocketForDraining(initial.account.id()) {
+				closeDownstream(websocket.StatusServiceRestart, "routing to draining account")
+				return
 			}
 			data, forced := s.forceFastTier(initial.account, event.Model, event.ServiceTier, message.data)
 			if forced {
@@ -509,12 +440,8 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 			}
 			if rejection := websocketRejection(event); rejection != websocketRejectionNone {
 				s.handleWebSocketRejection(initial.account, rejection, headers, thread)
-				s.restartSocketsForDraining()
 				closeDownstream(websocket.StatusServiceRestart, "account rejected websocket request")
 				return
-			}
-			if len(headers) > 0 {
-				s.restartSocketsForDraining()
 			}
 			if event.Type == "response.created" {
 				for index := range turns {
@@ -565,31 +492,13 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 	}
 }
 
-func (s *server) restartSocketsForDraining() {
-	target := s.drainingTarget()
-	if target == "" {
-		return
-	}
-	if restarted := s.websockets.restartExcept(target); restarted > 0 {
-		s.log.Info("draining account signaling pinned websockets", "account", target, "websockets", restarted)
-	}
-}
-
 func (s *server) shouldRestartSocketForDraining(account string) bool {
-	target := s.drainingTarget()
-	return target != "" && target != account
-}
-
-func (s *server) drainingTarget() string {
 	decision := s.pool.route(nil)
 	if decision.account == nil {
-		return ""
+		return false
 	}
 	target := decision.account.routingCandidate()
-	if !target.draining() {
-		return ""
-	}
-	return target.id
+	return target.draining() && target.id != account
 }
 
 func websocketRequestPortable(headers http.Header, event websocketEnvelope) bool {
@@ -671,7 +580,7 @@ func (s *server) handleWebSocketRejection(account *Account, kind websocketReject
 	id := account.id()
 	s.log.Info("account rejected websocket request", "thread", thread, "account", id, "reason", kind)
 	switch kind {
-	case websocketRejectionUnauthorized:
+	case websocketRejectionUnauthorized, websocketRejectionConnectionLimit:
 		account.failed(0)
 	case websocketRejectionRateLimited:
 		account.rateLimited(headers, 0)

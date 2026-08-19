@@ -129,7 +129,6 @@ func serverCmd(args []string) error {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)
 		stats.note("accounts updated", "", fmt.Sprintf("%d added, %d removed, %d updated", change.added, change.removed, change.updated))
 		srv.catalog.invalidate()
-		srv.restartSocketsForDraining()
 		go func() {
 			if err := srv.refreshModels(ctx, srv.catalog.version()); err != nil && ctx.Err() == nil {
 				log.Warn("model refresh failed", "error", err)
@@ -185,7 +184,7 @@ func serverCmd(args []string) error {
 	log.Info("listening", "addr", listener.Addr().String(), "accounts", pool.count(), "upstream", *upstream, "log_file", *logPath)
 
 	if !*plain {
-		board := dashboard{pool: pool, catalog: srv.catalog, clientIDKey: clientIDKey, stats: stats, countries: &srv.countries, routingChanged: srv.restartSocketsForDraining, addr: listener.Addr().String()}
+		board := dashboard{pool: pool, catalog: srv.catalog, clientIDKey: clientIDKey, stats: stats, countries: &srv.countries, addr: listener.Addr().String()}
 		if _, err := tea.NewProgram(board, tea.WithContext(signalCtx)).Run(); err != nil &&
 			!errors.Is(err, context.Canceled) {
 			return err

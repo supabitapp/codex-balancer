@@ -46,17 +46,16 @@ func newTUIStyles() tuiStyles {
 }
 
 type dashboard struct {
-	pool           *Pool
-	catalog        *modelCatalog
-	clientIDKey    []byte
-	stats          *Stats
-	addr           string
-	width          int
-	height         int
-	cursor         int
-	snap           Snapshot
-	countries      *countryResolver
-	routingChanged func()
+	pool        *Pool
+	catalog     *modelCatalog
+	clientIDKey []byte
+	stats       *Stats
+	addr        string
+	width       int
+	height      int
+	cursor      int
+	snap        Snapshot
+	countries   *countryResolver
 }
 
 type tickMsg time.Time
@@ -125,9 +124,6 @@ func (d dashboard) cycleRoutingMode() {
 		return
 	}
 	d.stats.note("routing mode", account.id(), string(mode))
-	if d.routingChanged != nil {
-		d.routingChanged()
-	}
 }
 
 func (d dashboard) View() tea.View {

@@ -47,7 +47,6 @@ type server struct {
 	retryBackoff         func(int) time.Duration
 	resources            *resourceMonitor
 	countries            countryResolver
-	websockets           websocketRegistry
 	dashboardConnections atomic.Int64
 }
 

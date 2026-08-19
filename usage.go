@@ -111,7 +111,6 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 	attrs := []any{"reported_limit_reached", limitReached}
 	attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 	s.log.Debug("usage polled", attrs...)
-	s.restartSocketsForDraining()
 	return nil
 }
 

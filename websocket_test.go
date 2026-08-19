@@ -152,7 +152,6 @@ func TestWebSocketDrainingWaitsForActiveTurn(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server.restartSocketsForDraining()
 	release.Do(func() { close(complete) })
 	if event := readWebSocketEvent(t, first); event.Type != "response.completed" {
 		t.Fatalf("event before restart = %q, want response.completed", event.Type)
@@ -181,7 +180,6 @@ func TestWebSocketDrainingWaitsForPortableRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server.restartSocketsForDraining()
 
 	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "previous_response_id": "response", "input": []any{}})
 	readWebSocketEvent(t, conn)
@@ -214,7 +212,6 @@ func TestWebSocketDrainingKeepsHardHandshake(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server.restartSocketsForDraining()
 
 	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
 	readWebSocketEvent(t, conn)
@@ -239,7 +236,6 @@ func TestWebSocketDrainingKeepsFirstHardRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server.restartSocketsForDraining()
 
 	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "previous_response_id": "response", "input": []any{}})
 	readWebSocketEvent(t, conn)
@@ -313,11 +309,9 @@ func TestWebSocketRejectionClosesWithoutReplayAndReconnects(t *testing.T) {
 	}
 }
 
-func TestWebSocketConnectionLimitRestartsWithoutAccountPenalty(t *testing.T) {
-	requests := 0
+func TestWebSocketConnectionLimitCoolsAccountDown(t *testing.T) {
 	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
-		requests++
-		if requests == 1 {
+		if account == "account-full" {
 			writeWebSocketEvent(t, conn, map[string]any{
 				"type":  "error",
 				"error": map[string]any{"code": "websocket_connection_limit_reached"},
@@ -327,21 +321,21 @@ func TestWebSocketConnectionLimitRestartsWithoutAccountPenalty(t *testing.T) {
 		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
 	})
 	defer upstream.Close()
-	a := testAccount("account-a", 0)
-	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a})
+	healthy := testAccount("account-healthy", 10)
+	full := testAccount("account-full", 96)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{healthy, full})
 	conn, _ := dialWebSocket(t, proxy.URL, nil)
 	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
 	readCloseStatus(t, conn, websocket.StatusServiceRestart)
 	conn.CloseNow()
-	_, _, cooldown, _ := a.health()
-	if !cooldown.IsZero() || server.stats.snapshot().Limited != 0 {
-		t.Fatalf("account health = cooldown %s, limited %d", cooldown, server.stats.snapshot().Limited)
+	if _, _, cooldown, _ := full.health(); !cooldown.After(time.Now()) {
+		t.Fatalf("cooldown = %s, want future", cooldown)
 	}
 	reconnected, _ := dialWebSocket(t, proxy.URL, nil)
 	defer reconnected.CloseNow()
 	writeWebSocketEvent(t, reconnected, map[string]any{"type": "response.create", "input": []any{}})
 	readWebSocketEvent(t, reconnected)
-	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-a]" {
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-full account-healthy]" {
 		t.Fatalf("connection accounts = %s", got)
 	}
 }

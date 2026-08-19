@@ -6,7 +6,7 @@ This file records why the routing rules are what they are.
 
 - One account per WebSocket. Selection happens once, at dial time, before any request arrives.
 - Score by worst window: `max(used)` across primary and secondary equals minimum remaining headroom. Tie within 1% breaks by least recently used.
-- Accounts above 95% use drain: new portable work goes to them until empty. Manual drain does the same on demand; an expiring reset credit makes an account priority, not draining.
+- Accounts above 95% use drain: new portable work goes to them until empty. Manual drain does the same on demand; an expiring reset credit makes an account priority, not draining. Among draining accounts, manual drain goes first, then higher pressure; within 1% the earlier reset wins, because that remainder evaporates soonest.
 - A socket stays pinned until it closes or the account rejects a request. Only portable reconnects move; account-owned state (turn state, `previous_response_id`, conversation, file IDs) keeps its account.
 
 ## Failure policy
@@ -14,6 +14,7 @@ This file records why the routing rules are what they are.
 - Network errors and `5xx` are shared backend failures. No account cooldown, no account switch, no replay. Retry the same account briefly, then hand the failure to the client; the client reconnects.
 - `401` refreshes the same account once. A second `401` cools the account down and moves on.
 - `429` and usage limits are account-specific: cool down or mark spent, then try the next eligible account.
+- A connection-limit rejection cools the account down briefly. Without the cooldown, drain routes every reconnect back to the full account while the rest of the pool sits idle.
 - Failover tries every eligible account, but only before the connection opens and only after account-specific failures. Never replay an in-flight request.
 
 ## Drain policy

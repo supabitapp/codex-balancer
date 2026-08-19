@@ -46,8 +46,7 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 	if err := pool.add(account); err != nil {
 		t.Fatal(err)
 	}
-	routingChanges := 0
-	dashboard := dashboard{pool: pool, stats: newStatsWithPrices(testPriceSnapshot(t)), routingChanged: func() { routingChanges++ }, width: 160}
+	dashboard := dashboard{pool: pool, stats: newStatsWithPrices(testPriceSnapshot(t)), width: 160}
 	press := tea.KeyPressMsg(tea.Key{Text: "r", Code: 'r'})
 
 	for _, want := range []struct {
@@ -72,9 +71,6 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 	}
 	if row := dashboard.accounts(1); !strings.Contains(row, "r mode") {
 		t.Fatalf("account controls missing routing key:\n%s", row)
-	}
-	if routingChanges != 3 {
-		t.Fatalf("routing changes = %d, want 3", routingChanges)
 	}
 }
 

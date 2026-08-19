@@ -100,7 +100,7 @@ func TestPoolRouteDrainingOrderUsesPressureResetAndID(t *testing.T) {
 		t.Fatalf("account = %s, want account-pressure", got.id())
 	}
 
-	setTestAccountUsage(pressure, 96)
+	setTestAccountUsage(pressure, 96.5)
 	if got := p.route(nil).account; got != reset {
 		t.Fatalf("account = %s, want account-reset", got.id())
 	}

@@ -268,7 +268,7 @@ func (c routingCandidate) drainsBefore(other routingCandidate) bool {
 	if manual != otherManual {
 		return manual
 	}
-	if c.pressure != other.pressure {
+	if math.Abs(c.pressure-other.pressure) > 1 {
 		return c.pressure > other.pressure
 	}
 	reset := c.drainReset()
