@@ -32,5 +32,4 @@ rules; this states the evidence behind them, so we stop re-deriving them.
 ## Drain policy
 
 - Under-5%-remaining draining is deliberate. 3,215 live turns showed frequent safe handoff points, so emptying near-spent accounts is cheap.
-- An idle thread moved A → B → A without losing context,
-  which proved portable handoffs work and killed persistent session affinity.
+- An idle thread moved A → B → A without losing context, which proved portable handoffs work and killed persistent session affinity.
