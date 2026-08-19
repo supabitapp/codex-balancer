@@ -226,6 +226,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		{name: "yes", used: []float64{0, 20}, want: "✅ Lasts to reset", wantClass: "capacity-good", wantInfo: "At the average burn since reset. Expected capacity at reset: ", wantInfoStrong: "4.29%"},
 		{name: "close", used: []float64{0, 30}, want: "⚠️ Runs out in 5d16h", wantClass: "capacity-warning", wantInfo: "At the average burn since reset. Expected to run out: ", wantInfoStrong: "20 August 2026, 04:00 UTC"},
 		{name: "no", used: []float64{20, 30}, want: "❌ Runs out in 3d0h", wantClass: "capacity-danger", wantInfo: "At the average burn since reset. Expected to run out: ", wantInfoStrong: "17 August 2026, 12:00 UTC"},
+		{name: "empty", used: []float64{100, 100}, want: "❌ Empty", wantClass: "capacity-danger", wantInfo: "Nothing left until reset."},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -258,7 +259,10 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			if test.wantClass != "" {
 				class = `class="has-tooltip ` + test.wantClass + `"`
 			}
-			checks := []string{expected, class, `data-tooltip="` + test.wantInfo + `"`, `data-tooltip-strong="` + renderedInfoStrong + `"`, ">" + renderedWant + "</span>"}
+			checks := []string{expected, class, `data-tooltip="` + test.wantInfo + `"`, ">" + renderedWant + "</span>"}
+			if test.wantInfoStrong != "" {
+				checks = append(checks, `data-tooltip-strong="`+renderedInfoStrong+`"`)
+			}
 			for _, check := range checks {
 				if !strings.Contains(body, check) {
 					t.Fatalf("dashboard missing %q:\n%s", check, body)

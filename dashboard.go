@@ -312,6 +312,14 @@ func dashboardCapacityMetric(now time.Time, estimate usagePaceEstimate) dashboar
 }
 
 func dashboardCapacityShortfall(now time.Time, estimate usagePaceEstimate, mark, valueClass string) dashboardMetric {
+	if estimate.runway < time.Second {
+		return dashboardMetric{
+			Name:       "Capacity",
+			Value:      mark + " Empty",
+			ValueClass: valueClass,
+			Info:       "Nothing left until reset.",
+		}
+	}
 	return dashboardMetric{
 		Name:       "Capacity",
 		Value:      mark + " Runs out in " + short(estimate.runway),
