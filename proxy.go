@@ -18,7 +18,6 @@ import (
 const (
 	maxWebSocketMessage  = 64 << 20
 	maxUpstreamErrorBody = 64 << 10
-	maxAttempts          = 3
 	maxUpstreamRetries   = 3
 	upstreamRetryBudget  = 5 * time.Second
 	refreshTimeout       = 30 * time.Second

@@ -197,7 +197,7 @@ func (s *server) dialResponsesWebSocket(
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
 	resetRetried := map[string]bool{}
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; ; attempt++ {
 		account := s.pickAccount(thread, skip, attempt)
 		if account == nil {
 			return nil, nil, errNoAccountAvailable
@@ -266,10 +266,7 @@ func (s *server) dialResponsesWebSocket(
 		}
 		if resp == nil {
 			s.log.Warn("upstream websocket unreachable", "thread", thread, "account", id, "attempt", attempt+1, "error", dialErr)
-			s.stats.failedOver(id, "unreachable")
-			account.failed(attempt)
-			skip[id] = true
-			continue
+			return nil, nil, dialErr
 		}
 
 		status := resp.StatusCode
@@ -283,8 +280,12 @@ func (s *server) dialResponsesWebSocket(
 			skip[id] = true
 			continue
 		}
+		if status >= http.StatusInternalServerError {
+			s.log.Warn("upstream websocket server failure", "thread", thread, "account", id, "attempt", attempt+1, "status", status)
+			return nil, resp, nil
+		}
 		usageLimit := (status == http.StatusTooManyRequests || status == http.StatusForbidden) && responseUsageLimitReached(resp)
-		if status == http.StatusTooManyRequests || usageLimit || status == http.StatusUnauthorized || status >= 500 {
+		if status == http.StatusTooManyRequests || usageLimit || status == http.StatusUnauthorized {
 			if status == http.StatusTooManyRequests || usageLimit {
 				account.observe(resp.Header)
 				if usageLimit {
@@ -308,7 +309,7 @@ func (s *server) dialResponsesWebSocket(
 				attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 				s.log.Info("account rate limited", attrs...)
 			} else {
-				s.log.Warn("upstream websocket refused the connection", "thread", thread, "account", id, "attempt", attempt+1, "status", status)
+				s.log.Warn("upstream websocket rejected credentials", "thread", thread, "account", id, "attempt", attempt+1, "status", status)
 				account.failed(attempt)
 			}
 			if resp.Body != nil {
@@ -320,7 +321,6 @@ func (s *server) dialResponsesWebSocket(
 		}
 		return nil, resp, nil
 	}
-	return nil, nil, errNoAccountAvailable
 }
 
 func responsesWebSocketURL(upstream string) (string, error) {

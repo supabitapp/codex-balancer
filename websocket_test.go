@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -390,7 +391,7 @@ func TestWebSocketCredentialAndUsageRejectionsRestart(t *testing.T) {
 }
 
 func TestWebSocketHandshakeFailsOverBeforeAccept(t *testing.T) {
-	upstream := newWebSocketHandshakeUpstream(t, "account-a", http.StatusTooManyRequests)
+	upstream := newWebSocketHandshakeUpstream(t, http.StatusTooManyRequests, "account-a")
 	defer upstream.Close()
 	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("account-a", 0), testAccount("account-b", 20)})
 	conn, _ := dialWebSocket(t, proxy.URL, nil)
@@ -402,6 +403,72 @@ func TestWebSocketHandshakeFailsOverBeforeAccept(t *testing.T) {
 	}
 	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b]" {
 		t.Fatalf("request accounts = %s", got)
+	}
+}
+
+func TestWebSocketHandshakeFailsOverToEveryAccount(t *testing.T) {
+	upstream := newWebSocketHandshakeUpstream(t, http.StatusTooManyRequests, "account-a", "account-b", "account-c")
+	defer upstream.Close()
+	accounts := []*Account{
+		testAccount("account-a", 0),
+		testAccount("account-b", 10),
+		testAccount("account-c", 20),
+		testAccount("account-d", 30),
+	}
+	_, proxy := newWebSocketProxy(t, upstream.URL, accounts)
+	conn, _ := dialWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-b account-c account-d]" {
+		t.Fatalf("connection accounts = %s", got)
+	}
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-d]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+}
+
+func TestWebSocketHandshakeServerFailurePassesThroughWithoutFailover(t *testing.T) {
+	upstream := newWebSocketHandshakeUpstream(t, http.StatusBadGateway, "account-a")
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, testAccount("account-b", 20)})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(proxy.URL, "http")+"/v1/responses", nil)
+	if err == nil {
+		t.Fatal("dial succeeded")
+	}
+	if response == nil || response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("response = %+v", response)
+	}
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-a account-a account-a]" {
+		t.Fatalf("connection accounts = %s", got)
+	}
+	_, _, cooldown, _ := a.health()
+	if !cooldown.IsZero() {
+		t.Fatalf("cooldown = %s", cooldown)
+	}
+}
+
+func TestWebSocketUnreachableUpstreamDoesNotPenalizeAccounts(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	_, proxy := newWebSocketProxy(t, "http://127.0.0.1:1", []*Account{a, b})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(proxy.URL, "http")+"/v1/responses", nil)
+	if err == nil {
+		t.Fatal("dial succeeded")
+	}
+	if response == nil || response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("response = %+v", response)
+	}
+	for _, account := range []*Account{a, b} {
+		_, _, cooldown, _ := account.health()
+		if !cooldown.IsZero() {
+			t.Fatalf("cooldown = %s", cooldown)
+		}
 	}
 }
 

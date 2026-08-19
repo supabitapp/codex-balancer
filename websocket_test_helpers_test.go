@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -114,7 +115,7 @@ func newWebSocketUpstream(t *testing.T, respond func(string, *websocket.Conn, we
 	return upstream
 }
 
-func newWebSocketHandshakeUpstream(t *testing.T, rejected string, status int) *websocketTestUpstream {
+func newWebSocketHandshakeUpstream(t *testing.T, status int, rejected ...string) *websocketTestUpstream {
 	t.Helper()
 	upstream := &websocketTestUpstream{}
 	upstream.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +123,7 @@ func newWebSocketHandshakeUpstream(t *testing.T, rejected string, status int) *w
 		upstream.mu.Lock()
 		upstream.connections = append(upstream.connections, account)
 		upstream.mu.Unlock()
-		if account == rejected {
+		if slices.Contains(rejected, account) {
 			w.WriteHeader(status)
 			return
 		}
