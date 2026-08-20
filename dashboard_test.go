@@ -178,6 +178,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
 	account.adoptResetCredits(0, nil)
+	account.adoptCreditBurn(now, 1_234.56)
 	other := testAccount("account-b", 20)
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", turnMetadata{})
@@ -192,8 +193,11 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatalf("accounts = %d, want two", len(view.Accounts))
 	}
 	accountView := view.Accounts[0]
-	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.Traffic != "1" {
+	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.CreditBurn != "1234.56" || accountView.CreditBurnInfo != calendarMonthStart(now).Format("From Jan 2") || accountView.Traffic != "1" {
 		t.Fatalf("account values = %+v", accountView)
+	}
+	if view.Accounts[1].CreditBurn != "--" || view.Accounts[1].CreditBurnInfo != "" {
+		t.Fatalf("unknown credit burn = %+v", view.Accounts[1])
 	}
 	if view.Accounts[1].Traffic != "99" {
 		t.Fatalf("other account traffic = %q, want 99", view.Accounts[1].Traffic)
@@ -203,13 +207,15 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Credits burn</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">1234.56</span>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
 	}
-	if strings.Contains(body, "<th>Limits 24h</th>") {
-		t.Fatal("dashboard contains Limits 24h column")
+	for _, removed := range []string{"<th>Turns</th>", "<th>Limits 24h</th>"} {
+		if strings.Contains(body, removed) {
+			t.Fatalf("dashboard contains removed column %q", removed)
+		}
 	}
 }
 

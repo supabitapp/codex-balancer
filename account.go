@@ -44,6 +44,7 @@ type Account struct {
 	secondary    window
 	spent        bool
 	resetCredits resetCreditState
+	creditBurn   creditBurnState
 	lastUsed     time.Time
 }
 
@@ -51,6 +52,11 @@ type resetCreditState struct {
 	known   bool
 	count   int64
 	details []resetCredit
+}
+
+type creditBurnState struct {
+	month   int
+	credits float64
 }
 
 type window struct {
@@ -257,6 +263,15 @@ func (a *Account) bankedResets() (int64, []resetCredit, bool) {
 		return 0, nil, false
 	}
 	return a.resetCredits.count, append([]resetCredit(nil), a.resetCredits.details...), true
+}
+
+func (a *Account) monthlyCreditBurn(now time.Time) (float64, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.creditBurn.month != calendarMonth(now) {
+		return 0, false
+	}
+	return a.creditBurn.credits, true
 }
 
 func (a *Account) persisted() accountState {

@@ -641,6 +641,7 @@ type accountStatsResponse struct {
 	BankedResets           *int64                        `json:"banked_resets"`
 	ResetCredits           []resetCreditStatsResponse    `json:"reset_credits,omitempty"`
 	ResetAt                *time.Time                    `json:"reset_at"`
+	CreditBurn             *float64                      `json:"credit_burn,omitempty"`
 	Turns                  int64                         `json:"turns"`
 	OpenWebSockets         int64                         `json:"open_websockets"`
 	RateLimits             int64                         `json:"rate_limits"`
@@ -707,6 +708,10 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		if reset := weekly.resetsAt; reset.After(now) {
 			resetAt = &reset
 		}
+		var creditBurn *float64
+		if burn, known := account.monthlyCreditBurn(now); known {
+			creditBurn = &burn
+		}
 		var routingPriority *routingPriorityStatsResponse
 		status := candidate.status(now)
 		if priority, ok := candidate.routingPriority(now); ok && status == accountPriority {
@@ -726,6 +731,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			BankedResets:           bankedResets,
 			ResetCredits:           resetCredits,
 			ResetAt:                resetAt,
+			CreditBurn:             creditBurn,
 			Turns:                  traffic.Turns,
 			OpenWebSockets:         traffic.WSOpen,
 			RateLimits:             traffic.Limited,

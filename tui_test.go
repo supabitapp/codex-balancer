@@ -73,6 +73,27 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 	}
 }
 
+func TestAccountTableShowsMonthCreditBurn(t *testing.T) {
+	now := time.Now()
+	account := testAccount("account-a", 20)
+	account.adoptCreditBurn(now, 1_234.56)
+	dashboard := dashboard{
+		pool:  &Pool{accounts: []*Account{account}},
+		stats: newStatsWithPrices(testPriceSnapshot(t)),
+		width: 160,
+	}
+
+	rendered := dashboard.accounts(1)
+	for _, expected := range []string{"Credits MTD", "1234.56"} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("account table missing %q:\n%s", expected, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Turns") {
+		t.Fatalf("account table still shows Turns:\n%s", rendered)
+	}
+}
+
 func assertColor(t *testing.T, got, want color.Color) {
 	t.Helper()
 	gotR, gotG, gotB, gotA := got.RGBA()

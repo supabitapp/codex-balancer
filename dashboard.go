@@ -51,7 +51,8 @@ type dashboardAccountView struct {
 	Banked         string
 	BankedInfo     string
 	ResetIn        string
-	Turns          string
+	CreditBurn     string
+	CreditBurnInfo string
 	OpenWebSockets string
 	Traffic        string
 	Activity       string
@@ -180,6 +181,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	snapshot := s.stats.snapshot()
 	s.countries.refresh(snapshot.Threads)
 	stats := s.statsResponseAt(now, snapshot)
+	monthInfo := calendarMonthStart(now).Format("From Jan 2")
 	traffic := trafficPercentages(stats.Accounts)
 	counts := map[accountStatus]int{}
 	names := make(map[string]string, len(stats.Accounts))
@@ -204,6 +206,12 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		if account.ResetAt != nil {
 			resetIn = short(account.ResetAt.Sub(now))
 		}
+		creditBurn := "--"
+		creditBurnInfo := ""
+		if account.CreditBurn != nil {
+			creditBurn = formatDecimal(*account.CreditBurn)
+			creditBurnInfo = monthInfo
+		}
 		accounts = append(accounts, dashboardAccountView{
 			Name:           name,
 			Plan:           account.Plan,
@@ -213,7 +221,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Banked:         banked,
 			BankedInfo:     bankedInfo,
 			ResetIn:        resetIn,
-			Turns:          dashboardNumber(account.Turns),
+			CreditBurn:     creditBurn,
+			CreditBurnInfo: creditBurnInfo,
 			OpenWebSockets: dashboardNumber(account.OpenWebSockets),
 			Traffic:        dashboardNumber(traffic[i]),
 			Activity:       sparkline(account.Activity),
@@ -255,7 +264,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		})
 	}
 
-	monthInfo := calendarMonthStart(now).Format("From Jan 2")
 	priceInfo := monthInfo
 	if !snapshot.PriceFetchedAt.IsZero() {
 		priceInfo += ". Prices from models.dev, updated " + snapshot.PriceFetchedAt.In(now.Location()).Format("2 January 2006, 15:04 MST")

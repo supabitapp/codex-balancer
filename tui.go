@@ -266,12 +266,12 @@ func (d dashboard) accounts(limit int) string {
 	weeklyW := 6
 	bankedW := 6
 	resetW := 8
-	turnsW := 5
+	creditsW := 11
 	wsW := 2
 	trafficW := 7
 	limitsW := 6
 
-	fixedCols := planW + statusW + weeklyW + bankedW + resetW + turnsW + wsW + trafficW + limitsW + 10*gap + 2
+	fixedCols := planW + statusW + weeklyW + bankedW + resetW + creditsW + wsW + trafficW + limitsW + 10*gap + 2
 	nameW = min(nameW, max(9, d.width-fixedCols-8))
 	activityW := d.width - fixedCols - nameW
 
@@ -284,7 +284,7 @@ func (d dashboard) accounts(limit int) string {
 		styles.section.Render(fit("Weekly", weeklyW)),
 		styles.section.Render(fit("Banked", bankedW)),
 		styles.section.Render(fit("Reset in", resetW)),
-		styles.section.Render(fit("Turns", turnsW)),
+		styles.section.Render(fit("Credits MTD", creditsW)),
 		styles.section.Render(fit("WS", wsW)),
 		styles.section.Render(fit("Traffic", trafficW)),
 		styles.section.Render(fit("Limits", limitsW)),
@@ -321,9 +321,11 @@ func (d dashboard) accounts(limit int) string {
 			status = styles.warn.Render(fit("◆ priority", statusW))
 		}
 
-		turns := ""
-		if stat.Turns > 0 {
-			turns = fmt.Sprintf("%d", stat.Turns)
+		credits := "--"
+		creditStyle := styles.dim
+		if burn, known := a.monthlyCreditBurn(now); known {
+			credits = formatDecimal(burn)
+			creditStyle = styles.num
 		}
 		websockets := ""
 		if stat.WSOpen > 0 {
@@ -375,7 +377,7 @@ func (d dashboard) accounts(limit int) string {
 			weeklyCell,
 			banked,
 			reset,
-			styles.num.Render(fit(turns, turnsW)),
+			creditStyle.Render(fit(credits, creditsW)),
 			styles.good.Render(fit(websockets, wsW)),
 			styles.dim.Render(fit(traffic, trafficW)),
 			styles.bad.Render(fit(limits, limitsW)),

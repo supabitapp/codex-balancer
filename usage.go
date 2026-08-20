@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -33,6 +34,22 @@ type usageWindow struct {
 	UsedPercent        *float64 `json:"used_percent"`
 	ResetAt            int64    `json:"reset_at"`
 	LimitWindowSeconds int      `json:"limit_window_seconds"`
+}
+
+type creditBurnPayload struct {
+	Data []struct {
+		Totals struct {
+			Credits float64 `json:"credits"`
+		} `json:"totals"`
+	} `json:"data"`
+}
+
+func (p creditBurnPayload) total() float64 {
+	var total float64
+	for _, day := range p.Data {
+		total += day.Totals.Credits
+	}
+	return total
 }
 
 type resetCreditsPayload struct {
@@ -128,6 +145,30 @@ func (s *server) pollResetCredits(ctx context.Context, account *Account) error {
 		return err
 	}
 	account.adoptResetCredits(payload.AvailableCount, payload.Credits)
+	return nil
+}
+
+func (s *server) pollCreditBurn(ctx context.Context, account *Account, now time.Time) error {
+	query := url.Values{
+		"end_date":       {now.Format(time.DateOnly)},
+		"group_by":       {"day"},
+		"start_date":     {calendarMonthStart(now).Format(time.DateOnly)},
+		"workspace_user": {"true"},
+	}
+	endpoint := accountAPIBaseURL + "/analytics/daily-workspace-usage-counts?" + query.Encode()
+	resp, err := s.doAccountRequest(ctx, account, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("credit burn returned %s", resp.Status)
+	}
+	var payload creditBurnPayload
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+	account.adoptCreditBurn(now, payload.total())
 	return nil
 }
 
@@ -299,6 +340,12 @@ func (a *Account) adoptResetCredits(count int64, credits []resetCredit) {
 	}
 }
 
+func (a *Account) adoptCreditBurn(now time.Time, credits float64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.creditBurn = creditBurnState{month: calendarMonth(now), credits: credits}
+}
+
 func (s *server) pollAllUsage(ctx context.Context) {
 	for _, account := range s.pool.all() {
 		if account.needsReauth() {
@@ -310,6 +357,16 @@ func (s *server) pollAllUsage(ctx context.Context) {
 			}
 			s.log.Warn("usage poll failed", "account", account.id(), "error", err)
 			s.stats.note("usage poll failed", account.id(), err.Error())
+		}
+		if account.needsReauth() {
+			continue
+		}
+		if err := s.pollCreditBurn(ctx, account, time.Now()); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.log.Warn("credit burn poll failed", "account", account.id(), "error", err)
+			s.stats.note("credit burn poll failed", account.id(), err.Error())
 		}
 		if account.needsReauth() {
 			continue
