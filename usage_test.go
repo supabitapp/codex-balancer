@@ -108,14 +108,15 @@ func TestExpiringResetCreditChoosesEarliestEligibleCredit(t *testing.T) {
 	}
 }
 
-func TestCreditBurnPollSumsCurrentMonth(t *testing.T) {
+func TestCreditBurnPollSumsCurrentCycle(t *testing.T) {
 	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.FixedZone("BST", 60*60))
+	resetAt := time.Date(2026, time.August, 22, 12, 0, 0, 0, now.Location())
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/analytics/daily-workspace-usage-counts" {
 			http.NotFound(w, r)
 			return
 		}
-		if got := r.URL.Query(); got.Get("start_date") != "2026-08-01" || got.Get("end_date") != "2026-08-20" || got.Get("group_by") != "day" || got.Get("workspace_user") != "true" {
+		if got := r.URL.Query(); got.Get("start_date") != "2026-08-15" || got.Get("end_date") != "2026-08-20" || got.Get("group_by") != "day" || got.Get("workspace_user") != "true" {
 			t.Errorf("query = %v", got)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer token-account-a" {
@@ -137,20 +138,23 @@ func TestCreditBurnPollSumsCurrentMonth(t *testing.T) {
 	accountAPIBaseURL = upstream.URL
 	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
 	account := testAccount("account-a", 0)
+	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: resetAt, seenAt: now}
 	server := &server{client: upstream.Client()}
 	if err := server.pollCreditBurn(context.Background(), account, now); err != nil {
 		t.Fatal(err)
 	}
-	if got, known := account.monthlyCreditBurn(now); !known || got != 1_302.39 {
-		t.Fatalf("credit burn = %v, %v, want 1302.39, true", got, known)
+	got, since, known := account.creditBurnSinceReset(now)
+	if !known || got != 1_302.39 || !since.Equal(resetAt.Add(-7*24*time.Hour)) {
+		t.Fatalf("credit burn = %v since %v, %v", got, since, known)
 	}
-	if got, known := account.monthlyCreditBurn(now.AddDate(0, 1, 0)); known {
-		t.Fatalf("next month credit burn = %v, true, want unknown", got)
+	if got, since, known := account.creditBurnSinceReset(resetAt.Add(time.Second)); known {
+		t.Fatalf("next cycle credit burn = %v since %v, true, want unknown", got, since)
 	}
 }
 
 func TestPollAllUsageRefreshesResetCreditsWithoutConsuming(t *testing.T) {
 	now := time.Now().UTC()
+	resetAt := now.Add(3 * 24 * time.Hour)
 	calls := []string{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
@@ -166,7 +170,7 @@ func TestPollAllUsageRefreshesResetCreditsWithoutConsuming(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{
 				"rate_limit": map[string]any{
 					"primary_window":   map[string]any{"used_percent": 80, "limit_window_seconds": 300},
-					"secondary_window": map[string]any{"used_percent": 80, "limit_window_seconds": 604800},
+					"secondary_window": map[string]any{"used_percent": 80, "limit_window_seconds": 604800, "reset_at": resetAt.Unix()},
 				},
 				"rate_limit_reset_credits": map[string]any{"available_count": 1},
 			})
@@ -223,7 +227,7 @@ func TestPollAllUsageRefreshesResetCreditsWithoutConsuming(t *testing.T) {
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", calls, wantCalls)
 	}
-	if got, known := account.monthlyCreditBurn(time.Now()); !known || got != 12.5 {
+	if got, _, known := account.creditBurnSinceReset(time.Now()); !known || got != 12.5 {
 		t.Fatalf("credit burn = %v, %v, want 12.5, true", got, known)
 	}
 }

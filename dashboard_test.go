@@ -178,6 +178,8 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
 	account.adoptResetCredits(0, nil)
+	resetAt := now.Add(3 * 24 * time.Hour)
+	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: resetAt, seenAt: now}
 	account.adoptCreditBurn(now, 1_234.56)
 	other := testAccount("account-b", 20)
 	stats := newStatsWithPrices(testPriceSnapshot(t))
@@ -193,7 +195,8 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatalf("accounts = %d, want two", len(view.Accounts))
 	}
 	accountView := view.Accounts[0]
-	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.CreditBurn != "1234.56" || accountView.CreditBurnInfo != calendarMonthStart(now).Format("From Jan 2") || accountView.Traffic != "1" {
+	wantBurnInfo := "Approximate since reset at " + resetAt.Add(-7*24*time.Hour).Format("2 January 2006, 15:04 MST") + ". Daily analytics includes the full reset day."
+	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.CreditBurn != "1234.56" || accountView.CreditBurnInfo != wantBurnInfo || accountView.Traffic != "1" {
 		t.Fatalf("account values = %+v", accountView)
 	}
 	if view.Accounts[1].CreditBurn != "--" || view.Accounts[1].CreditBurnInfo != "" {
@@ -207,7 +210,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>Credits burn</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">1234.56</span>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Credits burn ≈</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">1234.56</span>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}

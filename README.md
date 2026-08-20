@@ -36,7 +36,7 @@ codex-balancer accounts list
 
 State lives in `~/.codex-balancer/state.db`.
 
-SQLite stores credentials, routed turns, and events. The server fetches current limits, reset credits, month-to-date credit burn, auth state, and model lists. It derives status, totals, activity, response time, and current-month cost from those facts.
+SQLite stores credentials, routed turns, and events. The server fetches current limits, reset credits, current-cycle credit burn, auth state, and model lists. It derives status, totals, activity, response time, and current-month cost from those facts.
 
 ## Point Codex at it
 

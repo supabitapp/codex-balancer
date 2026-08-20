@@ -149,10 +149,16 @@ func (s *server) pollResetCredits(ctx context.Context, account *Account) error {
 }
 
 func (s *server) pollCreditBurn(ctx context.Context, account *Account, now time.Time) error {
+	account.mu.Lock()
+	start, known := creditCycleStart(now, account.primary, account.secondary)
+	account.mu.Unlock()
+	if !known {
+		return nil
+	}
 	query := url.Values{
 		"end_date":       {now.Format(time.DateOnly)},
 		"group_by":       {"day"},
-		"start_date":     {calendarMonthStart(now).Format(time.DateOnly)},
+		"start_date":     {start.In(now.Location()).Format(time.DateOnly)},
 		"workspace_user": {"true"},
 	}
 	endpoint := accountAPIBaseURL + "/analytics/daily-workspace-usage-counts?" + query.Encode()
@@ -340,10 +346,10 @@ func (a *Account) adoptResetCredits(count int64, credits []resetCredit) {
 	}
 }
 
-func (a *Account) adoptCreditBurn(now time.Time, credits float64) {
+func (a *Account) adoptCreditBurn(fetchedAt time.Time, credits float64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.creditBurn = creditBurnState{month: calendarMonth(now), credits: credits}
+	a.creditBurn = creditBurnState{fetchedAt: fetchedAt, credits: credits}
 }
 
 func (s *server) pollAllUsage(ctx context.Context) {

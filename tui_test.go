@@ -73,9 +73,10 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 	}
 }
 
-func TestAccountTableShowsMonthCreditBurn(t *testing.T) {
+func TestAccountTableShowsCycleCreditBurn(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
+	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: now.Add(3 * 24 * time.Hour), seenAt: now}
 	account.adoptCreditBurn(now, 1_234.56)
 	dashboard := dashboard{
 		pool:  &Pool{accounts: []*Account{account}},
@@ -84,7 +85,7 @@ func TestAccountTableShowsMonthCreditBurn(t *testing.T) {
 	}
 
 	rendered := dashboard.accounts(1)
-	for _, expected := range []string{"Credits MTD", "1234.56"} {
+	for _, expected := range []string{"Credits burn≈", "1234.56"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("account table missing %q:\n%s", expected, rendered)
 		}

@@ -208,9 +208,9 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		}
 		creditBurn := "--"
 		creditBurnInfo := ""
-		if account.CreditBurn != nil {
+		if account.CreditBurn != nil && account.CreditBurnSince != nil {
 			creditBurn = formatDecimal(*account.CreditBurn)
-			creditBurnInfo = monthInfo
+			creditBurnInfo = "Approximate since reset at " + account.CreditBurnSince.In(now.Location()).Format("2 January 2006, 15:04 MST") + ". Daily analytics includes the full reset day."
 		}
 		accounts = append(accounts, dashboardAccountView{
 			Name:           name,

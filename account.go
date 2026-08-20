@@ -55,8 +55,8 @@ type resetCreditState struct {
 }
 
 type creditBurnState struct {
-	month   int
-	credits float64
+	fetchedAt time.Time
+	credits   float64
 }
 
 type window struct {
@@ -135,6 +135,19 @@ func longestWindow(windows ...window) window {
 		}
 	}
 	return longest
+}
+
+func creditCycleStart(now time.Time, windows ...window) (time.Time, bool) {
+	cycle := longestWindow(windows...)
+	duration := time.Duration(cycle.minutes) * time.Minute
+	if !cycle.known() || duration <= 0 || !cycle.resetsAt.After(now) {
+		return time.Time{}, false
+	}
+	start := cycle.resetsAt.Add(-duration)
+	if start.After(now) {
+		return time.Time{}, false
+	}
+	return start, true
 }
 
 func (e usagePaceEstimate) pace() usagePace {
@@ -265,13 +278,14 @@ func (a *Account) bankedResets() (int64, []resetCredit, bool) {
 	return a.resetCredits.count, append([]resetCredit(nil), a.resetCredits.details...), true
 }
 
-func (a *Account) monthlyCreditBurn(now time.Time) (float64, bool) {
+func (a *Account) creditBurnSinceReset(now time.Time) (float64, time.Time, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.creditBurn.month != calendarMonth(now) {
-		return 0, false
+	start, known := creditCycleStart(now, a.primary, a.secondary)
+	if !known || a.creditBurn.fetchedAt.Before(start) {
+		return 0, time.Time{}, false
 	}
-	return a.creditBurn.credits, true
+	return a.creditBurn.credits, start, true
 }
 
 func (a *Account) persisted() accountState {
