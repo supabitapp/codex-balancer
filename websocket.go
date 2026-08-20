@@ -80,7 +80,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	thread := websocketThread(r.Header)
 	s.log.Debug("websocket requested", "thread", thread)
-	dial, failed, err := s.dialResponsesWebSocket(r, thread)
+	dial, failed, err := s.dialResponsesWebSocket(r, thread, "", "")
 	if err != nil {
 		message := err.Error()
 		if errors.Is(err, errNoAccountAvailable) {
@@ -145,6 +145,8 @@ func headerHasToken(headers http.Header, name, target string) bool {
 func (s *server) dialResponsesWebSocket(
 	r *http.Request,
 	thread string,
+	model string,
+	serviceTier string,
 ) (*websocketDial, *http.Response, error) {
 	upstream, err := responsesWebSocketURL(s.upstream)
 	if err != nil {
@@ -155,7 +157,7 @@ func (s *server) dialResponsesWebSocket(
 	reauthed := map[string]bool{}
 	resetRetried := map[string]bool{}
 	for attempt := 0; ; attempt++ {
-		account := s.pickAccount(thread, skip, attempt)
+		account := s.pickAccount(thread, model, serviceTier, skip, attempt)
 		if account == nil {
 			return nil, nil, errNoAccountAvailable
 		}
@@ -342,18 +344,18 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 
 	messages := make(chan websocketMessage, 8)
 	readWebSocketMessages(ctx, downstream, true, messages)
-	readWebSocketMessages(ctx, initial.conn, false, messages)
 	liveThreads := map[string]struct{}{}
 	defer func() {
 		for thread := range liveThreads {
 			s.stats.deactivateThread(thread)
 		}
 	}()
-	s.websocketOpened(thread, initial.account)
+	current := initial
+	s.websocketOpened(thread, current.account)
 	defer func() {
 		cancel()
-		initial.conn.CloseNow()
-		s.websocketClosed(thread, initial.account)
+		current.conn.CloseNow()
+		s.websocketClosed(thread, current.account)
 	}()
 
 	closeDownstream := func(status websocket.StatusCode, reason string) {
@@ -361,8 +363,33 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 			s.log.Debug("downstream websocket close failed", "thread", thread, "status", status, "error", err)
 		}
 	}
+	switchAccount := func(next *websocketDial, model, serviceTier string) {
+		previous := current
+		previous.conn.CloseNow()
+		s.websocketClosed(thread, previous.account)
+		current = next
+		current.conn.SetReadLimit(maxWebSocketMessage)
+		s.websocketOpened(thread, current.account)
+		s.log.Info("websocket selected model-compatible account",
+			"thread", thread,
+			"from_account", previous.account.id(),
+			"to_account", current.account.id(),
+			"model", model,
+			"service_tier", serviceTier,
+		)
+	}
+	writeUpstream := func(message websocketMessage) bool {
+		if err := current.conn.Write(ctx, message.kind, message.data); err != nil {
+			closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
+			return false
+		}
+		return true
+	}
 
 	var turns []websocketTurn
+	var pending []websocketMessage
+	pendingBytes := 0
+	pinned := false
 	for {
 		var message websocketMessage
 		select {
@@ -377,26 +404,54 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 				if errors.Is(message.err, context.Canceled) || status == websocket.StatusNormalClosure || status == websocket.StatusGoingAway {
 					level = slog.LevelDebug
 				}
-				s.log.Log(ctx, level, "downstream websocket closed", "thread", thread, "account", initial.account.id(), "active_turns", len(turns), "status", status, "error", message.err)
+				s.log.Log(ctx, level, "downstream websocket closed", "thread", thread, "account", current.account.id(), "active_turns", len(turns), "status", status, "error", message.err)
 				return
 			}
-			if message.kind != websocket.MessageText {
-				if err := initial.conn.Write(ctx, message.kind, message.data); err != nil {
-					closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
-					return
-				}
-				continue
-			}
 			var event websocketEnvelope
-			if json.Unmarshal(message.data, &event) != nil || event.Type != "response.create" {
-				if err := initial.conn.Write(ctx, message.kind, message.data); err != nil {
-					closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
+			responseCreate := message.kind == websocket.MessageText && json.Unmarshal(message.data, &event) == nil && event.Type == "response.create"
+			if !pinned && !responseCreate {
+				pendingBytes += len(message.data)
+				if pendingBytes > maxWebSocketMessage {
+					closeDownstream(websocket.StatusMessageTooBig, "messages before first turn are too large")
+					return
+				}
+				pending = append(pending, message)
+				continue
+			}
+			if !responseCreate {
+				if !writeUpstream(message) {
 					return
 				}
 				continue
 			}
-			if err := initial.conn.Write(ctx, message.kind, message.data); err != nil {
-				closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
+			allowed := s.allowedAccounts(event.Model, event.ServiceTier)
+			if !accountAllowed(allowed, current.account.id()) {
+				if pinned {
+					closeDownstream(websocket.StatusServiceRestart, "requested model requires another account")
+					return
+				}
+				next, failed, err := s.dialResponsesWebSocket(r, thread, event.Model, event.ServiceTier)
+				if failed != nil && failed.Body != nil {
+					failed.Body.Close()
+				}
+				if err != nil || failed != nil {
+					s.log.Warn("model-compatible websocket unavailable", "thread", thread, "model", event.Model, "service_tier", event.ServiceTier, "error", err)
+					closeDownstream(websocket.StatusTryAgainLater, "no account supports requested model")
+					return
+				}
+				switchAccount(next, event.Model, event.ServiceTier)
+			}
+			if !pinned {
+				pinned = true
+				readWebSocketMessages(ctx, current.conn, false, messages)
+				for _, queued := range pending {
+					if !writeUpstream(queued) {
+						return
+					}
+				}
+				pending = nil
+			}
+			if !writeUpstream(message) {
 				return
 			}
 			metadata := requestTurnMetadata("", event.ClientMetadata)
@@ -412,7 +467,7 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 				statsThread: statsThread,
 			})
 			attrs := []any{"thread", statsThread, "service_tier", event.ServiceTier}
-			attrs = append(attrs, routingLogAttrs(initial.account.routingCandidate(), time.Now())...)
+			attrs = append(attrs, routingLogAttrs(current.account.routingCandidate(), time.Now())...)
 			s.log.Debug("websocket turn received", attrs...)
 			continue
 		}
@@ -425,10 +480,10 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 		if message.kind == websocket.MessageText && json.Unmarshal(message.data, &event) == nil {
 			headers := websocketEventHeaders(event.Headers)
 			if len(headers) > 0 {
-				initial.account.observe(headers)
+				current.account.observe(headers)
 			}
 			if rejection := websocketRejection(event); rejection != websocketRejectionNone {
-				s.handleWebSocketRejection(initial.account, rejection, headers, thread)
+				s.handleWebSocketRejection(current.account, rejection, headers, thread)
 				closeDownstream(websocket.StatusServiceRestart, "account rejected websocket request")
 				return
 			}
@@ -444,10 +499,10 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 							s.stats.activateThread(turn.statsThread)
 							liveThreads[turn.statsThread] = struct{}{}
 						}
-						s.stats.routed(turn.statsThread, requestIP(r), initial.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata)
-						s.stats.answered(turn.statsThread, initial.account.id(), time.Since(turn.sent))
+						s.stats.routed(turn.statsThread, requestIP(r), current.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata)
+						s.stats.answered(turn.statsThread, current.account.id(), time.Since(turn.sent))
 					}
-					s.log.Debug("websocket response created", "thread", turn.statsThread, "turn", turn.metadata.TurnID, "account", initial.account.id(), "latency", time.Since(turn.sent))
+					s.log.Debug("websocket response created", "thread", turn.statsThread, "turn", turn.metadata.TurnID, "account", current.account.id(), "latency", time.Since(turn.sent))
 					break
 				}
 			} else if event.Type == "error" || event.Type == "response.completed" || event.Type == "response.failed" || event.Type == "response.incomplete" {
@@ -463,11 +518,11 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 							serviceTier = turn.serviceTier
 						}
 						if !event.Response.Usage.empty() {
-							logResponseUsage(s.log, turn.statsThread, initial.account.id(), model, serviceTier, turn.metadata, time.Since(turn.sent), event.Response.Usage)
+							logResponseUsage(s.log, turn.statsThread, current.account.id(), model, serviceTier, turn.metadata, time.Since(turn.sent), event.Response.Usage)
 						}
-						s.stats.recordUsage(turn.statsThread, initial.account.id(), model, turn.effort, serviceTier, event.Response.Usage)
+						s.stats.recordUsage(turn.statsThread, current.account.id(), model, turn.effort, serviceTier, event.Response.Usage)
 						if event.Type == "response.completed" {
-							s.stats.completed(turn.statsThread, initial.account.id(), turn.metadata, time.Since(turn.sent))
+							s.stats.completed(turn.statsThread, current.account.id(), turn.metadata, time.Since(turn.sent))
 						}
 					}
 					turns = turns[1:]
@@ -475,7 +530,7 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 			}
 		}
 		if err := downstream.Write(ctx, message.kind, message.data); err != nil {
-			s.log.Warn("downstream websocket response write failed", "thread", thread, "account", initial.account.id(), "active_turns", len(turns), "error", err)
+			s.log.Warn("downstream websocket response write failed", "thread", thread, "account", current.account.id(), "active_turns", len(turns), "error", err)
 			return
 		}
 	}

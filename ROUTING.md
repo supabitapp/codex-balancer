@@ -3,11 +3,14 @@
 ## Selection
 
 - Exclude paused, spent, cooling, unknown, and signed-out accounts.
+- If every available account has a model catalog, exclude accounts that lack the requested model or service tier.
 - Manual priority wins.
 - An account with a reset credit expiring within 24 hours wins next. Earlier expiry wins.
 - Otherwise, choose the account with the lowest peak usage across its rate-limit windows.
 - When peak usage differs by at most one percentage point, choose the least recently used account, then break a tie by account ID.
-- A WebSocket chooses one account when it connects and stays there until it closes or the account rejects a request.
+- The model endpoint lists the union of known account catalogs.
+- A WebSocket checks its first turn against the catalog, changes account before sending if needed, then stays there until it closes or the account rejects a request.
+- If a later turn needs another account, close the socket before sending it. The client reconnects and routes the turn again.
 
 ## Failure policy
 

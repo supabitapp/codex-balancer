@@ -88,6 +88,91 @@ func TestWebSocketSocketsChooseIndependentAccounts(t *testing.T) {
 	}
 }
 
+func TestWebSocketFirstTurnRoutesByModel(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b})
+	server.catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-terra")},
+			b.id(): {testModelEntry("gpt-sol")},
+		},
+		"0.1.0",
+	)
+	conn, _ := dialWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-sol", "input": []any{}})
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-b]" {
+		t.Fatalf("connection accounts = %s", got)
+	}
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+}
+
+func TestWebSocketFirstTurnRoutesByServiceTier(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b})
+	server.catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-sol")},
+			b.id(): {testModelEntry("gpt-sol", "priority")},
+		},
+		"0.1.0",
+	)
+	conn, _ := dialWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-sol", "service_tier": "fast", "input": []any{}})
+	readWebSocketEvent(t, conn)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+}
+
+func TestWebSocketRestartsBeforeUnsupportedLaterModel(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b})
+	server.catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-terra")},
+			b.id(): {testModelEntry("gpt-sol")},
+		},
+		"0.1.0",
+	)
+	conn, _ := dialWebSocket(t, proxy.URL, nil)
+	defer conn.CloseNow()
+
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-sol", "input": []any{}})
+	readWebSocketEvent(t, conn)
+	readWebSocketEvent(t, conn)
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-terra", "input": []any{}})
+	readCloseStatus(t, conn, websocket.StatusServiceRestart)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b]" {
+		t.Fatalf("request accounts = %s", got)
+	}
+}
+
 func TestWebSocketUsageDoesNotMovePinnedSockets(t *testing.T) {
 	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{
@@ -416,7 +501,7 @@ func TestWebSocketCanceledHandshakeDoesNotPenalizeAccounts(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	request := httptest.NewRequest(http.MethodGet, "/v1/responses", nil).WithContext(ctx)
-	_, _, err := server.dialResponsesWebSocket(request, "session")
+	_, _, err := server.dialResponsesWebSocket(request, "session", "", "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context canceled", err)
 	}

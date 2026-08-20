@@ -67,77 +67,68 @@ func (c *modelCatalog) replace(active []string, fresh map[string][]modelEntry, c
 	c.refreshedAt = time.Now()
 }
 
+func (c *modelCatalog) allowedAccounts(accounts []*Account, model, serviceTier string) map[string]bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" {
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	now := time.Now()
+	for _, account := range accounts {
+		candidate := account.routingCandidate()
+		if !candidate.available(now) {
+			continue
+		}
+		if c.accounts[candidate.id] == nil {
+			return nil
+		}
+	}
+
+	serviceTier = canonicalServiceTier(serviceTier)
+	allowed := map[string]bool{}
+	for _, account := range accounts {
+		id := account.id()
+		entry := matchingModelEntry(c.accounts[id], model)
+		if entry == nil || serviceTier != "" && !modelSupportsServiceTier(entry, serviceTier) {
+			continue
+		}
+		allowed[id] = true
+	}
+	return allowed
+}
+
 func (c *modelCatalog) entries() []modelEntry {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if len(c.active) == 0 {
-		return []modelEntry{}
-	}
-	accountIDs := make([]string, 0, len(c.active))
-	for id := range c.active {
+	accountIDs := make([]string, 0, len(c.accounts))
+	for id := range c.accounts {
 		accountIDs = append(accountIDs, id)
 	}
 	slices.Sort(accountIDs)
-	base, ok := c.accounts[accountIDs[0]]
-	if !ok {
-		return []modelEntry{}
-	}
-	for _, id := range accountIDs[1:] {
-		if _, ok := c.accounts[id]; !ok {
-			return []modelEntry{}
-		}
-	}
-	entries := make([]modelEntry, 0, len(base))
-	for slug, entry := range base {
-		covered := true
-		for _, id := range accountIDs[1:] {
-			if _, ok := c.accounts[id][slug]; !ok {
-				covered = false
-				break
+	merged := map[string]modelEntry{}
+	for _, id := range accountIDs {
+		for slug, entry := range c.accounts[id] {
+			if existing := merged[slug]; existing != nil {
+				mergeModelServiceTiers(existing, entry)
+				continue
 			}
+			clone := cloneModelEntry(entry)
+			delete(clone, "service_tiers")
+			mergeModelServiceTiers(clone, entry)
+			merged[slug] = clone
 		}
-		if !covered {
-			continue
-		}
-		entry = cloneModelEntry(entry)
-		tiers := c.commonServiceTiers(accountIDs, slug)
-		if len(tiers) == 0 {
-			delete(entry, "service_tiers")
-		} else {
-			entry["service_tiers"] = tiers
-		}
+	}
+	entries := make([]modelEntry, 0, len(merged))
+	for _, entry := range merged {
 		entries = append(entries, entry)
 	}
 	slices.SortFunc(entries, func(a, b modelEntry) int {
 		return strings.Compare(modelSlug(a), modelSlug(b))
 	})
 	return entries
-}
-
-func (c *modelCatalog) commonServiceTiers(accountIDs []string, slug string) []any {
-	base := c.accounts[accountIDs[0]][slug]
-	values, _ := base["service_tiers"].([]any)
-	tiers := make([]any, 0, len(values))
-	seen := map[string]bool{}
-	for _, value := range values {
-		id := modelServiceTierID(value)
-		if id == "" || seen[id] {
-			continue
-		}
-		covered := true
-		for _, accountID := range accountIDs[1:] {
-			if !modelSupportsServiceTier(c.accounts[accountID][slug], id) {
-				covered = false
-				break
-			}
-		}
-		if covered {
-			seen[id] = true
-			tiers = append(tiers, value)
-		}
-	}
-	return tiers
 }
 
 func (c *modelCatalog) accountModelCount(id string) int {
@@ -451,4 +442,25 @@ func cloneModelEntry(entry modelEntry) modelEntry {
 		clone[key] = value
 	}
 	return clone
+}
+
+func mergeModelServiceTiers(target, source modelEntry) {
+	seen := map[string]bool{}
+	merged := []any{}
+	for _, entry := range []modelEntry{target, source} {
+		values, _ := entry["service_tiers"].([]any)
+		for _, value := range values {
+			id := modelServiceTierID(value)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			merged = append(merged, value)
+		}
+	}
+	if len(merged) == 0 {
+		delete(target, "service_tiers")
+		return
+	}
+	target["service_tiers"] = merged
 }

@@ -67,7 +67,7 @@ func requireModelLogRecord(t *testing.T, records []map[string]any, message strin
 	t.Fatalf("missing log %q with fields %v in %v", message, fields, records)
 }
 
-func TestModelCatalogEntriesUseCommonModelsAndTiers(t *testing.T) {
+func TestModelCatalogEntriesUseModelAndTierUnion(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
 	base := testModelEntry("gpt-common", "priority", "default")
@@ -85,17 +85,19 @@ func TestModelCatalogEntriesUseCommonModelsAndTiers(t *testing.T) {
 	)
 
 	entries := catalog.entries()
-	if got := modelSlugs(entries); fmt.Sprint(got) != "[gpt-common]" {
-		t.Fatalf("models = %v, want common model", got)
+	if got := modelSlugs(entries); fmt.Sprint(got) != "[gpt-a-only gpt-b-only gpt-common]" {
+		t.Fatalf("models = %v", got)
 	}
 	want := cloneModelEntry(base)
 	want["service_tiers"] = []any{map[string]any{"id": "priority"}}
-	if !reflect.DeepEqual(entries[0], want) {
-		t.Fatalf("model = %#v, want %#v", entries[0], want)
+	for _, entry := range entries {
+		if modelSlug(entry) == "gpt-common" && !reflect.DeepEqual(entry, want) {
+			t.Fatalf("model = %#v, want %#v", entry, want)
+		}
 	}
 }
 
-func TestModelCatalogEntriesFailClosedForIncompleteCoverage(t *testing.T) {
+func TestModelCatalogEntriesUseKnownCatalogsWithIncompleteCoverage(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
 	catalog := newModelCatalog()
@@ -104,8 +106,69 @@ func TestModelCatalogEntriesFailClosedForIncompleteCoverage(t *testing.T) {
 		map[string][]modelEntry{a.id(): {testModelEntry("gpt-common")}},
 		"0.1.0",
 	)
-	if got := catalog.entries(); len(got) != 0 {
-		t.Fatalf("models = %v, want no advertised models", got)
+	if got := modelSlugs(catalog.entries()); fmt.Sprint(got) != "[gpt-common]" {
+		t.Fatalf("models = %v", got)
+	}
+}
+
+func TestModelCatalogFiltersAccountsByModelAndServiceTier(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	catalog := newModelCatalog()
+	catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-terra")},
+			b.id(): {testModelEntry("gpt-sol", "priority")},
+		},
+		"0.1.0",
+	)
+
+	for _, test := range []struct {
+		model string
+		tier  string
+		want  string
+	}{
+		{model: "gpt-sol", want: "[account-b]"},
+		{model: "gpt-sol", tier: "fast", want: "[account-b]"},
+		{model: "gpt-terra", tier: "priority", want: "[]"},
+	} {
+		got := allowedAccountIDs(catalog.allowedAccounts([]*Account{a, b}, test.model, test.tier))
+		if fmt.Sprint(got) != test.want {
+			t.Fatalf("model %q tier %q accounts = %v, want %s", test.model, test.tier, got, test.want)
+		}
+	}
+}
+
+func TestModelCatalogDoesNotFilterIncompleteCoverage(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	catalog := newModelCatalog()
+	catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{a.id(): {testModelEntry("gpt-terra")}},
+		"0.1.0",
+	)
+
+	if allowed := catalog.allowedAccounts([]*Account{a, b}, "gpt-sol", ""); allowed != nil {
+		t.Fatalf("allowed accounts = %v, want unknown", allowedAccountIDs(allowed))
+	}
+}
+
+func TestModelCatalogIgnoresMissingCatalogForUnavailableAccount(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	b.Paused = true
+	catalog := newModelCatalog()
+	catalog.replace(
+		[]string{a.id()},
+		map[string][]modelEntry{a.id(): {testModelEntry("gpt-terra")}},
+		"0.1.0",
+	)
+
+	allowed := catalog.allowedAccounts([]*Account{a, b}, "gpt-terra", "")
+	if got := fmt.Sprint(allowedAccountIDs(allowed)); got != "[account-a]" {
+		t.Fatalf("allowed accounts = %s", got)
 	}
 }
 
@@ -203,7 +266,7 @@ func TestModelCatalogDerivesContextLimits(t *testing.T) {
 	}
 }
 
-func TestModelsRefreshesEveryActiveAccountAndServesIntersection(t *testing.T) {
+func TestModelsRefreshesEveryActiveAccountAndServesUnion(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
 	var mu sync.Mutex
@@ -247,11 +310,13 @@ func TestModelsRefreshesEveryActiveAccountAndServesIntersection(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if got := modelSlugs(payload.Models); fmt.Sprint(got) != "[gpt-common]" {
+	if got := modelSlugs(payload.Models); fmt.Sprint(got) != "[gpt-a-only gpt-b-only gpt-common]" {
 		t.Fatalf("models = %v", got)
 	}
-	if payload.Models[0]["display_name"] != "A" {
-		t.Fatalf("base payload = %#v, want account-a payload", payload.Models[0])
+	for _, model := range payload.Models {
+		if modelSlug(model) == "gpt-common" && model["display_name"] != "A" {
+			t.Fatalf("base payload = %#v, want account-a payload", model)
+		}
 	}
 	mu.Lock()
 	slices.Sort(requests)
@@ -375,4 +440,13 @@ func modelSlugs(models []modelEntry) []string {
 	}
 	slices.Sort(slugs)
 	return slugs
+}
+
+func allowedAccountIDs(allowed map[string]bool) []string {
+	ids := make([]string, 0, len(allowed))
+	for id := range allowed {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
