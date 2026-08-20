@@ -80,7 +80,6 @@ type weightedWindow struct {
 const (
 	accountLive        accountStatus = "live"
 	accountPriority    accountStatus = "priority"
-	accountDraining    accountStatus = "draining"
 	accountChecking    accountStatus = "checking"
 	accountCooling     accountStatus = "cooling"
 	accountPaused      accountStatus = "paused"
@@ -88,7 +87,6 @@ const (
 
 	routingModeNormal   routingMode = "normal"
 	routingModePriority routingMode = "priority"
-	routingModeDraining routingMode = "draining"
 
 	usagePaceUnknown usagePace = iota
 	usagePaceOnTrack
@@ -98,7 +96,7 @@ const (
 
 func (m routingMode) normalized() routingMode {
 	switch m {
-	case routingModePriority, routingModeDraining:
+	case routingModePriority:
 		return m
 	default:
 		return routingModeNormal
@@ -109,8 +107,6 @@ func (m routingMode) next() routingMode {
 	switch m.normalized() {
 	case routingModeNormal:
 		return routingModePriority
-	case routingModePriority:
-		return routingModeDraining
 	default:
 		return routingModeNormal
 	}

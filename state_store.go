@@ -88,6 +88,10 @@ var stateMigrations = []string{
 	`ALTER TABLE attempts DROP COLUMN transport;`,
 	`DROP TABLE IF EXISTS bindings;
 	DELETE FROM events WHERE kind IN ('compaction switch', 'rotation reconnect', 'rotated');`,
+	`ALTER TABLE accounts ADD COLUMN next_routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (next_routing_mode IN ('normal', 'priority'));
+	UPDATE accounts SET next_routing_mode = CASE routing_mode WHEN 'priority' THEN 'priority' ELSE 'normal' END;
+	ALTER TABLE accounts DROP COLUMN routing_mode;
+	ALTER TABLE accounts RENAME COLUMN next_routing_mode TO routing_mode;`,
 }
 
 type StateStore struct {

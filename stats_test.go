@@ -30,9 +30,9 @@ func TestSnapshotIncludesAllActiveThreads(t *testing.T) {
 	}
 }
 
-func TestStatsEndpointReportsDrainingRoutingMode(t *testing.T) {
+func TestStatsEndpointReportsPriorityRoutingMode(t *testing.T) {
 	account := testAccount("account-a", 20)
-	account.RoutingMode = routingModeDraining
+	account.RoutingMode = routingModePriority
 	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(priceSnapshot{})}
 	request := httptest.NewRequest(http.MethodGet, "/stats", nil)
 	response := httptest.NewRecorder()
@@ -42,7 +42,7 @@ func TestStatsEndpointReportsDrainingRoutingMode(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || len(payload.Accounts) != 1 || payload.Accounts[0].Status != accountDraining || payload.Accounts[0].RoutingMode != routingModeDraining {
+	if response.Code != http.StatusOK || len(payload.Accounts) != 1 || payload.Accounts[0].Status != accountPriority || payload.Accounts[0].RoutingMode != routingModePriority {
 		t.Fatalf("status = %d, payload = %+v", response.Code, payload)
 	}
 }

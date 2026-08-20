@@ -220,14 +220,13 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		})
 	}
 
-	summary := make([]dashboardCount, 0, 7)
+	summary := make([]dashboardCount, 0, 6)
 	for _, item := range []struct {
 		status accountStatus
 		label  string
 	}{
 		{accountLive, "live"},
 		{accountPriority, "priority"},
-		{accountDraining, "draining"},
 		{accountChecking, "checking"},
 		{accountCooling, "cooling"},
 		{accountPaused, "paused"},
@@ -562,8 +561,6 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 		return dashboardStatusView{Mark: "●", Label: "live"}
 	case accountPriority:
 		return dashboardStatusView{Mark: "◆", Label: "priority"}
-	case accountDraining:
-		return dashboardStatusView{Mark: "▼", Label: "draining"}
 	default:
 		return dashboardStatusView{Label: string(status)}
 	}
@@ -571,11 +568,6 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 
 func dashboardAccountStatusInfo(now time.Time, account accountStatsResponse) string {
 	switch account.Status {
-	case accountDraining:
-		if account.RoutingMode == routingModeDraining {
-			return "Manual draining. Other connections restart toward this account at a safe request boundary. Its turns use the fast service tier when supported."
-		}
-		return "A rate-limit window has less than 5% left. Other connections restart toward this account at a safe request boundary. Its turns use the fast service tier when supported."
 	case accountPriority:
 		if account.RoutingMode == routingModePriority {
 			return "Manual priority for new connections."

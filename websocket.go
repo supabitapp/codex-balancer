@@ -47,19 +47,16 @@ type websocketTurn struct {
 }
 
 type websocketEnvelope struct {
-	Type               string                     `json:"type"`
-	Generate           *bool                      `json:"generate"`
-	Model              string                     `json:"model"`
-	Reasoning          responseReasoning          `json:"reasoning"`
-	ServiceTier        string                     `json:"service_tier"`
-	PreviousResponseID string                     `json:"previous_response_id"`
-	Conversation       json.RawMessage            `json:"conversation"`
-	Input              json.RawMessage            `json:"input"`
-	ClientMetadata     map[string]string          `json:"client_metadata"`
-	Status             int                        `json:"status"`
-	StatusCode         int                        `json:"status_code"`
-	Headers            map[string]json.RawMessage `json:"headers"`
-	Error              struct {
+	Type           string                     `json:"type"`
+	Generate       *bool                      `json:"generate"`
+	Model          string                     `json:"model"`
+	Reasoning      responseReasoning          `json:"reasoning"`
+	ServiceTier    string                     `json:"service_tier"`
+	ClientMetadata map[string]string          `json:"client_metadata"`
+	Status         int                        `json:"status"`
+	StatusCode     int                        `json:"status_code"`
+	Headers        map[string]json.RawMessage `json:"headers"`
+	Error          struct {
 		Type string `json:"type"`
 		Code string `json:"code"`
 	} `json:"error"`
@@ -398,15 +395,7 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 				}
 				continue
 			}
-			if len(turns) == 0 && websocketRequestPortable(r.Header, event) && s.shouldRestartSocketForDraining(initial.account.id()) {
-				closeDownstream(websocket.StatusServiceRestart, "routing to draining account")
-				return
-			}
-			data, forced := s.forceFastTier(initial.account, event.Model, event.ServiceTier, message.data)
-			if forced {
-				s.log.Info("draining account forced fast tier", "thread", thread, "account", initial.account.id())
-			}
-			if err := initial.conn.Write(ctx, message.kind, data); err != nil {
+			if err := initial.conn.Write(ctx, message.kind, message.data); err != nil {
 				closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
 				return
 			}
@@ -490,64 +479,6 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 			return
 		}
 	}
-}
-
-func (s *server) shouldRestartSocketForDraining(account string) bool {
-	decision := s.pool.route(nil)
-	if decision.account == nil {
-		return false
-	}
-	target := decision.account.routingCandidate()
-	return target.draining() && target.id != account
-}
-
-func websocketRequestPortable(headers http.Header, event websocketEnvelope) bool {
-	if strings.TrimSpace(headers.Get("X-Codex-Turn-State")) != "" ||
-		strings.TrimSpace(event.ClientMetadata["x-codex-turn-state"]) != "" ||
-		strings.TrimSpace(event.PreviousResponseID) != "" ||
-		websocketConversationPresent(event.Conversation) {
-		return false
-	}
-	var input any
-	if len(event.Input) == 0 || json.Unmarshal(event.Input, &input) != nil {
-		return true
-	}
-	return !websocketInputHasFileID(input)
-}
-
-func websocketConversationPresent(value json.RawMessage) bool {
-	value = bytes.TrimSpace(value)
-	if len(value) == 0 || bytes.Equal(value, []byte("null")) {
-		return false
-	}
-	var text string
-	if json.Unmarshal(value, &text) == nil {
-		return strings.TrimSpace(text) != ""
-	}
-	return true
-}
-
-func websocketInputHasFileID(value any) bool {
-	switch value := value.(type) {
-	case []any:
-		for _, item := range value {
-			if websocketInputHasFileID(item) {
-				return true
-			}
-		}
-	case map[string]any:
-		kind, _ := value["type"].(string)
-		file, _ := value["file_id"].(string)
-		if kind == "input_file" && strings.TrimSpace(file) != "" {
-			return true
-		}
-		for _, item := range value {
-			if websocketInputHasFileID(item) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 type websocketRejectionKind string

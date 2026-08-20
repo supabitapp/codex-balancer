@@ -423,49 +423,15 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 	}
 }
 
-func TestDashboardExplainsAutomaticDrainingStatus(t *testing.T) {
-	now := time.Date(2026, time.August, 12, 20, 0, 0, 0, time.UTC)
-	account := testAccount("account-a", 96)
-	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
-
-	stats := server.currentStats(now)
-	if len(stats.Accounts) != 1 || stats.Accounts[0].Status != accountDraining || stats.Accounts[0].RoutingMode != routingModeNormal {
-		t.Fatalf("account stats = %+v", stats.Accounts)
-	}
-	payload, err := renderDashboard("dashboard", server.currentDashboard(now))
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(payload)
-	for _, expected := range []string{
-		`<span>1 draining</span>`,
-		`class="status-mark status-draining"`,
-		`>▼</span> draining</span>`,
-		`data-tooltip="A rate-limit window has less than 5% left. Other connections restart toward this account at a safe request boundary. Its turns use the fast service tier when supported."`,
-	} {
-		if !strings.Contains(body, expected) {
-			t.Fatalf("dashboard missing %q:\n%s", expected, body)
-		}
-	}
-}
-
 func TestDashboardExplainsManualRoutingStatus(t *testing.T) {
 	now := time.Date(2026, time.August, 12, 20, 0, 0, 0, time.UTC)
 	account := testAccount("account-a", 20)
+	account.RoutingMode = routingModePriority
 	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 
-	for _, test := range []struct {
-		mode routingMode
-		info string
-	}{
-		{routingModePriority, "Manual priority for new connections."},
-		{routingModeDraining, "Manual draining. Other connections restart toward this account at a safe request boundary. Its turns use the fast service tier when supported."},
-	} {
-		account.RoutingMode = test.mode
-		view := server.currentDashboard(now)
-		if len(view.Accounts) != 1 || view.Accounts[0].StatusInfo != test.info {
-			t.Fatalf("%s account view = %+v", test.mode, view.Accounts)
-		}
+	view := server.currentDashboard(now)
+	if len(view.Accounts) != 1 || view.Accounts[0].StatusInfo != "Manual priority for new connections." {
+		t.Fatalf("account view = %+v", view.Accounts)
 	}
 }
 

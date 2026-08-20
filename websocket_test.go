@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -89,16 +88,16 @@ func TestWebSocketSocketsChooseIndependentAccounts(t *testing.T) {
 	}
 }
 
-func TestWebSocketDrainingRestartsOtherPinnedSockets(t *testing.T) {
-	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
-		event := map[string]any{"type": "response.created"}
-		if account == "account-b" {
-			event["headers"] = map[string]any{
-				"x-codex-primary-used-percent":   "96",
+func TestWebSocketUsageDoesNotMovePinnedSockets(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type": "response.created",
+			"headers": map[string]any{
+				"x-codex-primary-used-percent":   "99",
 				"x-codex-primary-window-minutes": "300",
-			}
-		}
-		writeWebSocketEvent(t, conn, event)
+			},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
 	})
 	defer upstream.Close()
 	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("account-a", 0), testAccount("account-b", 0)})
@@ -108,169 +107,13 @@ func TestWebSocketDrainingRestartsOtherPinnedSockets(t *testing.T) {
 	defer second.CloseNow()
 	waitForWebSocketCounts(t, server, map[string]int64{"account-a": 1, "account-b": 1})
 
-	writeWebSocketEvent(t, second, map[string]any{"type": "response.create", "input": []any{}})
-	readWebSocketEvent(t, second)
-	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
-	readCloseStatus(t, first, websocket.StatusServiceRestart)
-	writeWebSocketEvent(t, second, map[string]any{"type": "response.create", "input": []any{}})
-	readWebSocketEvent(t, second)
-
-	reconnected, _ := dialWebSocket(t, proxy.URL, nil)
-	defer reconnected.CloseNow()
-	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-b account-b]" {
-		t.Fatalf("connection accounts = %s", got)
+	for _, conn := range []*websocket.Conn{second, first} {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+		readWebSocketEvent(t, conn)
+		readWebSocketEvent(t, conn)
 	}
-}
-
-func TestWebSocketDrainingWaitsForActiveTurn(t *testing.T) {
-	complete := make(chan struct{})
-	var release sync.Once
-	t.Cleanup(func() { release.Do(func() { close(complete) }) })
-	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
-		if account == "account-a" {
-			<-complete
-		}
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
-	})
-	defer upstream.Close()
-	accountA := testAccount("account-a", 0)
-	accountB := testAccount("account-b", 0)
-	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{accountA, accountB})
-	first, _ := dialWebSocket(t, proxy.URL, nil)
-	defer first.CloseNow()
-	second, _ := dialWebSocket(t, proxy.URL, nil)
-	defer second.CloseNow()
-	waitForWebSocketCounts(t, server, map[string]int64{"account-a": 1, "account-b": 1})
-
-	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
-	if event := readWebSocketEvent(t, first); event.Type != "response.created" {
-		t.Fatalf("first event = %q, want response.created", event.Type)
-	}
-	for range 2 {
-		if _, err := server.pool.cycleRoutingMode(accountB); err != nil {
-			t.Fatal(err)
-		}
-	}
-	release.Do(func() { close(complete) })
-	if event := readWebSocketEvent(t, first); event.Type != "response.completed" {
-		t.Fatalf("event before restart = %q, want response.completed", event.Type)
-	}
-	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
-	readCloseStatus(t, first, websocket.StatusServiceRestart)
-}
-
-func TestWebSocketDrainingWaitsForPortableRequest(t *testing.T) {
-	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created", "response": map[string]any{"id": "response"}})
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
-	})
-	defer upstream.Close()
-	accountA := testAccount("account-a", 0)
-	accountB := testAccount("account-b", 0)
-	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{accountA, accountB})
-	conn, _ := dialWebSocket(t, proxy.URL, nil)
-	defer conn.CloseNow()
-
-	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
-	readWebSocketEvent(t, conn)
-	readWebSocketEvent(t, conn)
-	for range 2 {
-		if _, err := server.pool.cycleRoutingMode(accountB); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "previous_response_id": "response", "input": []any{}})
-	readWebSocketEvent(t, conn)
-	readWebSocketEvent(t, conn)
-	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
-	readCloseStatus(t, conn, websocket.StatusServiceRestart)
-
-	reconnected, _ := dialWebSocket(t, proxy.URL, nil)
-	defer reconnected.CloseNow()
-	writeWebSocketEvent(t, reconnected, map[string]any{"type": "response.create", "input": []any{}})
-	readWebSocketEvent(t, reconnected)
-	readWebSocketEvent(t, reconnected)
-	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a account-a account-b]" {
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b account-a]" {
 		t.Fatalf("request accounts = %s", got)
-	}
-}
-
-func TestWebSocketDrainingKeepsHardHandshake(t *testing.T) {
-	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
-	})
-	defer upstream.Close()
-	accountB := testAccount("account-b", 0)
-	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("account-a", 0), accountB})
-	conn, _ := dialWebSocket(t, proxy.URL, http.Header{"X-Codex-Turn-State": {"turn"}})
-	defer conn.CloseNow()
-	for range 2 {
-		if _, err := server.pool.cycleRoutingMode(accountB); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
-	readWebSocketEvent(t, conn)
-	readWebSocketEvent(t, conn)
-	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a]" {
-		t.Fatalf("request accounts = %s", got)
-	}
-}
-
-func TestWebSocketDrainingKeepsFirstHardRequest(t *testing.T) {
-	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
-	})
-	defer upstream.Close()
-	accountB := testAccount("account-b", 0)
-	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("account-a", 0), accountB})
-	conn, _ := dialWebSocket(t, proxy.URL, nil)
-	defer conn.CloseNow()
-	for range 2 {
-		if _, err := server.pool.cycleRoutingMode(accountB); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "previous_response_id": "response", "input": []any{}})
-	readWebSocketEvent(t, conn)
-	readWebSocketEvent(t, conn)
-	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a]" {
-		t.Fatalf("request accounts = %s", got)
-	}
-}
-
-func TestWebSocketRequestPortable(t *testing.T) {
-	tests := []struct {
-		name     string
-		headers  http.Header
-		request  string
-		portable bool
-	}{
-		{name: "full input", request: `{"type":"response.create","input":[]}`, portable: true},
-		{name: "compaction", request: `{"type":"response.create","input":[{"type":"compaction","encrypted_content":"value"}]}`, portable: true},
-		{name: "previous response", request: `{"type":"response.create","previous_response_id":"response","input":[]}`},
-		{name: "handshake turn state", headers: http.Header{"X-Codex-Turn-State": {"turn"}}, request: `{"type":"response.create","input":[]}`},
-		{name: "request turn state", request: `{"type":"response.create","client_metadata":{"x-codex-turn-state":"turn"},"input":[]}`},
-		{name: "conversation", request: `{"type":"response.create","conversation":"conversation","input":[]}`},
-		{name: "blank conversation", request: `{"type":"response.create","conversation":" ","input":[]}`, portable: true},
-		{name: "file", request: `{"type":"response.create","input":[{"role":"user","content":[{"type":"input_file","file_id":"file"}]}]}`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var event websocketEnvelope
-			if err := json.Unmarshal([]byte(test.request), &event); err != nil {
-				t.Fatal(err)
-			}
-			if got := websocketRequestPortable(test.headers, event); got != test.portable {
-				t.Fatalf("portable = %t, want %t", got, test.portable)
-			}
-		})
 	}
 }
 
@@ -322,7 +165,7 @@ func TestWebSocketConnectionLimitCoolsAccountDown(t *testing.T) {
 	})
 	defer upstream.Close()
 	healthy := testAccount("account-healthy", 10)
-	full := testAccount("account-full", 96)
+	full := testAccount("account-full", 0)
 	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{healthy, full})
 	conn, _ := dialWebSocket(t, proxy.URL, nil)
 	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
@@ -514,7 +357,7 @@ func TestWebSocketUpstreamTransportLossRestartsDownstream(t *testing.T) {
 	readCloseStatus(t, conn, websocket.StatusServiceRestart)
 }
 
-func TestWebSocketTracksUsageHeadersMetadataAndFastTier(t *testing.T) {
+func TestWebSocketTracksUsageHeadersAndMetadata(t *testing.T) {
 	var mu sync.Mutex
 	serviceTiers := []string{}
 	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
@@ -541,7 +384,6 @@ func TestWebSocketTracksUsageHeadersMetadataAndFastTier(t *testing.T) {
 	defer upstream.Close()
 	a := testAccount("account-a", 96)
 	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a})
-	server.catalog.replace([]string{a.id()}, map[string][]modelEntry{a.id(): {testModelEntry("gpt-5.6-sol", "priority")}}, "test")
 	conn, _ := dialWebSocket(t, proxy.URL, nil)
 	defer conn.CloseNow()
 	writeWebSocketEvent(t, conn, map[string]any{
@@ -556,7 +398,7 @@ func TestWebSocketTracksUsageHeadersMetadataAndFastTier(t *testing.T) {
 	mu.Lock()
 	gotTier := append([]string(nil), serviceTiers...)
 	mu.Unlock()
-	if fmt.Sprint(gotTier) != "[priority]" {
+	if fmt.Sprint(gotTier) != "[default]" {
 		t.Fatalf("service tiers = %v", gotTier)
 	}
 	primary, _, _, _ := a.health()

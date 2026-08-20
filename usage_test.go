@@ -75,6 +75,7 @@ func TestUsagePollPositiveCapacityReturnsSpentAccountToRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	roomier.Paused = true
 	if picked := server.pool.route(nil).account; picked == nil || picked.id() != "account-a" {
 		t.Fatalf("picked = %v, want account-a", picked)
 	}

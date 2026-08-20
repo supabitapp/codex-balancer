@@ -74,7 +74,7 @@ func TestPoolCyclesRoutingModeAndPersists(t *testing.T) {
 	if err := pool.add(account); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []routingMode{routingModePriority, routingModeDraining} {
+	for _, want := range []routingMode{routingModePriority, routingModeNormal, routingModePriority} {
 		got, err := pool.cycleRoutingMode(account)
 		if err != nil {
 			t.Fatal(err)
@@ -96,8 +96,49 @@ func TestPoolCyclesRoutingModeAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded) != 1 || reloaded[0].routingCandidate().mode != routingModeDraining {
+	if len(reloaded) != 1 || reloaded[0].routingCandidate().mode != routingModePriority {
 		t.Fatalf("reloaded accounts = %+v", reloaded)
+	}
+}
+
+func TestStateStoreRemovesLegacyDrainingMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := loadPool(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.add(testAccount("account-a", 20)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(fmt.Sprintf(`ALTER TABLE accounts ADD COLUMN legacy_routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (legacy_routing_mode IN ('normal', 'priority', 'draining'));
+		UPDATE accounts SET legacy_routing_mode = 'draining';
+		ALTER TABLE accounts DROP COLUMN routing_mode;
+		ALTER TABLE accounts RENAME COLUMN legacy_routing_mode TO routing_mode;
+		PRAGMA user_version = %d;`, len(stateMigrations)-1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	accounts, err := reopened.readAccounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 1 || accounts[0].routingCandidate().mode != routingModeNormal {
+		t.Fatalf("accounts = %+v", accounts)
+	}
+	if _, err := reopened.db.Exec(`UPDATE accounts SET routing_mode = 'draining'`); err == nil {
+		t.Fatal("legacy routing mode accepted")
 	}
 }
 
@@ -212,7 +253,7 @@ func TestStateStoreRemovesLegacyAffinityAndRotationData(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(stateMigrations)-1)); err != nil {
+	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(stateMigrations)-2)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

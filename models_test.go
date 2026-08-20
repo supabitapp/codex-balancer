@@ -203,21 +203,6 @@ func TestModelCatalogDerivesContextLimits(t *testing.T) {
 	}
 }
 
-func TestModelCatalogTracksAccountServiceTiers(t *testing.T) {
-	catalog := newModelCatalog()
-	catalog.replace(
-		[]string{"account"},
-		map[string][]modelEntry{"account": {testModelEntry("gpt-common", "priority")}},
-		"0.1.0",
-	)
-	if !catalog.accountSupportsServiceTier("account", "gpt-common", serviceTierPriority) {
-		t.Fatal("priority tier not supported")
-	}
-	if catalog.accountSupportsServiceTier("account", "gpt-common", "default") {
-		t.Fatal("default tier unexpectedly supported")
-	}
-}
-
 func TestModelsRefreshesEveryActiveAccountAndServesIntersection(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)

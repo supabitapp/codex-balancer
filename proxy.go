@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -146,28 +145,6 @@ func (s *server) models(w http.ResponseWriter, r *http.Request) {
 
 type responseReasoning struct {
 	Effort string `json:"effort"`
-}
-
-func (s *server) forceFastTier(account *Account, model, serviceTier string, message []byte) ([]byte, bool) {
-	if canonicalServiceTier(serviceTier) == serviceTierPriority {
-		return message, false
-	}
-	if !account.routingCandidate().draining() {
-		return message, false
-	}
-	if s.catalog == nil || !s.catalog.accountSupportsServiceTier(account.id(), model, serviceTierPriority) {
-		return message, false
-	}
-	var payload map[string]json.RawMessage
-	if json.Unmarshal(message, &payload) != nil || payload == nil {
-		return message, false
-	}
-	payload["service_tier"] = json.RawMessage(strconv.Quote(serviceTierPriority))
-	forced, err := json.Marshal(payload)
-	if err != nil {
-		return message, false
-	}
-	return forced, true
 }
 
 type responseErrorPayload struct {

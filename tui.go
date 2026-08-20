@@ -189,7 +189,7 @@ func (d dashboard) render() string {
 
 func (d dashboard) header() string {
 	styles := d.styles()
-	live, priority, draining, checking, cooling, dead, held := 0, 0, 0, 0, 0, 0, 0
+	live, priority, checking, cooling, dead, held := 0, 0, 0, 0, 0, 0
 	now := time.Now()
 	for _, a := range d.pool.all() {
 		switch a.status(now) {
@@ -205,17 +205,12 @@ func (d dashboard) header() string {
 			live++
 		case accountPriority:
 			priority++
-		case accountDraining:
-			draining++
 		}
 	}
 
 	parts := []string{styles.good.Render(fmt.Sprintf("%d live", live))}
 	if priority > 0 {
 		parts = append(parts, styles.warn.Render(fmt.Sprintf("%d priority", priority)))
-	}
-	if draining > 0 {
-		parts = append(parts, styles.bad.Render(fmt.Sprintf("%d draining", draining)))
 	}
 	if checking > 0 {
 		parts = append(parts, styles.dim.Render(fmt.Sprintf("%d checking", checking)))
@@ -324,8 +319,6 @@ func (d dashboard) accounts(limit int) string {
 			status = styles.good.Render(fit("● live", statusW))
 		case accountPriority:
 			status = styles.warn.Render(fit("◆ priority", statusW))
-		case accountDraining:
-			status = styles.bad.Render(fit("▼ draining", statusW))
 		}
 
 		turns := ""

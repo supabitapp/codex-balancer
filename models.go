@@ -67,14 +67,6 @@ func (c *modelCatalog) replace(active []string, fresh map[string][]modelEntry, c
 	c.refreshedAt = time.Now()
 }
 
-func (c *modelCatalog) accountSupportsServiceTier(accountID, model, serviceTier string) bool {
-	model = strings.ToLower(strings.TrimSpace(model))
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	entry, ok := c.accounts[accountID][model]
-	return ok && modelSupportsServiceTier(entry, serviceTier)
-}
-
 func (c *modelCatalog) entries() []modelEntry {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

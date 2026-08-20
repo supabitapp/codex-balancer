@@ -63,70 +63,13 @@ func TestPoolRouteSkipsUnavailableAccounts(t *testing.T) {
 	}
 }
 
-func TestPoolRouteDrainingOverridesRoomierAccount(t *testing.T) {
+func TestPoolRouteChoosesRoomierAccountWhenAnotherIsNearlySpent(t *testing.T) {
 	roomier := testAccount("account-roomier", 10)
-	draining := testAccount("account-draining", 96)
-	p := &Pool{accounts: []*Account{roomier, draining}}
-
-	if got := p.route(nil).account; got != draining {
-		t.Fatalf("account = %s, want account-draining", got.id())
-	}
-}
-
-func TestPoolRouteStartsDrainingBelowFivePercent(t *testing.T) {
-	roomier := testAccount("account-roomier", 10)
-	boundary := testAccount("account-boundary", 95)
-	p := &Pool{accounts: []*Account{roomier, boundary}}
+	nearlySpent := testAccount("account-nearly-spent", 99)
+	p := &Pool{accounts: []*Account{roomier, nearlySpent}}
 
 	if got := p.route(nil).account; got != roomier {
-		t.Fatalf("account at five percent = %s, want account-roomier", got.id())
-	}
-	setTestAccountUsage(boundary, 95.01)
-	if got := p.route(nil).account; got != boundary {
-		t.Fatalf("account below five percent = %s, want account-boundary", got.id())
-	}
-}
-
-func TestPoolRouteDrainingOrderUsesPressureResetAndID(t *testing.T) {
-	now := time.Now()
-	pressure := testAccount("account-pressure", 99)
-	pressure.primary.resetsAt = now.Add(2 * time.Hour)
-	pressure.secondary.resetsAt = now.Add(2 * time.Hour)
-	reset := testAccount("account-reset", 96)
-	reset.primary.resetsAt = now.Add(time.Hour)
-	reset.secondary.resetsAt = now.Add(time.Hour)
-	p := &Pool{accounts: []*Account{reset, pressure}}
-	if got := p.route(nil).account; got != pressure {
-		t.Fatalf("account = %s, want account-pressure", got.id())
-	}
-
-	setTestAccountUsage(pressure, 96.5)
-	if got := p.route(nil).account; got != reset {
-		t.Fatalf("account = %s, want account-reset", got.id())
-	}
-
-	reset.primary.resetsAt = now.Add(2 * time.Hour)
-	reset.secondary.resetsAt = now.Add(2 * time.Hour)
-	reset.IDToken = testAccount("account-z", 96).IDToken
-	pressure.IDToken = testAccount("account-a", 96).IDToken
-	if got := p.route(nil).account; got != pressure {
-		t.Fatalf("account = %s, want account-a", got.id())
-	}
-	reset.IDToken = testAccount("account-a", 96).IDToken
-	pressure.IDToken = testAccount("account-b", 96).IDToken
-	if got := p.route(nil).account; got != reset {
-		t.Fatalf("account = %s, want account-a", got.id())
-	}
-}
-
-func TestPoolRouteManualDrainingWins(t *testing.T) {
-	manual := testAccount("account-manual", 20)
-	manual.RoutingMode = routingModeDraining
-	automatic := testAccount("account-automatic", 99)
-	p := &Pool{accounts: []*Account{automatic, manual}}
-
-	if got := p.route(nil).account; got != manual {
-		t.Fatalf("account = %s, want account-manual", got.id())
+		t.Fatalf("account = %s, want account-roomier", got.id())
 	}
 }
 
@@ -209,20 +152,15 @@ func TestAccountStatusPreservesRoutingStates(t *testing.T) {
 	}
 }
 
-func TestAccountStatusShowsPriorityAndDraining(t *testing.T) {
+func TestAccountStatusShowsPriority(t *testing.T) {
 	account := testAccount("account-a", 20)
 	account.RoutingMode = routingModePriority
 	if got := account.status(time.Now()); got != accountPriority {
 		t.Fatalf("priority status = %s", got)
 	}
-	account.RoutingMode = routingModeDraining
-	if got := account.status(time.Now()); got != accountDraining {
-		t.Fatalf("draining status = %s", got)
-	}
 	account.RoutingMode = routingModeNormal
-	setTestAccountUsage(account, 96)
-	if got := account.status(time.Now()); got != accountDraining {
-		t.Fatalf("automatic draining status = %s", got)
+	if got := account.status(time.Now()); got != accountLive {
+		t.Fatalf("normal status = %s", got)
 	}
 }
 
