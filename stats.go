@@ -168,12 +168,15 @@ func (s *Stats) failedOver(account, reason string) {
 	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
-func (s *Stats) routed(thread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata) {
+func (s *Stats) accepted(session, routeThread, statsThread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata, counted bool) {
 	now := time.Now()
-	s.persistAttempt(storedAttempt{At: now, Thread: thread, ClientIP: clientIP, Account: account, Effort: effort, ServiceTier: serviceTier, Metadata: encodeTurnMetadata(metadata)})
+	s.persistAttempt(storedAttempt{At: now, Session: session, Thread: routeThread, ClientIP: clientIP, Account: account, Effort: effort, ServiceTier: serviceTier, Metadata: encodeTurnMetadata(metadata), Warmup: !counted})
+	if !counted {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applyRouted(now, thread, clientIP, account, model, effort, serviceTier, metadata)
+	s.applyRouted(now, statsThread, clientIP, account, model, effort, serviceTier, metadata)
 }
 
 func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata) {

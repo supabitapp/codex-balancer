@@ -14,8 +14,82 @@ func TestPoolRouteChoosesRoomierAccount(t *testing.T) {
 	b.lastUsed = time.Now().Add(-time.Minute)
 	p := &Pool{accounts: []*Account{a, b}}
 
-	if got := p.route(nil).account; got != b {
+	if got := p.route(nil, nil).account; got != b {
 		t.Fatalf("account = %s, want account-b", got.id())
+	}
+}
+
+func TestPoolRouteRetainsHealthyOwnerAheadOfFreshPlacementRules(t *testing.T) {
+	owner := testAccount("account-owner", 90)
+	fresh := testAccount("account-fresh", 0)
+	fresh.RoutingMode = routingModePriority
+	p := &Pool{accounts: []*Account{fresh, owner}}
+
+	if got := p.route([]string{owner.id()}, nil).account; got != owner {
+		t.Fatalf("account = %s, want the healthy owner despite fresh-placement priority", got.id())
+	}
+}
+
+func TestPoolRouteBlocksInsteadOfSpillingACoolingOwner(t *testing.T) {
+	owner := testAccount("account-owner", 90)
+	owner.cooldown = time.Now().Add(time.Minute)
+	fresh := testAccount("account-fresh", 0)
+	p := &Pool{accounts: []*Account{fresh, owner}}
+
+	decision := p.route([]string{owner.id()}, nil)
+	if decision.account != nil || decision.blocked != owner.id() {
+		t.Fatalf("decision = %+v, want a retry on the cooling owner without fresh placement", decision)
+	}
+}
+
+func TestPoolRouteMarksFreshPlacementAfterSpentOwnerAsAMove(t *testing.T) {
+	owner := testAccount("account-owner", 90)
+	owner.spent = true
+	fresh := testAccount("account-fresh", 0)
+	p := &Pool{accounts: []*Account{fresh, owner}}
+
+	decision := p.route([]string{owner.id()}, nil)
+	if decision.account != fresh || !decision.moved() {
+		t.Fatalf("decision = %+v, want fresh placement marked as an account move", decision)
+	}
+}
+
+func TestPoolRouteFallsBackOnlyWhenTheOwnerCannotContinue(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Account)
+		removed bool
+	}{
+		{name: "spent owner cannot serve this quota window", mutate: func(account *Account) { account.spent = true }},
+		{name: "paused owner was removed from routing by the operator", mutate: func(account *Account) { account.Paused = true }},
+		{name: "signed-out owner cannot authenticate", mutate: func(account *Account) { account.dead = "reauth required" }},
+		{name: "removed owner no longer exists", removed: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			owner := testAccount("account-owner", 90)
+			fresh := testAccount("account-fresh", 0)
+			accounts := []*Account{fresh}
+			if !test.removed {
+				test.mutate(owner)
+				accounts = append(accounts, owner)
+			}
+			decision := (&Pool{accounts: accounts}).route([]string{owner.id()}, nil)
+			if decision.account != fresh || !decision.moved() || decision.blocked != "" {
+				t.Fatalf("decision = %+v, want a marked fresh placement because the owner cannot continue", decision)
+			}
+		})
+	}
+}
+
+func TestPoolRouteBlocksOwnerWhileQuotaStateIsUnknown(t *testing.T) {
+	owner := testAccount("account-owner", 90)
+	owner.primary = window{}
+	owner.secondary = window{}
+	fresh := testAccount("account-fresh", 0)
+	decision := (&Pool{accounts: []*Account{fresh, owner}}).route([]string{owner.id()}, nil)
+	if decision.account != nil || decision.blocked != owner.id() {
+		t.Fatalf("decision = %+v, want retry until the owner quota check can prove whether it may continue", decision)
 	}
 }
 
@@ -24,10 +98,10 @@ func TestPoolRouteHonorsSkip(t *testing.T) {
 	b := testAccount("account-b", 20)
 	p := &Pool{accounts: []*Account{a, b}}
 
-	if got := p.route(map[string]bool{a.id(): true}).account; got != b {
+	if got := p.route(nil, map[string]bool{a.id(): true}).account; got != b {
 		t.Fatalf("account = %s, want account-b", got.id())
 	}
-	if got := p.route(map[string]bool{a.id(): true, b.id(): true}).account; got != nil {
+	if got := p.route(nil, map[string]bool{a.id(): true, b.id(): true}).account; got != nil {
 		t.Fatalf("account = %s, want no account", got.id())
 	}
 }
@@ -56,7 +130,7 @@ func TestPoolRouteSkipsUnavailableAccounts(t *testing.T) {
 			a.primary = window{usedPercent: 10, seenAt: time.Now()}
 			a.secondary = window{usedPercent: 10, seenAt: time.Now()}
 			test.mutate(a)
-			if got := p.route(nil).account; got != b {
+			if got := p.route(nil, nil).account; got != b {
 				t.Fatalf("account = %s, want account-b", got.id())
 			}
 		})
@@ -68,7 +142,7 @@ func TestPoolRouteChoosesRoomierAccountWhenAnotherIsNearlySpent(t *testing.T) {
 	nearlySpent := testAccount("account-nearly-spent", 99)
 	p := &Pool{accounts: []*Account{roomier, nearlySpent}}
 
-	if got := p.route(nil).account; got != roomier {
+	if got := p.route(nil, nil).account; got != roomier {
 		t.Fatalf("account = %s, want account-roomier", got.id())
 	}
 }
@@ -79,7 +153,7 @@ func TestPoolRouteManualPriorityWins(t *testing.T) {
 	priority.RoutingMode = routingModePriority
 	p := &Pool{accounts: []*Account{roomier, priority}}
 
-	if got := p.route(nil).account; got != priority {
+	if got := p.route(nil, nil).account; got != priority {
 		t.Fatalf("account = %s, want account-priority", got.id())
 	}
 }
@@ -92,11 +166,11 @@ func TestPoolRoutePrioritizesExpiringReset(t *testing.T) {
 	roomier := testAccount("account-roomier", 10)
 	p := &Pool{accounts: []*Account{roomier, resetting}}
 
-	if got := p.route(nil).account; got != resetting {
+	if got := p.route(nil, nil).account; got != resetting {
 		t.Fatalf("account = %s, want account-resetting", got.id())
 	}
 	adoptTestResetCredit(resetting, now.Add(25*time.Hour))
-	if got := p.route(nil).account; got != roomier {
+	if got := p.route(nil, nil).account; got != roomier {
 		t.Fatalf("account = %s, want account-roomier", got.id())
 	}
 }
@@ -108,12 +182,12 @@ func TestPoolRouteBreaksEqualPressureTiesByLastUsedAndID(t *testing.T) {
 	b.lastUsed = time.Time{}
 	p := &Pool{accounts: []*Account{b, a}}
 
-	if got := p.route(nil).account; got != a {
+	if got := p.route(nil, nil).account; got != a {
 		t.Fatalf("account = %s, want account-a", got.id())
 	}
 	a.lastUsed = time.Now()
 	b.lastUsed = time.Time{}
-	if got := p.route(nil).account; got != b {
+	if got := p.route(nil, nil).account; got != b {
 		t.Fatalf("account = %s, want account-b", got.id())
 	}
 }
@@ -210,4 +284,10 @@ func setTestAccountUsage(account *Account, used float64) {
 	defer account.mu.Unlock()
 	account.primary.usedPercent = used
 	account.secondary.usedPercent = used
+}
+
+func setTestAccountSpent(account *Account, spent bool) {
+	account.mu.Lock()
+	defer account.mu.Unlock()
+	account.spent = spent
 }

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func (s *server) pickAccount(thread, model, serviceTier string, skip map[string]bool, attempt int) *Account {
+func (s *server) pickAccount(thread string, owners []string, model, serviceTier string, skip map[string]bool, attempt int) routingDecision {
 	allowed := s.allowedAccounts(model, serviceTier)
 	routingSkip := skip
 	if allowed != nil {
@@ -20,12 +20,16 @@ func (s *server) pickAccount(thread, model, serviceTier string, skip map[string]
 			}
 		}
 	}
-	decision := s.pool.route(routingSkip)
+	decision := s.pool.route(owners, routingSkip)
 	s.log.Debug("routing attempt",
 		"thread", thread,
 		"attempt", attempt+1,
 		"model", model,
 		"service_tier", serviceTier,
+		"route_owners", owners,
+		"prior_owner", decision.priorOwner,
+		"blocked_owner", decision.blocked,
+		"account_move", decision.moved(),
 		"accounts", len(decision.candidates),
 	)
 	for _, candidate := range decision.candidates {
@@ -40,6 +44,16 @@ func (s *server) pickAccount(thread, model, serviceTier string, skip map[string]
 		s.log.Debug("routing candidate", attrs...)
 	}
 	if decision.account == nil {
+		if decision.blocked != "" {
+			s.log.Info("retained account temporarily unavailable",
+				"thread", thread,
+				"attempt", attempt+1,
+				"account", decision.blocked,
+				"model", model,
+				"service_tier", serviceTier,
+			)
+			return decision
+		}
 		s.log.Warn("no account available",
 			"thread", thread,
 			"attempt", attempt+1,
@@ -47,7 +61,7 @@ func (s *server) pickAccount(thread, model, serviceTier string, skip map[string]
 			"service_tier", serviceTier,
 		)
 	}
-	return decision.account
+	return decision
 }
 
 func (s *server) allowedAccounts(model, serviceTier string) map[string]bool {

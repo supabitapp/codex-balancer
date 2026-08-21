@@ -20,12 +20,28 @@ const responsesWebSocketBeta = "responses_websockets=2026-02-06"
 
 const noAccountAvailableMessage = "WE ARE OUT OF TOKENS 😭 Go out, touch some grass 🌿 See https://codex-balancer.exe.xyz/dashboard"
 
-var errNoAccountAvailable = errors.New("no account available")
+var (
+	errNoAccountAvailable    = errors.New("no account available")
+	errRouteOwnerUnavailable = errors.New("session account temporarily unavailable; retry")
+)
 
 type websocketDial struct {
 	conn    *websocket.Conn
 	resp    *http.Response
 	account *Account
+	moved   bool
+}
+
+type websocketRoute struct {
+	session string
+	thread  string
+}
+
+func (r websocketRoute) key() string {
+	if r.thread != "" {
+		return r.thread
+	}
+	return r.session
 }
 
 type websocketMessage struct {
@@ -47,16 +63,17 @@ type websocketTurn struct {
 }
 
 type websocketEnvelope struct {
-	Type           string                     `json:"type"`
-	Generate       *bool                      `json:"generate"`
-	Model          string                     `json:"model"`
-	Reasoning      responseReasoning          `json:"reasoning"`
-	ServiceTier    string                     `json:"service_tier"`
-	ClientMetadata map[string]string          `json:"client_metadata"`
-	Status         int                        `json:"status"`
-	StatusCode     int                        `json:"status_code"`
-	Headers        map[string]json.RawMessage `json:"headers"`
-	Error          struct {
+	Type               string                     `json:"type"`
+	Generate           *bool                      `json:"generate"`
+	Model              string                     `json:"model"`
+	Reasoning          responseReasoning          `json:"reasoning"`
+	ServiceTier        string                     `json:"service_tier"`
+	PreviousResponseID string                     `json:"previous_response_id"`
+	ClientMetadata     map[string]string          `json:"client_metadata"`
+	Status             int                        `json:"status"`
+	StatusCode         int                        `json:"status_code"`
+	Headers            map[string]json.RawMessage `json:"headers"`
+	Error              struct {
 		Type string `json:"type"`
 		Code string `json:"code"`
 	} `json:"error"`
@@ -78,9 +95,10 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	thread := websocketThread(r.Header)
+	route := websocketRouteFrom(r.Header)
+	thread := route.key()
 	s.log.Debug("websocket requested", "thread", thread)
-	dial, failed, err := s.dialResponsesWebSocket(r, thread, "", "")
+	dial, failed, err := s.dialResponsesWebSocket(r, route, "", "")
 	if err != nil {
 		message := err.Error()
 		if errors.Is(err, errNoAccountAvailable) {
@@ -110,7 +128,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer downstream.CloseNow()
 	downstream.SetReadLimit(maxWebSocketMessage)
 	dial.conn.SetReadLimit(maxWebSocketMessage)
-	s.relayResponsesWebSocket(downstream, r, dial, thread)
+	s.relayResponsesWebSocket(downstream, r, dial, route)
 }
 
 func websocketHandshake(w http.ResponseWriter, r *http.Request) bool {
@@ -144,7 +162,7 @@ func headerHasToken(headers http.Header, name, target string) bool {
 
 func (s *server) dialResponsesWebSocket(
 	r *http.Request,
-	thread string,
+	route websocketRoute,
 	model string,
 	serviceTier string,
 ) (*websocketDial, *http.Response, error) {
@@ -152,12 +170,24 @@ func (s *server) dialResponsesWebSocket(
 	if err != nil {
 		return nil, nil, err
 	}
+	thread := route.key()
+	var owners []string
+	if s.pool.store != nil {
+		owners, err = s.pool.store.routeOwners(route.thread, route.session)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
 	resetRetried := map[string]bool{}
 	for attempt := 0; ; attempt++ {
-		account := s.pickAccount(thread, model, serviceTier, skip, attempt)
+		decision := s.pickAccount(thread, owners, model, serviceTier, skip, attempt)
+		if decision.blocked != "" {
+			return nil, nil, errRouteOwnerUnavailable
+		}
+		account := decision.account
 		if account == nil {
 			return nil, nil, errNoAccountAvailable
 		}
@@ -165,6 +195,9 @@ func (s *server) dialResponsesWebSocket(
 		if account.stale(time.Now()) && !reauthed[id] {
 			reauthed[id] = true
 			if !s.refreshed(account, id) {
+				if websocketOwnerMayRefresh(owners, account) {
+					return nil, nil, errRouteOwnerUnavailable
+				}
 				skip[id] = true
 				continue
 			}
@@ -201,10 +234,10 @@ func (s *server) dialResponsesWebSocket(
 			if resp != nil {
 				account.observe(resp.Header)
 			}
-			attrs := []any{"thread", thread, "attempt", attempt + 1}
+			attrs := []any{"thread", thread, "attempt", attempt + 1, "prior_owner", decision.priorOwner, "account_move", decision.moved()}
 			attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
 			s.log.Debug("websocket routed", attrs...)
-			return &websocketDial{conn: conn, resp: resp, account: account}, nil, nil
+			return &websocketDial{conn: conn, resp: resp, account: account, moved: decision.moved()}, nil, nil
 		}
 		if cause := context.Cause(r.Context()); cause != nil {
 			if resp != nil && resp.Body != nil {
@@ -218,6 +251,9 @@ func (s *server) dialResponsesWebSocket(
 			}
 			reauthed[id] = true
 			if !s.refreshed(account, id) {
+				if websocketOwnerMayRefresh(owners, account) {
+					return nil, nil, errRouteOwnerUnavailable
+				}
 				skip[id] = true
 			}
 			attempt--
@@ -334,7 +370,8 @@ func ensureResponsesWebSocketBeta(headers http.Header) {
 	headers.Set("OpenAI-Beta", strings.Join(tokens, ", "))
 }
 
-func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Request, initial *websocketDial, thread string) {
+func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Request, initial *websocketDial, route websocketRoute) {
+	thread := route.key()
 	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -425,12 +462,16 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 				continue
 			}
 			allowed := s.allowedAccounts(event.Model, event.ServiceTier)
+			if (current.moved || !accountAllowed(allowed, current.account.id())) && !websocketRequestPortable(event) {
+				closeDownstream(websocket.StatusTryAgainLater, "account-bound turn cannot move accounts")
+				return
+			}
 			if !accountAllowed(allowed, current.account.id()) {
 				if pinned {
 					closeDownstream(websocket.StatusServiceRestart, "requested model requires another account")
 					return
 				}
-				next, failed, err := s.dialResponsesWebSocket(r, thread, event.Model, event.ServiceTier)
+				next, failed, err := s.dialResponsesWebSocket(r, route, event.Model, event.ServiceTier)
 				if failed != nil && failed.Body != nil {
 					failed.Body.Close()
 				}
@@ -499,7 +540,14 @@ func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Req
 							s.stats.activateThread(turn.statsThread)
 							liveThreads[turn.statsThread] = struct{}{}
 						}
-						s.stats.routed(turn.statsThread, requestIP(r), current.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata)
+					}
+					routeThread := route.thread
+					if routeThread == "" {
+						routeThread = turn.statsThread
+					}
+					s.stats.accepted(route.session, routeThread, turn.statsThread, requestIP(r), current.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata, turn.counted)
+					current.moved = false
+					if turn.counted {
 						s.stats.answered(turn.statsThread, current.account.id(), time.Since(turn.sent))
 					}
 					s.log.Debug("websocket response created", "thread", turn.statsThread, "turn", turn.metadata.TurnID, "account", current.account.id(), "latency", time.Since(turn.sent))
@@ -617,8 +665,32 @@ func websocketErrorIs(event websocketEnvelope, code string) bool {
 	return event.Error.Type == code || event.Error.Code == code || event.Response.Error.Type == code || event.Response.Error.Code == code
 }
 
-func websocketThread(headers http.Header) string {
-	for _, name := range []string{"session_id", "session-id", "x-codex-session-id", "x-codex-conversation-id", "thread-id"} {
+func websocketRequestPortable(event websocketEnvelope) bool {
+	return strings.TrimSpace(event.PreviousResponseID) == "" && strings.TrimSpace(event.ClientMetadata[codexTurnStateKey]) == ""
+}
+
+func websocketOwnerMayRefresh(owners []string, account *Account) bool {
+	candidate := account.routingCandidate()
+	if candidate.reauth != "" {
+		return false
+	}
+	for _, owner := range owners {
+		if owner == candidate.id {
+			return true
+		}
+	}
+	return false
+}
+
+func websocketRouteFrom(headers http.Header) websocketRoute {
+	return websocketRoute{
+		session: firstWebSocketHeader(headers, "session_id", "session-id", "x-codex-session-id", "x-codex-conversation-id"),
+		thread:  firstWebSocketHeader(headers, "thread-id", "x-client-request-id"),
+	}
+}
+
+func firstWebSocketHeader(headers http.Header, names ...string) string {
+	for _, name := range names {
 		if value := strings.TrimSpace(headers.Get(name)); value != "" {
 			return value
 		}

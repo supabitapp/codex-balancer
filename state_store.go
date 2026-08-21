@@ -92,6 +92,9 @@ var stateMigrations = []string{
 	UPDATE accounts SET next_routing_mode = CASE routing_mode WHEN 'priority' THEN 'priority' ELSE 'normal' END;
 	ALTER TABLE accounts DROP COLUMN routing_mode;
 	ALTER TABLE accounts RENAME COLUMN next_routing_mode TO routing_mode;`,
+	`ALTER TABLE attempts ADD COLUMN session_key TEXT NOT NULL DEFAULT '';
+	ALTER TABLE attempts ADD COLUMN warmup INTEGER NOT NULL DEFAULT 0 CHECK (warmup IN (0, 1));
+	CREATE INDEX attempts_session_at ON attempts (session_key, at_ns);`,
 }
 
 type StateStore struct {
@@ -101,12 +104,14 @@ type StateStore struct {
 
 type storedAttempt struct {
 	At          time.Time
+	Session     string
 	Thread      string
 	ClientIP    string
 	Account     string
 	Effort      string
 	ServiceTier string
 	Metadata    string
+	Warmup      bool
 }
 
 type storedEvent struct {
@@ -400,9 +405,37 @@ func decodeTime(value int64) time.Time {
 }
 
 func (s *StateStore) recordAttempt(attempt storedAttempt) error {
-	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, thread_key, client_ip, account_id, reasoning_effort, service_tier, turn_metadata) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		attempt.At.UnixNano(), attempt.Thread, attempt.ClientIP, attempt.Account, attempt.Effort, attempt.ServiceTier, attempt.Metadata)
+	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, session_key, thread_key, client_ip, account_id, reasoning_effort, service_tier, turn_metadata, warmup) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		attempt.At.UnixNano(), attempt.Session, attempt.Thread, attempt.ClientIP, attempt.Account, attempt.Effort, attempt.ServiceTier, attempt.Metadata, attempt.Warmup)
 	return err
+}
+
+func (s *StateStore) routeOwners(thread, session string) ([]string, error) {
+	lookups := []struct {
+		column string
+		value  string
+	}{
+		{column: "thread_key", value: thread},
+		{column: "session_key", value: session},
+	}
+	owners := make([]string, 0, len(lookups))
+	for _, lookup := range lookups {
+		if lookup.value == "" {
+			continue
+		}
+		var account string
+		err := s.db.QueryRow(`SELECT account_id FROM attempts WHERE `+lookup.column+` = ? ORDER BY at_ns DESC, id DESC LIMIT 1`, lookup.value).Scan(&account)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(owners) == 0 || owners[0] != account {
+			owners = append(owners, account)
+		}
+	}
+	return owners, nil
 }
 
 func (s *StateStore) recordEvent(event storedEvent) error {
@@ -437,18 +470,22 @@ func (s *StateStore) usageEventsSince(start time.Time) ([]storedEvent, error) {
 }
 
 func (s *StateStore) restoreStats(stats *Stats) error {
-	attempts, err := s.db.Query(`SELECT at_ns, thread_key, client_ip, account_id, reasoning_effort, service_tier, turn_metadata FROM attempts ORDER BY id`)
+	attempts, err := s.db.Query(`SELECT at_ns, thread_key, client_ip, account_id, reasoning_effort, service_tier, turn_metadata, warmup FROM attempts ORDER BY id`)
 	if err != nil {
 		return err
 	}
 	for attempts.Next() {
 		var at int64
 		var thread, clientIP, account, effort, tier, metadata string
-		if err := attempts.Scan(&at, &thread, &clientIP, &account, &effort, &tier, &metadata); err != nil {
+		var warmup bool
+		if err := attempts.Scan(&at, &thread, &clientIP, &account, &effort, &tier, &metadata, &warmup); err != nil {
 			attempts.Close()
 			return err
 		}
-		stats.applyRouted(time.Unix(0, at), thread, clientIP, account, "", effort, tier, decodeTurnMetadata(metadata))
+		if !warmup {
+			decoded := decodeTurnMetadata(metadata)
+			stats.applyRouted(time.Unix(0, at), statsThreadKey(thread, decoded), clientIP, account, "", effort, tier, decoded)
+		}
 	}
 	if err := attempts.Close(); err != nil {
 		return err

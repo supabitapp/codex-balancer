@@ -261,7 +261,7 @@ func TestThreadCostRepricesAfterCatalogRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats.activateThread("thread")
-	stats.routed("thread", "client", "account", "gpt-5.4", "high", "default", turnMetadata{})
+	stats.accepted("", "thread", "thread", "client", "account", "gpt-5.4", "high", "default", turnMetadata{}, true)
 	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
 	stats.recordUsage("thread", "account", "gpt-5.4", "high", "default", usage)
 	before := stats.snapshot().Threads[0]

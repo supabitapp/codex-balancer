@@ -14,6 +14,552 @@ import (
 	"github.com/coder/websocket"
 )
 
+func TestWebSocketRouteKeepsSessionAndThreadIdentitySeparate(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers http.Header
+		want    websocketRoute
+	}{
+		{
+			name: "thread-id wins over request id because it states the conversation identity",
+			headers: http.Header{
+				"Session-Id":          {"session"},
+				"Thread-Id":           {"thread"},
+				"X-Client-Request-Id": {"request"},
+			},
+			want: websocketRoute{session: "session", thread: "thread"},
+		},
+		{
+			name: "request id recovers thread identity for clients without thread-id",
+			headers: http.Header{
+				"Session-Id":          {"session"},
+				"X-Client-Request-Id": {"thread"},
+			},
+			want: websocketRoute{session: "session", thread: "thread"},
+		},
+		{
+			name:    "underscore session header keeps older Codex sessions stable",
+			headers: http.Header{"Session_id": {"session"}, "Thread-Id": {"thread"}},
+			want:    websocketRoute{session: "session", thread: "thread"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := websocketRouteFrom(test.headers); got != test.want {
+				t.Fatalf("route = %+v, want separate identities %+v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestWebSocketReconnectRetainsAcceptedThreadOwner(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := http.Header{"Session-Id": {"session"}, "Thread-Id": {"thread"}}
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, first)
+	readWebSocketEvent(t, first)
+	first.CloseNow()
+	setTestAccountUsage(owner, 90)
+	setTestAccountUsage(fresh, 0)
+	fresh.RoutingMode = routingModePriority
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	writeWebSocketEvent(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, second)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-owner]" {
+		t.Fatalf("request accounts = %s, want reconnect to retain the accepted thread owner", got)
+	}
+}
+
+func TestWebSocketReconnectUsesHandshakeThreadWhenMetadataNamesAStatsThread(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := codexWebSocketHeaders("", "route-thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{
+		"type": "response.create",
+		"client_metadata": map[string]string{
+			codexTurnMetadataKey: encodeTurnMetadata(turnMetadata{ThreadID: "stats-thread"}),
+		},
+		"input": []any{},
+	})
+	first.CloseNow()
+	setTestAccountUsage(owner, 90)
+	setTestAccountUsage(fresh, 0)
+	fresh.RoutingMode = routingModePriority
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	completeWebSocketTurn(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-owner]" {
+		t.Fatalf("request accounts = %s, want the handshake thread to retain its owner when metadata uses a dashboard thread key", got)
+	}
+}
+
+func TestWebSocketSpentOwnerRejectsPreviousResponseBeforeAccountMove(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := http.Header{"Session-Id": {"session"}, "Thread-Id": {"thread"}}
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, first)
+	readWebSocketEvent(t, first)
+	first.CloseNow()
+	owner.markSpent()
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	writeWebSocketEvent(t, second, map[string]any{
+		"type":                 "response.create",
+		"previous_response_id": "response-owner",
+		"input":                []any{},
+	})
+	readCloseStatus(t, second, websocket.StatusTryAgainLater)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner]" {
+		t.Fatalf("request accounts = %s, want account-bound response state withheld from the fresh account", got)
+	}
+}
+
+func TestWebSocketPortableMoveAllowsNewSocketResponseChainAfterAcceptance(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "response-" + account},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := http.Header{"Session-Id": {"session"}, "Thread-Id": {"thread"}}
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, first)
+	readWebSocketEvent(t, first)
+	first.CloseNow()
+	owner.markSpent()
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	writeWebSocketEvent(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	readWebSocketEvent(t, second)
+	readWebSocketEvent(t, second)
+	writeWebSocketEvent(t, second, map[string]any{
+		"type":                 "response.create",
+		"previous_response_id": "response-account-fresh",
+		"input":                []any{},
+	})
+	readWebSocketEvent(t, second)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-fresh account-fresh]" {
+		t.Fatalf("request accounts = %s, want accepted move to establish the new socket response chain", got)
+	}
+}
+
+func TestWebSocketChildThreadInheritsTheAcceptedSessionOwner(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+
+	root, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "root"))
+	completeWebSocketTurn(t, root, map[string]any{"type": "response.create", "input": []any{}})
+	root.CloseNow()
+	setTestAccountUsage(owner, 90)
+	setTestAccountUsage(fresh, 0)
+	fresh.RoutingMode = routingModePriority
+
+	child, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "child"))
+	defer child.CloseNow()
+	completeWebSocketTurn(t, child, map[string]any{"type": "response.create", "input": []any{}})
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-owner]" {
+		t.Fatalf("request accounts = %s, want the new child to inherit its session cache owner", got)
+	}
+}
+
+func TestWebSocketThreadOwnerBeatsANewerSiblingSessionOwner(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	threadOwner := testAccount("account-thread", 0)
+	sessionOwner := testAccount("account-session", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{threadOwner, sessionOwner})
+
+	root, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "root"))
+	completeWebSocketTurn(t, root, map[string]any{"type": "response.create", "input": []any{}})
+	root.CloseNow()
+	threadOwner.markSpent()
+	child, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "child"))
+	completeWebSocketTurn(t, child, map[string]any{"type": "response.create", "input": []any{}})
+	child.CloseNow()
+
+	setTestAccountSpent(threadOwner, false)
+	setTestAccountUsage(threadOwner, 90)
+	setTestAccountUsage(sessionOwner, 0)
+	sessionOwner.RoutingMode = routingModePriority
+	reconnected, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "root"))
+	defer reconnected.CloseNow()
+	completeWebSocketTurn(t, reconnected, map[string]any{"type": "response.create", "input": []any{}})
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-thread account-session account-thread]" {
+		t.Fatalf("request accounts = %s, want the root thread owner ahead of its session's newer sibling owner", got)
+	}
+}
+
+func TestWebSocketAcceptedMoveDoesNotBounceWhenTheOldOwnerRecovers(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	oldOwner := testAccount("account-old", 0)
+	newOwner := testAccount("account-new", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{oldOwner, newOwner})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	first.CloseNow()
+	oldOwner.markSpent()
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	second.CloseNow()
+
+	setTestAccountSpent(oldOwner, false)
+	setTestAccountUsage(oldOwner, 0)
+	oldOwner.RoutingMode = routingModePriority
+	setTestAccountUsage(newOwner, 90)
+	third, _ := dialWebSocket(t, proxy.URL, headers)
+	defer third.CloseNow()
+	completeWebSocketTurn(t, third, map[string]any{"type": "response.create", "input": []any{}})
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-old account-new account-new]" {
+		t.Fatalf("request accounts = %s, want the latest accepted owner so old quota recovery cannot cause a cache bounce", got)
+	}
+}
+
+func TestWebSocketCoolingOwnerReturnsRetryWithoutSpillingTheSession(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	first.CloseNow()
+	owner.rateLimited(http.Header{"Retry-After": {"60"}}, 0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(proxy.URL, "http")+"/v1/responses", &websocket.DialOptions{HTTPHeader: headers})
+	if err == nil {
+		t.Fatal("reconnect succeeded, want retry while the accepted owner cools down")
+	}
+	if response == nil || response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("reconnect response = %+v, want 503 so the client retries without rebinding", response)
+	}
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-owner]" {
+		t.Fatalf("connection accounts = %s, want no spill connection while the owner may recover", got)
+	}
+}
+
+func TestWebSocketTemporaryRefreshFailureDoesNotSpillAnAcceptedRoute(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	first.CloseNow()
+	owner.mu.Lock()
+	owner.LastRefresh = time.Now().Add(-refreshAfter - time.Hour)
+	owner.mu.Unlock()
+	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer oauth.Close()
+	previousOAuthEndpoint := oauthEndpoint
+	oauthEndpoint = oauth.URL
+	defer func() { oauthEndpoint = previousOAuthEndpoint }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(proxy.URL, "http")+"/v1/responses", &websocket.DialOptions{HTTPHeader: headers})
+	if err == nil {
+		t.Fatal("reconnect succeeded, want retry after a temporary refresh failure on the accepted owner")
+	}
+	if response == nil || response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("reconnect response = %+v, want 503 without replacing an owner that may refresh later", response)
+	}
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-owner]" {
+		t.Fatalf("connection accounts = %s, want no fresh-account handshake after a temporary owner refresh failure", got)
+	}
+}
+
+func TestWebSocketSpentOwnerRejectsTurnStateBeforeAccountMove(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	first.CloseNow()
+	owner.markSpent()
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	writeWebSocketEvent(t, second, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnStateKey: "state-from-owner"},
+		"input":           []any{},
+	})
+	readCloseStatus(t, second, websocket.StatusTryAgainLater)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner]" {
+		t.Fatalf("request accounts = %s, want per-turn state withheld from a different account", got)
+	}
+}
+
+func TestWebSocketFailedTurnDoesNotBindAnAccountBeforeResponseCreated(t *testing.T) {
+	var mu sync.Mutex
+	firstRequest := true
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		mu.Lock()
+		reject := firstRequest
+		firstRequest = false
+		mu.Unlock()
+		if reject {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":   "error",
+				"status": http.StatusBadRequest,
+				"error":  map[string]any{"code": "bad_request"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	failed := testAccount("account-failed", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{failed, fresh})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	if event := readWebSocketEvent(t, first); event.Type != "error" {
+		t.Fatalf("failed turn event = %q, want error before any route becomes accepted", event.Type)
+	}
+	first.CloseNow()
+	setTestAccountUsage(failed, 90)
+	setTestAccountUsage(fresh, 0)
+	fresh.RoutingMode = routingModePriority
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	completeWebSocketTurn(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-failed account-fresh]" {
+		t.Fatalf("request accounts = %s, want fresh placement because failure before response.created proves no owner", got)
+	}
+}
+
+func TestWebSocketAcceptedWarmupBindsTheRouteWithoutCountingUsage(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	warmup, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, warmup, map[string]any{"type": "response.create", "generate": false, "input": []any{}})
+	warmup.CloseNow()
+	if got := server.stats.snapshot().Turns; got != 0 {
+		t.Fatalf("turns after warmup = %d, want route acceptance without usage inflation", got)
+	}
+	setTestAccountUsage(owner, 90)
+	setTestAccountUsage(fresh, 0)
+	fresh.RoutingMode = routingModePriority
+
+	turn, _ := dialWebSocket(t, proxy.URL, headers)
+	defer turn.CloseNow()
+	completeWebSocketTurn(t, turn, map[string]any{"type": "response.create", "input": []any{}})
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-owner]" {
+		t.Fatalf("request accounts = %s, want response.created warmup to retain the cache owner", got)
+	}
+	if got := server.stats.snapshot().Turns; got != 1 {
+		t.Fatalf("turns after real request = %d, want only generated work counted", got)
+	}
+}
+
+func TestWebSocketPortableReplayMovesFromAnIncompatibleOwnerAndRebinds(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	oldOwner := testAccount("account-old", 0)
+	newOwner := testAccount("account-new", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{oldOwner, newOwner})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	first.CloseNow()
+	server.catalog.replace(
+		[]string{oldOwner.id(), newOwner.id()},
+		map[string][]modelEntry{
+			oldOwner.id(): {testModelEntry("gpt-terra")},
+			newOwner.id(): {testModelEntry("gpt-sol")},
+		},
+		"0.1.0",
+	)
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, second, map[string]any{"type": "response.create", "model": "gpt-sol", "input": []any{}})
+	second.CloseNow()
+	oldOwner.RoutingMode = routingModePriority
+	third, _ := dialWebSocket(t, proxy.URL, headers)
+	defer third.CloseNow()
+	completeWebSocketTurn(t, third, map[string]any{"type": "response.create", "model": "gpt-sol", "input": []any{}})
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-old account-new account-new]" {
+		t.Fatalf("request accounts = %s, want a full replay to move once and retain the compatible owner", got)
+	}
+}
+
+func TestWebSocketAccountBoundFrameDoesNotMoveForModelCompatibility(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	compatible := testAccount("account-compatible", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, compatible})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	first.CloseNow()
+	server.catalog.replace(
+		[]string{owner.id(), compatible.id()},
+		map[string][]modelEntry{
+			owner.id():      {testModelEntry("gpt-terra")},
+			compatible.id(): {testModelEntry("gpt-sol")},
+		},
+		"0.1.0",
+	)
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	writeWebSocketEvent(t, second, map[string]any{
+		"type":                 "response.create",
+		"model":                "gpt-sol",
+		"previous_response_id": "response-owner",
+		"input":                []any{},
+	})
+	readCloseStatus(t, second, websocket.StatusTryAgainLater)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner]" {
+		t.Fatalf("request accounts = %s, want account-bound state rejected before a model-driven switch", got)
+	}
+}
+
+func TestWebSocketExhaustedOwnerMovesTheNextFullReplayAndRebinds(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, _ websocketEnvelope) {
+		mu.Lock()
+		requests++
+		request := requests
+		mu.Unlock()
+		if request == 2 {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":  "error",
+				"error": map[string]any{"code": "usage_limit_reached"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{
+			"type":     "response.created",
+			"response": map[string]any{"id": "response-" + account},
+		})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	first.CloseNow()
+	exhausted, _ := dialWebSocket(t, proxy.URL, headers)
+	writeWebSocketEvent(t, exhausted, map[string]any{"type": "response.create", "input": []any{}})
+	readCloseStatus(t, exhausted, websocket.StatusServiceRestart)
+	exhausted.CloseNow()
+
+	replayed, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, replayed, map[string]any{"type": "response.create", "input": []any{}})
+	replayed.CloseNow()
+	setTestAccountSpent(owner, false)
+	owner.RoutingMode = routingModePriority
+	reconnected, _ := dialWebSocket(t, proxy.URL, headers)
+	defer reconnected.CloseNow()
+	completeWebSocketTurn(t, reconnected, map[string]any{"type": "response.create", "input": []any{}})
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-owner account-fresh account-fresh]" {
+		t.Fatalf("request accounts = %s, want exhaustion to move only a full replay and acceptance to rebind away from the old owner", got)
+	}
+}
+
 func TestWebSocketPinsAccountAcrossTurnsAndCompaction(t *testing.T) {
 	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{
@@ -501,7 +1047,7 @@ func TestWebSocketCanceledHandshakeDoesNotPenalizeAccounts(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	request := httptest.NewRequest(http.MethodGet, "/v1/responses", nil).WithContext(ctx)
-	_, _, err := server.dialResponsesWebSocket(request, "session", "", "")
+	_, _, err := server.dialResponsesWebSocket(request, websocketRoute{session: "session"}, "", "")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context canceled", err)
 	}

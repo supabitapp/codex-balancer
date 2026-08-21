@@ -2,7 +2,10 @@ package main
 
 import "encoding/json"
 
-const codexTurnMetadataKey = "x-codex-turn-metadata"
+const (
+	codexTurnMetadataKey = "x-codex-turn-metadata"
+	codexTurnStateKey    = "x-codex-turn-state"
+)
 
 type turnMetadata struct {
 	RequestKind        string             `json:"request_kind,omitempty"`

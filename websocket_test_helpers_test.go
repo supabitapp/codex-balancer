@@ -59,12 +59,17 @@ func newTestServer(t *testing.T, accounts []*Account) *server {
 			t.Fatal(err)
 		}
 	}
+	stats, err := newPersistentStats(state, testPriceSnapshot(t), nil)
+	if err != nil {
+		state.Close()
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { state.Close() })
 	return &server{
 		ctx:          context.Background(),
 		pool:         pool,
 		catalog:      newModelCatalog(),
-		stats:        newStatsWithPrices(testPriceSnapshot(t)),
+		stats:        stats,
 		upstream:     "http://127.0.0.1:1",
 		client:       newProxyClient(),
 		log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -211,4 +216,19 @@ func readWebSocketEvent(t *testing.T, conn *websocket.Conn) websocketEnvelope {
 		t.Fatal(err)
 	}
 	return event
+}
+
+func completeWebSocketTurn(t *testing.T, conn *websocket.Conn, request map[string]any) {
+	t.Helper()
+	writeWebSocketEvent(t, conn, request)
+	if event := readWebSocketEvent(t, conn); event.Type != "response.created" {
+		t.Fatalf("first turn event = %q, want response.created before accepting the route", event.Type)
+	}
+	if event := readWebSocketEvent(t, conn); event.Type != "response.completed" {
+		t.Fatalf("final turn event = %q, want response.completed before the next test step", event.Type)
+	}
+}
+
+func codexWebSocketHeaders(session, thread string) http.Header {
+	return http.Header{"Session-Id": {session}, "Thread-Id": {thread}}
 }

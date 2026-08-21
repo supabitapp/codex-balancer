@@ -43,7 +43,7 @@ func TestUsagePollLimitReachedRemovesAccountFromNewRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if picked := server.pool.route(nil).account; picked == nil || picked.id() != "account-b" {
+	if picked := server.pool.route(nil, nil).account; picked == nil || picked.id() != "account-b" {
 		t.Fatalf("picked = %v, want account-b", picked)
 	}
 }
@@ -76,7 +76,7 @@ func TestUsagePollPositiveCapacityReturnsSpentAccountToRouting(t *testing.T) {
 	}
 
 	roomier.Paused = true
-	if picked := server.pool.route(nil).account; picked == nil || picked.id() != "account-a" {
+	if picked := server.pool.route(nil, nil).account; picked == nil || picked.id() != "account-a" {
 		t.Fatalf("picked = %v, want account-a", picked)
 	}
 }

@@ -106,7 +106,7 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("019fe5c2private")
-	stats.routed("019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, turnMetadata{})
+	stats.accepted("", "019fe5c2private", "019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, turnMetadata{}, true)
 	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "high", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))

@@ -48,15 +48,169 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 	if len(key) != 32 {
 		t.Fatalf("client ID key length = %d, want 32", len(key))
 	}
-	var clientIP, clientID int
+	var clientIP, clientID, sessionKey, warmup int
 	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_table_info('attempts') WHERE name = 'client_ip'`).Scan(&clientIP); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_table_info('attempts') WHERE name = 'client_id'`).Scan(&clientID); err != nil {
 		t.Fatal(err)
 	}
-	if clientIP != 1 || clientID != 0 {
-		t.Fatalf("attempt client columns: client_ip = %d, client_id = %d", clientIP, clientID)
+	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_table_info('attempts') WHERE name = 'session_key'`).Scan(&sessionKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_table_info('attempts') WHERE name = 'warmup'`).Scan(&warmup); err != nil {
+		t.Fatal(err)
+	}
+	if clientIP != 1 || clientID != 0 || sessionKey != 1 || warmup != 1 {
+		t.Fatalf("attempt columns: client_ip = %d, client_id = %d, session_key = %d, warmup = %d", clientIP, clientID, sessionKey, warmup)
+	}
+}
+
+func TestStateStoreRouteOwnersPreferThreadSuccessOverNewerSessionSuccess(t *testing.T) {
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.recordAttempt(storedAttempt{At: time.Unix(0, 1), Session: "session", Thread: "thread-a", Account: "account-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.recordAttempt(storedAttempt{At: time.Unix(0, 2), Session: "session", Thread: "thread-b", Account: "account-b"}); err != nil {
+		t.Fatal(err)
+	}
+	owners, err := store.routeOwners("thread-a", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(owners); got != "[account-a account-b]" {
+		t.Fatalf("route owners = %s, want the thread owner before the newer session owner", got)
+	}
+}
+
+func TestStatsPersistsAcceptedWarmupRouteWithoutCountingATurn(t *testing.T) {
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	stats, err := newPersistentStats(store, testPriceSnapshot(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats.accepted("session", "thread", "thread", "203.0.113.1", "account-a", "gpt-5.6-sol", "high", "default", turnMetadata{}, false)
+	owners, err := store.routeOwners("thread", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(owners); got != "[account-a]" {
+		t.Fatalf("route owners = %s, want the account that accepted the warmup", got)
+	}
+	if got := stats.snapshot().Turns; got != 0 {
+		t.Fatalf("turns = %d, want warmup acceptance excluded from usage stats", got)
+	}
+}
+
+func TestStatsRestoreKeepsWarmupRouteWithoutTurningItIntoUsage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err := newPersistentStats(store, testPriceSnapshot(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats.accepted("session", "thread", "thread", "203.0.113.1", "account-a", "gpt-5.6-sol", "high", "default", turnMetadata{}, false)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	restored, err := newPersistentStats(reopened, testPriceSnapshot(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners, err := reopened.routeOwners("thread", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(owners); got != "[account-a]" {
+		t.Fatalf("route owners after restart = %s, want the accepted warmup owner", got)
+	}
+	if got := restored.snapshot().Turns; got != 0 {
+		t.Fatalf("restored turns = %d, want warmup route facts excluded after restart", got)
+	}
+}
+
+func TestStatsRestoreKeepsCountedUsageWhileTheLatestWarmupOwnsRouting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err := newPersistentStats(store, testPriceSnapshot(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats.accepted("session", "thread", "thread", "203.0.113.1", "account-a", "gpt-5.6-sol", "high", "default", turnMetadata{}, true)
+	stats.accepted("session", "thread", "thread", "203.0.113.1", "account-b", "gpt-5.6-sol", "high", "default", turnMetadata{}, false)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	restored, err := newPersistentStats(reopened, testPriceSnapshot(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners, err := reopened.routeOwners("thread", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := restored.snapshot()
+	if got := fmt.Sprint(owners); got != "[account-b]" {
+		t.Fatalf("route owners after restart = %s, want the latest accepted warmup account", got)
+	}
+	if snapshot.Turns != 1 || snapshot.Accounts["account-a"].Turns != 1 || snapshot.Accounts["account-b"].Turns != 0 {
+		t.Fatalf("restored stats = %+v, want warmup routing without counted usage", snapshot.Accounts)
+	}
+}
+
+func TestStateStoreRouteOwnersKeepOnlyTheLatestSuccessfulMoveAfterRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.recordAttempt(storedAttempt{At: time.Unix(0, 1), Session: "session", Thread: "thread", Account: "account-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.recordAttempt(storedAttempt{At: time.Unix(0, 2), Session: "session", Thread: "thread", Account: "account-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	owners, err := reopened.routeOwners("thread", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(owners); got != "[account-b]" {
+		t.Fatalf("route owners after restart = %s, want only the latest accepted account so recovered quota cannot cause a bounce", got)
 	}
 }
 
@@ -107,6 +261,7 @@ func TestStateStoreRemovesLegacyDrainingMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeRouteFactMigration(t, store)
 	pool, err := loadPool(store)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +273,7 @@ func TestStateStoreRemovesLegacyDrainingMode(t *testing.T) {
 		UPDATE accounts SET legacy_routing_mode = 'draining';
 		ALTER TABLE accounts DROP COLUMN routing_mode;
 		ALTER TABLE accounts RENAME COLUMN legacy_routing_mode TO routing_mode;
-		PRAGMA user_version = %d;`, len(stateMigrations)-1)); err != nil {
+		PRAGMA user_version = %d;`, len(stateMigrations)-2)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -148,6 +303,7 @@ func TestStateStoreRemovesCompactionRotationSetting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeRouteFactMigration(t, store)
 	if _, err := store.db.Exec(`CREATE TABLE settings (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		rotate_after_compaction INTEGER NOT NULL CHECK (rotate_after_compaction IN (0, 1))
@@ -186,6 +342,7 @@ func TestStateStoreMigratesClientIDsToIPs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeRouteFactMigration(t, store)
 	if _, err := store.db.Exec(`DROP TABLE price_catalog;
 		ALTER TABLE accounts DROP COLUMN routing_mode;
 	ALTER TABLE events DROP COLUMN reasoning_effort;
@@ -220,6 +377,13 @@ func TestStateStoreMigratesClientIDsToIPs(t *testing.T) {
 	if clientID != 0 {
 		t.Fatal("client_id column remains")
 	}
+	owners, err := reopened.routeOwners("thread", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(owners); got != "[account]" {
+		t.Fatalf("route owners after legacy migration = %s, want old successful attempts to seed thread retention", got)
+	}
 }
 
 func TestStateStoreRemovesLegacyAffinityAndRotationData(t *testing.T) {
@@ -228,6 +392,7 @@ func TestStateStoreRemovesLegacyAffinityAndRotationData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeRouteFactMigration(t, store)
 	if _, err := store.db.Exec(`CREATE TABLE bindings (
 		id INTEGER PRIMARY KEY,
 		kind TEXT NOT NULL,
@@ -253,7 +418,7 @@ func TestStateStoreRemovesLegacyAffinityAndRotationData(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(stateMigrations)-2)); err != nil {
+	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(stateMigrations)-3)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -297,6 +462,7 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeRouteFactMigration(t, store)
 	if _, err := store.db.Exec(`DROP TABLE price_catalog;
 	ALTER TABLE accounts DROP COLUMN routing_mode;
 	CREATE TABLE bindings (
@@ -346,6 +512,15 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 	}
 }
 
+func removeRouteFactMigration(t *testing.T, store *StateStore) {
+	t.Helper()
+	if _, err := store.db.Exec(`DROP INDEX attempts_session_at;
+		ALTER TABLE attempts DROP COLUMN session_key;
+		ALTER TABLE attempts DROP COLUMN warmup;`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStateStoreRejectsNewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := openStateStore(path)
@@ -392,15 +567,16 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "codex-turn", SubagentKind: "compact"}
-	stats.routed("thread", "203.0.113.41", "account-a", "gpt-5.6-sol", "high", serviceTierFast, metadata)
-	stats.routed("thread", "203.0.113.42", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, metadata)
+	statsThread := statsThreadKey("thread", metadata)
+	stats.accepted("", "thread", statsThread, "203.0.113.41", "account-a", "gpt-5.6-sol", "high", serviceTierFast, metadata, true)
+	stats.accepted("", "thread", statsThread, "203.0.113.42", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, metadata, true)
 	stats.failedOver("account-a", "unreachable")
 	stats.rateLimited("account-a")
-	stats.answered("thread", "account-a", 2*time.Second)
-	stats.completed("thread", "account-a", metadata, 3*time.Second)
+	stats.answered(statsThread, "account-a", 2*time.Second)
+	stats.completed(statsThread, "account-a", metadata, 3*time.Second)
 	usage := responseUsage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30}
 	usage.OutputDetails.ReasoningTokens = 5
-	stats.recordUsage("thread", "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, usage)
+	stats.recordUsage(statsThread, "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, usage)
 	var effort string
 	if err := store.db.QueryRow(`SELECT reasoning_effort FROM events WHERE kind = ? ORDER BY id DESC LIMIT 1`, eventResponseUsage).Scan(&effort); err != nil {
 		t.Fatal(err)
@@ -460,19 +636,20 @@ func TestStatsRestoreDoesNotMarkHistoricalThreadsLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	compaction := turnMetadata{RequestKind: "compaction", ThreadID: "codex-thread", TurnID: "compact-turn"}
+	statsThread := statsThreadKey("thread", compaction)
 	sourceUsage := responseUsage{InputTokens: 100, OutputTokens: 10}
 	sourceUsage.InputDetails.CachedTokens = 90
-	stats.routed("thread", "client", "account-a", "gpt-5.6-sol", "xhigh", "default", compaction)
-	stats.answered("thread", "account-a", 100*time.Millisecond)
-	stats.completed("thread", "account-a", compaction, time.Second)
-	stats.recordUsage("thread", "account-a", "gpt-5.6-sol", "xhigh", "default", sourceUsage)
+	stats.accepted("", "thread", statsThread, "client", "account-a", "gpt-5.6-sol", "xhigh", "default", compaction, true)
+	stats.answered(statsThread, "account-a", 100*time.Millisecond)
+	stats.completed(statsThread, "account-a", compaction, time.Second)
+	stats.recordUsage(statsThread, "account-a", "gpt-5.6-sol", "xhigh", "default", sourceUsage)
 
 	target := turnMetadata{RequestKind: "normal", ThreadID: "codex-thread", TurnID: "next-turn"}
 	targetUsage := responseUsage{InputTokens: 100, OutputTokens: 20}
-	stats.routed("thread", "client", "account-b", "gpt-5.6-sol", "xhigh", "default", target)
-	stats.answered("thread", "account-b", 200*time.Millisecond)
-	stats.completed("thread", "account-b", target, 2*time.Second)
-	stats.recordUsage("thread", "account-b", "gpt-5.6-sol", "xhigh", "default", targetUsage)
+	stats.accepted("", "thread", statsThread, "client", "account-b", "gpt-5.6-sol", "xhigh", "default", target, true)
+	stats.answered(statsThread, "account-b", 200*time.Millisecond)
+	stats.completed(statsThread, "account-b", target, 2*time.Second)
+	stats.recordUsage(statsThread, "account-b", "gpt-5.6-sol", "xhigh", "default", targetUsage)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -43,8 +43,14 @@ type routingCandidate struct {
 
 type routingDecision struct {
 	account    *Account
+	blocked    string
+	priorOwner string
 	candidates []routingCandidate
 	now        time.Time
+}
+
+func (d routingDecision) moved() bool {
+	return d.priorOwner != "" && d.account != nil && d.priorOwner != d.account.id()
 }
 
 type routingPriority struct {
@@ -167,11 +173,30 @@ func (p *Pool) persistTokens(state accountState) (accountState, error) {
 	return persisted, err
 }
 
-func (p *Pool) route(skip map[string]bool) routingDecision {
+func (p *Pool) route(owners []string, skip map[string]bool) routingDecision {
 	now := time.Now()
 	decision := routingDecision{now: now}
+	if len(owners) > 0 {
+		decision.priorOwner = owners[0]
+	}
 	for _, account := range p.all() {
 		decision.candidates = append(decision.candidates, account.routingCandidate())
+	}
+	for _, owner := range owners {
+		for i := range decision.candidates {
+			candidate := &decision.candidates[i]
+			if candidate.id != owner || candidate.paused || candidate.reauth != "" || candidate.spent {
+				continue
+			}
+			if !candidate.quotaKnown() || !now.After(candidate.cooldown) {
+				decision.blocked = owner
+				return decision
+			}
+			if !skip[candidate.id] {
+				decision.account = candidate.account
+				return decision
+			}
+		}
 	}
 	var best *routingCandidate
 	for i := range decision.candidates {
