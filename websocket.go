@@ -612,9 +612,13 @@ func websocketRejection(event websocketEnvelope) websocketRejectionKind {
 
 func (s *server) handleWebSocketRejection(account *Account, kind websocketRejectionKind, headers http.Header, thread string) {
 	id := account.id()
+	if kind == websocketRejectionConnectionLimit {
+		s.log.Info("upstream websocket expired", "thread", thread, "account", id)
+		return
+	}
 	s.log.Info("account rejected websocket request", "thread", thread, "account", id, "reason", kind)
 	switch kind {
-	case websocketRejectionUnauthorized, websocketRejectionConnectionLimit:
+	case websocketRejectionUnauthorized:
 		account.failed(0)
 	case websocketRejectionRateLimited:
 		account.rateLimited(headers, 0)

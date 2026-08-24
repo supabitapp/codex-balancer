@@ -28,11 +28,19 @@ A Codex session tree without an accepted route uses the normal account order:
 
 `previous_response_id` belongs to the current upstream WebSocket. Codex drops it after reconnect and sends full input. `x-codex-turn-state` belongs to one turn and may cross a retry, but not a completed turn.
 
+## WebSocket rollover
+
+[OpenAI limits each Responses WebSocket connection to 60 minutes](https://developers.openai.com/api/docs/guides/websocket-mode#connection-behavior-and-limits). At the limit, upstream sends `websocket_connection_limit_reached` and requires a new connection.
+
+This error describes one WebSocket, not the account. It does not report account capacity, concurrent socket use, rate limits, quota, or credentials. Never cool down, mark spent, sign out, or switch an account because of this error.
+
+Close the downstream socket with `1012` so Codex reconnects and retries on a new upstream socket. Keep the same retained account eligible for that reconnect. Do not replay the request in the balancer.
+
 ## Failure policy
 
 - Retry network errors and `5xx` on the same account for a short time. Do not cool down the account, switch accounts, or replay work.
 - On `401`, refresh once. Retry an accepted owner after a temporary refresh failure. If the account needs sign-in, a portable reconnect may use another account.
-- On a transient `429` or connection limit, cool down the account and keep any accepted route there until retry.
+- On a transient `429`, cool down the account and keep any accepted route there until retry.
 - On a usage limit, mark the account spent. The client's next full replay may use another eligible account.
 - Before a connection opens, an account-specific failure may try another eligible account only when the retained owner cannot continue.
 - Never replay an in-flight request.
