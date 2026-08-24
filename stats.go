@@ -634,22 +634,23 @@ type statsResponse struct {
 }
 
 type accountStatsResponse struct {
-	ID                     string                        `json:"id"`
-	Email                  string                        `json:"email,omitempty"`
-	Plan                   string                        `json:"plan"`
-	Status                 accountStatus                 `json:"status"`
-	RoutingMode            routingMode                   `json:"routing_mode"`
-	RoutingPriority        *routingPriorityStatsResponse `json:"routing_priority,omitempty"`
-	WeeklyRemainingPercent *float64                      `json:"weekly_remaining_percent"`
-	BankedResets           *int64                        `json:"banked_resets"`
-	ResetCredits           []resetCreditStatsResponse    `json:"reset_credits,omitempty"`
-	ResetAt                *time.Time                    `json:"reset_at"`
-	CreditBurn             *float64                      `json:"credit_burn,omitempty"`
-	CreditBurnSince        *time.Time                    `json:"credit_burn_since,omitempty"`
-	Turns                  int64                         `json:"turns"`
-	OpenWebSockets         int64                         `json:"open_websockets"`
-	RateLimits             int64                         `json:"rate_limits"`
-	Activity               []int64                       `json:"activity"`
+	ID                      string                        `json:"id"`
+	Email                   string                        `json:"email,omitempty"`
+	Plan                    string                        `json:"plan"`
+	SubscriptionActiveUntil *time.Time                    `json:"subscription_active_until,omitempty"`
+	Status                  accountStatus                 `json:"status"`
+	RoutingMode             routingMode                   `json:"routing_mode"`
+	RoutingPriority         *routingPriorityStatsResponse `json:"routing_priority,omitempty"`
+	WeeklyRemainingPercent  *float64                      `json:"weekly_remaining_percent"`
+	BankedResets            *int64                        `json:"banked_resets"`
+	ResetCredits            []resetCreditStatsResponse    `json:"reset_credits,omitempty"`
+	ResetAt                 *time.Time                    `json:"reset_at"`
+	CreditBurn              *float64                      `json:"credit_burn,omitempty"`
+	CreditBurnSince         *time.Time                    `json:"credit_burn_since,omitempty"`
+	Turns                   int64                         `json:"turns"`
+	OpenWebSockets          int64                         `json:"open_websockets"`
+	RateLimits              int64                         `json:"rate_limits"`
+	Activity                []int64                       `json:"activity"`
 }
 
 type routingPriorityStatsResponse struct {
@@ -683,6 +684,10 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 	weeklyWindows := make([]weightedWindow, 0, s.pool.count())
 	for _, account := range s.pool.sorted() {
 		claims := account.claims()
+		var subscriptionActiveUntil *time.Time
+		if activeUntil, err := time.Parse(time.RFC3339, claims.Auth.SubscriptionActiveUntil); err == nil {
+			subscriptionActiveUntil = &activeUntil
+		}
 		candidate := account.routingCandidate()
 		primary, secondary := candidate.primary, candidate.secondary
 		traffic := snapshot.Accounts[claims.Auth.AccountID]
@@ -727,22 +732,23 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			}
 		}
 		out.Accounts = append(out.Accounts, accountStatsResponse{
-			ID:                     claims.Auth.AccountID,
-			Email:                  maskEmail(claims.Email),
-			Plan:                   claims.Auth.Plan,
-			Status:                 status,
-			RoutingMode:            candidate.mode,
-			RoutingPriority:        routingPriority,
-			WeeklyRemainingPercent: weeklyRemaining,
-			BankedResets:           bankedResets,
-			ResetCredits:           resetCredits,
-			ResetAt:                resetAt,
-			CreditBurn:             creditBurn,
-			CreditBurnSince:        creditBurnSince,
-			Turns:                  traffic.Turns,
-			OpenWebSockets:         traffic.WSOpen,
-			RateLimits:             traffic.Limited,
-			Activity:               append([]int64{}, traffic.Activity...),
+			ID:                      claims.Auth.AccountID,
+			Email:                   maskEmail(claims.Email),
+			Plan:                    claims.Auth.Plan,
+			SubscriptionActiveUntil: subscriptionActiveUntil,
+			Status:                  status,
+			RoutingMode:             candidate.mode,
+			RoutingPriority:         routingPriority,
+			WeeklyRemainingPercent:  weeklyRemaining,
+			BankedResets:            bankedResets,
+			ResetCredits:            resetCredits,
+			ResetAt:                 resetAt,
+			CreditBurn:              creditBurn,
+			CreditBurnSince:         creditBurnSince,
+			Turns:                   traffic.Turns,
+			OpenWebSockets:          traffic.WSOpen,
+			RateLimits:              traffic.Limited,
+			Activity:                append([]int64{}, traffic.Activity...),
 		})
 	}
 	out.weeklyPace = usagePaceAt(now, weeklyWindows...)

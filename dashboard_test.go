@@ -222,6 +222,43 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsPlanExpiryFromStoredClaims(t *testing.T) {
+	now := time.Date(2026, time.August, 24, 12, 0, 0, 0, time.UTC)
+	activeUntil := now.Add(49 * time.Hour)
+	account := testAccount("account-a", 20)
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"email":"account-a@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"account-a","chatgpt_plan_type":"pro","chatgpt_subscription_active_until":"%s"}}`, activeUntil.Format(time.RFC3339))))
+	account.IDToken = "x." + payload + ".x"
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
+
+	stats := server.currentStats(now)
+	if len(stats.Accounts) != 1 || stats.Accounts[0].SubscriptionActiveUntil == nil || !stats.Accounts[0].SubscriptionActiveUntil.Equal(activeUntil) {
+		t.Fatalf("subscription active until = %+v", stats.Accounts)
+	}
+	view := server.currentDashboard(now)
+	if len(view.Accounts) != 1 || view.Accounts[0].PlanExpiresIn != "2d1h" || view.Accounts[0].PlanExpiryInfo != "Plan active until 26 August 2026, 13:00 UTC" {
+		t.Fatalf("account view = %+v", view.Accounts)
+	}
+	payloadHTML, err := renderDashboard("dashboard", view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(payloadHTML)
+	for _, expected := range []string{`<th>Plan expires in</th>`, `data-tooltip="Plan active until 26 August 2026, 13:00 UTC"`, `>2d1h</span>`} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("dashboard missing %q:\n%s", expected, body)
+		}
+	}
+
+	value, info := dashboardPlanExpiry(now, nil)
+	if value != "--" || info != "" {
+		t.Fatalf("unknown plan expiry = %q, %q", value, info)
+	}
+	value, info = dashboardPlanExpiry(now, &now)
+	if value != "expired" || info != "Plan active until 24 August 2026, 12:00 UTC" {
+		t.Fatalf("expired plan = %q, %q", value, info)
+	}
+}
+
 func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

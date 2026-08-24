@@ -45,6 +45,8 @@ type dashboardCount struct {
 type dashboardAccountView struct {
 	Name           string
 	Plan           string
+	PlanExpiresIn  string
+	PlanExpiryInfo string
 	Status         accountStatus
 	StatusInfo     string
 	Weekly         string
@@ -202,6 +204,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			banked = dashboardNumber(*account.BankedResets)
 		}
 		bankedInfo := dashboardResetInfo(now, account.ResetCredits)
+		planExpiresIn, planExpiryInfo := dashboardPlanExpiry(now, account.SubscriptionActiveUntil)
 		resetIn := "--"
 		if account.ResetAt != nil {
 			resetIn = short(account.ResetAt.Sub(now))
@@ -215,6 +218,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		accounts = append(accounts, dashboardAccountView{
 			Name:           name,
 			Plan:           account.Plan,
+			PlanExpiresIn:  planExpiresIn,
+			PlanExpiryInfo: planExpiryInfo,
 			Status:         account.Status,
 			StatusInfo:     dashboardAccountStatusInfo(now, account),
 			Weekly:         weekly,
@@ -553,6 +558,17 @@ func dashboardResetInfo(now time.Time, credits []resetCreditStatsResponse) strin
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func dashboardPlanExpiry(now time.Time, activeUntil *time.Time) (string, string) {
+	if activeUntil == nil {
+		return "--", ""
+	}
+	info := "Plan active until " + activeUntil.UTC().Format("2 January 2006, 15:04 UTC")
+	if !activeUntil.After(now) {
+		return "expired", info
+	}
+	return short(activeUntil.Sub(now)), info
 }
 
 func dashboardStatus(status accountStatus) dashboardStatusView {
