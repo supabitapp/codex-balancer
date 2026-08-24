@@ -220,7 +220,11 @@ func newLogger(asJSON, stderr bool, path string) (*slog.Logger, io.Closer, error
 	var file io.WriteCloser
 	if path != "" {
 		var err error
-		file, err = openRotatingLog(path, logRetentionDays, time.Now)
+		file, err = openRotatingLog(path, logPolicy{
+			retentionDays: logRetentionDays,
+			maxFileSize:   logMaxFileSize,
+			maxTotalSize:  logMaxTotalSize,
+		}, time.Now)
 		if err != nil {
 			return nil, nil, err
 		}
