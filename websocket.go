@@ -192,7 +192,7 @@ func (s *server) dialResponsesWebSocket(
 			return nil, nil, errNoAccountAvailable
 		}
 		id := account.id()
-		if account.stale(time.Now()) && !reauthed[id] {
+		if account.refreshDue(time.Now()) && !reauthed[id] {
 			reauthed[id] = true
 			if !s.refreshed(account, id) {
 				if websocketOwnerMayRefresh(owners, account) {

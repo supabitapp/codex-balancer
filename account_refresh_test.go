@@ -2,15 +2,47 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
+
+func accessTokenExpiringAt(expiresAt time.Time) string {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"exp":` + strconv.FormatInt(expiresAt.Unix(), 10) + `}`))
+	return "x." + payload + ".x"
+}
+
+func TestAccountRefreshDueUsesAccessTokenExpiry(t *testing.T) {
+	now := time.Date(2026, time.August, 24, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name        string
+		accessToken string
+		lastRefresh time.Time
+		want        bool
+	}{
+		{name: "outside lead", accessToken: accessTokenExpiringAt(now.Add(tokenRefreshLead + time.Second)), lastRefresh: now.Add(-tokenRefreshFallback), want: false},
+		{name: "at lead", accessToken: accessTokenExpiringAt(now.Add(tokenRefreshLead)), lastRefresh: now, want: true},
+		{name: "expired", accessToken: accessTokenExpiringAt(now.Add(-time.Second)), lastRefresh: now, want: true},
+		{name: "fallback fresh", accessToken: "opaque", lastRefresh: now.Add(-tokenRefreshFallback), want: false},
+		{name: "fallback old", accessToken: "opaque", lastRefresh: now.Add(-tokenRefreshFallback - time.Second), want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			account := testAccount("account-a", 10)
+			account.AccessToken = test.accessToken
+			account.LastRefresh = test.lastRefresh
+			if got := account.refreshDue(now); got != test.want {
+				t.Fatalf("refresh due = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
 
 func TestAccountRefreshPublishesTokensAfterPersistence(t *testing.T) {
 	refreshCalls := useOAuthRefreshServer(t)

@@ -81,6 +81,67 @@ func TestUsagePollPositiveCapacityReturnsSpentAccountToRouting(t *testing.T) {
 	}
 }
 
+func TestUsagePollAdoptsCurrentPlan(t *testing.T) {
+	account := testAccountWithPlan("account-a", 20, "pro")
+	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"plan_type": "prolite",
+			"rate_limit": map[string]any{
+				"primary_window": map[string]any{"used_percent": 20, "limit_window_seconds": 300},
+			},
+		})
+	}))
+	defer usage.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = usage.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+	server := &server{
+		pool:   &Pool{accounts: []*Account{account}},
+		stats:  newStatsWithPrices(testPriceSnapshot(t)),
+		client: usage.Client(),
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	if err := server.pollUsage(context.Background(), account); err != nil {
+		t.Fatal(err)
+	}
+	stats := server.currentStats(time.Now())
+	if account.plan() != "prolite" || len(stats.Accounts) != 1 || stats.Accounts[0].Plan != "prolite" {
+		t.Fatalf("account plan = %q, stats = %+v", account.plan(), stats.Accounts)
+	}
+}
+
+func TestUsagePollRefreshesExpiringAccessToken(t *testing.T) {
+	refreshCalls := useOAuthRefreshServer(t)
+	server := newTestServer(t, []*Account{testAccount("account-a", 20)})
+	account := server.pool.find("account-a")
+	account.mu.Lock()
+	account.AccessToken = accessTokenExpiringAt(time.Now().Add(tokenRefreshLead))
+	account.mu.Unlock()
+	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer refreshed-token" {
+			t.Errorf("authorization = %q", got)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"plan_type": "pro",
+			"rate_limit": map[string]any{
+				"primary_window": map[string]any{"used_percent": 20, "limit_window_seconds": 300},
+			},
+		})
+	}))
+	defer usage.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = usage.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+
+	if err := server.pollUsage(context.Background(), account); err != nil {
+		t.Fatal(err)
+	}
+	if refreshCalls() != 1 {
+		t.Fatalf("refresh calls = %d, want 1", refreshCalls())
+	}
+}
+
 func TestExpiringResetCreditChoosesEarliestEligibleCredit(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
 	expired := now.Add(-time.Minute)

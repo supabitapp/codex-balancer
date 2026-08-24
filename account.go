@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	oauthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
-	refreshAfter  = 8 * 24 * time.Hour
+	oauthClientID        = "app_EMoamEEZ73f0CkXaXp7hrann"
+	tokenRefreshFallback = 8 * 24 * time.Hour
+	tokenRefreshLead     = 5 * time.Minute
 )
 
 var oauthEndpoint = authBaseURL + "/oauth/token"
@@ -40,6 +41,7 @@ type Account struct {
 
 	cooldown     time.Time
 	dead         string
+	planType     string
 	primary      window
 	secondary    window
 	spent        bool
@@ -324,9 +326,8 @@ func (a *Account) applyPersisted(next accountState) bool {
 type authClaims struct {
 	Email string `json:"email"`
 	Auth  struct {
-		AccountID               string `json:"chatgpt_account_id"`
-		Plan                    string `json:"chatgpt_plan_type"`
-		SubscriptionActiveUntil string `json:"chatgpt_subscription_active_until"`
+		AccountID string `json:"chatgpt_account_id"`
+		Plan      string `json:"chatgpt_plan_type"`
 	} `json:"https://api.openai.com/auth"`
 }
 
@@ -354,22 +355,34 @@ func claimsFromToken(token string) authClaims {
 	return c
 }
 
-func (a *Account) expires() time.Time {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+func tokenExpiry(token string) time.Time {
 	var c struct {
 		Exp int64 `json:"exp"`
 	}
-	jwtClaims(a.AccessToken, &c)
+	jwtClaims(token, &c)
 	if c.Exp == 0 {
 		return time.Time{}
 	}
 	return time.Unix(c.Exp, 0)
 }
 
+func (a *Account) expires() time.Time {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return tokenExpiry(a.AccessToken)
+}
+
 func (a *Account) id() string    { return a.claims().Auth.AccountID }
 func (a *Account) email() string { return a.claims().Email }
-func (a *Account) plan() string  { return a.claims().Auth.Plan }
+
+func (a *Account) plan() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.planType != "" {
+		return a.planType
+	}
+	return claimsFromToken(a.IDToken).Auth.Plan
+}
 
 func (a *Account) paused() bool {
 	a.mu.Lock()
@@ -383,10 +396,13 @@ func (a *Account) needsReauth() bool {
 	return a.dead != ""
 }
 
-func (a *Account) stale(now time.Time) bool {
+func (a *Account) refreshDue(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return now.Sub(a.LastRefresh) > refreshAfter
+	if expiry := tokenExpiry(a.AccessToken); !expiry.IsZero() {
+		return !expiry.After(now.Add(tokenRefreshLead))
+	}
+	return now.Sub(a.LastRefresh) > tokenRefreshFallback
 }
 
 type refreshRequest struct {
@@ -435,7 +451,9 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(acc
 	tokens, permanent, err := exchangeRefreshToken(ctx, hc, token)
 	next := state
 	if err == nil {
-		next.AccessToken = tokens.AccessToken
+		if tokens.AccessToken != "" {
+			next.AccessToken = tokens.AccessToken
+		}
 		if tokens.RefreshToken != "" {
 			next.RefreshToken = tokens.RefreshToken
 		}

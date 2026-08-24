@@ -13,6 +13,7 @@ import (
 var accountAPIBaseURL = "https://chatgpt.com/backend-api/wham"
 
 type usagePayload struct {
+	PlanType  string `json:"plan_type"`
 	RateLimit struct {
 		LimitReached    *bool       `json:"limit_reached"`
 		PrimaryWindow   usageWindow `json:"primary_window"`
@@ -111,6 +112,7 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 		return err
 	}
 	account.adopt(
+		payload.PlanType,
 		payload.RateLimit.PrimaryWindow.window(),
 		payload.RateLimit.SecondaryWindow.window(),
 		payload.bankedResets(),
@@ -179,7 +181,14 @@ func (s *server) pollCreditBurn(ctx context.Context, account *Account, now time.
 }
 
 func (s *server) doAccountRequest(ctx context.Context, account *Account, method, endpoint string, body []byte) (*http.Response, error) {
-	for canReauth := true; ; canReauth = false {
+	canReauth := true
+	if account.refreshDue(time.Now()) {
+		if err := s.reauthorize(account); err != nil {
+			return nil, err
+		}
+		canReauth = false
+	}
+	for ; ; canReauth = false {
 		req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
@@ -314,9 +323,12 @@ func (s *server) reauthorize(account *Account) error {
 	return nil
 }
 
-func (a *Account) adopt(primary, secondary window, banked *int64) {
+func (a *Account) adopt(planType string, primary, secondary window, banked *int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if planType != "" {
+		a.planType = planType
+	}
 	if primary.known() {
 		a.primary = primary
 	}

@@ -312,7 +312,7 @@ func TestWebSocketTemporaryRefreshFailureDoesNotSpillAnAcceptedRoute(t *testing.
 	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
 	first.CloseNow()
 	owner.mu.Lock()
-	owner.LastRefresh = time.Now().Add(-refreshAfter - time.Hour)
+	owner.LastRefresh = time.Now().Add(-tokenRefreshFallback - time.Hour)
 	owner.mu.Unlock()
 	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)

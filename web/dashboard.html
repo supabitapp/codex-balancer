@@ -132,7 +132,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <thead><tr>
 <th>Account</th>
 <th>Plan</th>
-<th>Plan expires in</th>
 <th>Status</th>
 <th>Weekly %</th>
 <th>Banked</th>
@@ -145,7 +144,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <tbody>{{range .Accounts}}<tr>
 <td>{{.Name}}</td>
 <td class="dim">{{.Plan}}</td>
-<td class="dim">{{if .PlanExpiryInfo}}<span class="has-tooltip" data-tooltip="{{.PlanExpiryInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.PlanExpiresIn}}</span>{{else}}{{.PlanExpiresIn}}{{end}}</td>
 {{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
