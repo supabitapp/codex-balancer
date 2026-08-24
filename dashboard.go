@@ -271,7 +271,10 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	if snapshot.UnpricedResponses == 0 {
 		priceInfo = funCostEquivalents(snapshot.APICostNanoDollars) + "\n" + priceInfo
 	}
-	overview := []dashboardMetric{dashboardCapacityMetric(now, stats.weeklyPace)}
+	overview := []dashboardMetric{
+		dashboardPaceMetric(now, stats.weeklyPace),
+		{Name: "active WS", Value: strconv.FormatInt(snapshot.WSOpen, 10)},
+	}
 	overview = append(overview, dashboardResourceMetrics(s.resources.usage(now))...)
 	overview = append(overview,
 		dashboardMetric{Name: "uptime", Value: short(snapshot.Uptime)},
@@ -293,45 +296,45 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 }
 
-func dashboardCapacityMetric(now time.Time, estimate usagePaceEstimate) dashboardMetric {
+func dashboardPaceMetric(now time.Time, estimate usagePaceEstimate) dashboardMetric {
 	if !estimate.known {
 		return dashboardMetric{
-			Name:  "Capacity",
-			Value: "❔ Unknown",
-			Info:  "Not enough limit data to estimate whether the pool will last.",
+			Name:  "Pace",
+			Value: "❔",
+			Info:  "Unknown.\nNot enough limit data to estimate whether the pool will last.",
 		}
 	}
 	pace := estimate.pace()
 	switch pace {
 	case usagePaceOnTrack:
 		return dashboardMetric{
-			Name:       "Capacity",
-			Value:      "✅ Lasts to reset",
-			ValueClass: "capacity-good",
-			Info:       "At the average burn since reset. Expected capacity at reset: ",
+			Name:       "Pace",
+			Value:      "👍",
+			ValueClass: "pace-good",
+			Info:       "Lasts to reset.\nAt the average burn since reset. Expected capacity at reset: ",
 			InfoStrong: formatPercent(-estimate.shortfallPercent),
 		}
 	case usagePaceClose:
-		return dashboardCapacityShortfall(now, estimate, "⚠️", "capacity-warning")
+		return dashboardPaceShortfall(now, estimate)
 	default:
-		return dashboardCapacityShortfall(now, estimate, "❌", "capacity-danger")
+		return dashboardPaceShortfall(now, estimate)
 	}
 }
 
-func dashboardCapacityShortfall(now time.Time, estimate usagePaceEstimate, mark, valueClass string) dashboardMetric {
+func dashboardPaceShortfall(now time.Time, estimate usagePaceEstimate) dashboardMetric {
 	if estimate.runway < time.Second {
 		return dashboardMetric{
-			Name:       "Capacity",
-			Value:      mark + " Empty",
-			ValueClass: valueClass,
-			Info:       "Nothing left until reset.",
+			Name:       "Pace",
+			Value:      "👎",
+			ValueClass: "pace-danger",
+			Info:       "Empty.\nNothing left until reset.",
 		}
 	}
 	return dashboardMetric{
-		Name:       "Capacity",
-		Value:      mark + " Runs out in " + short(estimate.runway),
-		ValueClass: valueClass,
-		Info:       "At the average burn since reset. Expected to run out: ",
+		Name:       "Pace",
+		Value:      "👎",
+		ValueClass: "pace-danger",
+		Info:       "Runs out in " + short(estimate.runway) + ".\nAt the average burn since reset. Expected to run out: ",
 		InfoStrong: now.Add(estimate.runway).Format("2 January 2006, 15:04 MST"),
 	}
 }
