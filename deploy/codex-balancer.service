@@ -1,0 +1,15 @@
+[Unit]
+Description=Codex Balancer
+After=network-online.target
+Wants=network-online.target
+Requires=codex-balancer.socket
+
+[Service]
+ExecStart=/usr/local/bin/codex-balancer server -addr 0.0.0.0:8000 -no-tui
+EnvironmentFile=%h/.config/codex-balancer/server.env
+Restart=always
+RestartSec=2
+UMask=0077
+
+[Install]
+WantedBy=default.target

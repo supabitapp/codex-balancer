@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -158,6 +157,11 @@ func serverCmd(args []string) error {
 		<-signalCtx.Done()
 		startShutdown()
 	}()
+	listener, err := serverListener(*addr)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 
 	srv.pollAllUsage(ctx)
 	if ctx.Err() != nil {
@@ -167,11 +171,6 @@ func serverCmd(args []string) error {
 	go srv.watchUsage(ctx, *poll)
 	go srv.watchModels(ctx)
 	go srv.watchPriceCatalog(ctx)
-
-	listener, err := net.Listen("tcp", *addr)
-	if err != nil {
-		return err
-	}
 
 	serving := make(chan error, 1)
 	go func() {

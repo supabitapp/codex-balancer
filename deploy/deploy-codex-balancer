@@ -1,0 +1,134 @@
+#!/bin/sh
+set -eu
+
+repo=${CODEX_BALANCER_REPO:-/home/exedev/codex-balancer}
+binary=${CODEX_BALANCER_BINARY:-/usr/local/bin/codex-balancer}
+deploy_command=${CODEX_BALANCER_DEPLOY_COMMAND:-/usr/local/bin/deploy-codex-balancer}
+service=${CODEX_BALANCER_SERVICE:-codex-balancer.service}
+socket=${CODEX_BALANCER_SOCKET:-codex-balancer.socket}
+branch=${CODEX_BALANCER_BRANCH:-main}
+state_dir=${CODEX_BALANCER_STATE_DIR:-/home/exedev/.local/state/codex-balancer}
+state_file=$state_dir/deployed-revision
+unit_dir=${CODEX_BALANCER_UNIT_DIR:-/home/exedev/.config/systemd/user}
+
+user_id=$(id -u)
+runtime_dir=/run/user/$user_id
+export XDG_RUNTIME_DIR=$runtime_dir
+export DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus
+
+for command_name in git go sudo systemctl curl flock mktemp install; do
+	command -v "$command_name" >/dev/null
+done
+test -d "$repo/.git"
+test -S "$runtime_dir/bus"
+
+exec 9>"$runtime_dir/codex-balancer-deploy.lock"
+flock 9
+
+if test -n "$(git -C "$repo" status --porcelain)"; then
+	printf 'refusing to deploy a dirty repo: %s\n' "$repo" >&2
+	exit 1
+fi
+if test "$(git -C "$repo" symbolic-ref --short HEAD)" != "$branch"; then
+	printf 'repo is not on branch %s\n' "$branch" >&2
+	exit 1
+fi
+
+git -C "$repo" fetch --prune origin "$branch"
+target_revision=$(git -C "$repo" rev-parse "origin/$branch")
+git -C "$repo" merge --ff-only "origin/$branch"
+current_revision=$(git -C "$repo" rev-parse HEAD)
+test "$current_revision" = "$target_revision"
+
+installed_revision=
+if test -x "$binary"; then
+	installed_revision=$($binary version 2>/dev/null || true)
+fi
+binary_changed=0
+deploy_tmp=
+cleanup() {
+	if test -n "$deploy_tmp"; then
+		case "$deploy_tmp" in
+			/tmp/codex-balancer-deploy.*) rm -rf -- "$deploy_tmp" ;;
+		esac
+	fi
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+if test "$installed_revision" != "$target_revision"; then
+	deploy_tmp=$(mktemp -d /tmp/codex-balancer-deploy.XXXXXX)
+	go -C "$repo" build -trimpath -o "$deploy_tmp/codex-balancer" .
+	built_revision=$($deploy_tmp/codex-balancer version)
+	if test "$built_revision" != "$target_revision"; then
+		printf 'built revision %s does not match target %s\n' "$built_revision" "$target_revision" >&2
+		exit 1
+	fi
+	sudo -n install -o root -g root -m 0755 "$deploy_tmp/codex-balancer" "$binary.new"
+	sudo -n mv -f "$binary.new" "$binary"
+	binary_changed=1
+fi
+
+install -d -m 0755 "$unit_dir"
+socket_active=0
+if systemctl --user is-active --quiet "$socket"; then
+	socket_active=1
+fi
+install -m 0644 "$repo/deploy/$socket" "$unit_dir/$socket"
+install -m 0644 "$repo/deploy/$service" "$unit_dir/$service"
+systemctl --user daemon-reload
+systemctl --user enable "$service" "$socket"
+if test "$socket_active" -eq 0; then
+	systemctl --user stop "$service"
+	systemctl --user start "$socket"
+fi
+
+deployed_revision=$(sed -n '1p' "$state_file" 2>/dev/null || true)
+restart=$binary_changed
+if test "$deployed_revision" != "$target_revision"; then
+	restart=1
+fi
+if ! systemctl --user is-active --quiet "$service"; then
+	restart=1
+fi
+
+if test "$socket_active" -eq 0; then
+	systemctl --user start "$service"
+elif test "$restart" -eq 1; then
+	systemctl --user restart "$service"
+fi
+systemctl --user is-active --quiet "$service"
+systemctl --user is-active --quiet "$socket"
+
+installed_revision=$($binary version)
+test "$installed_revision" = "$target_revision"
+
+status_code=
+attempt=0
+while test "$attempt" -lt 60; do
+	status_code=$(curl --silent --show-error --connect-timeout 1 --max-time 2 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8000/stats || true)
+	case "$status_code" in
+		200) break ;;
+	esac
+	attempt=$((attempt + 1))
+	sleep 0.25
+done
+case "$status_code" in
+	200) ;;
+	*)
+		printf 'stats endpoint returned HTTP %s\n' "$status_code" >&2
+		exit 1
+		;;
+esac
+
+install -d -m 0700 "$state_dir"
+state_tmp=$state_file.new
+printf '%s\n' "$target_revision" >"$state_tmp"
+chmod 0600 "$state_tmp"
+mv -f "$state_tmp" "$state_file"
+
+sudo -n install -o root -g root -m 0755 "$repo/deploy/deploy-codex-balancer" "$deploy_command.new"
+sudo -n mv -f "$deploy_command.new" "$deploy_command"
+
+printf 'deployed %s\n' "$target_revision"
+printf 'service %s and socket %s are active; /stats returned HTTP %s\n' "$service" "$socket" "$status_code"
