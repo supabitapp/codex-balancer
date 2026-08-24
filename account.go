@@ -30,6 +30,7 @@ type accountState struct {
 	Paused       bool
 	RoutingMode  routingMode
 	LastRefresh  time.Time
+	Reauth       string
 }
 
 type Account struct {
@@ -39,21 +40,22 @@ type Account struct {
 	inflight    chan struct{}
 	lastRefresh error
 
-	cooldown     time.Time
-	dead         string
-	planType     string
-	primary      window
-	secondary    window
-	spent        bool
-	resetCredits resetCreditState
-	creditBurn   creditBurnState
-	lastUsed     time.Time
+	cooldown       time.Time
+	planType       string
+	primary        window
+	secondary      window
+	spent          bool
+	resetCredits   resetCreditState
+	creditBurn     creditBurnState
+	usageFetchedAt time.Time
+	lastUsed       time.Time
 }
 
 type resetCreditState struct {
-	known   bool
-	count   int64
-	details []resetCredit
+	fetchedAt time.Time
+	known     bool
+	count     int64
+	details   []resetCredit
 }
 
 type creditBurnState struct {
@@ -219,7 +221,7 @@ func (a *Account) pressure() float64 {
 func (a *Account) health() (primary, secondary window, cooldown time.Time, reauth string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.primary, a.secondary, a.cooldown, a.dead
+	return a.primary, a.secondary, a.cooldown, a.Reauth
 }
 
 func (a *Account) markSpent() bool {
@@ -314,9 +316,10 @@ func (a *Account) applyPersisted(next accountState) bool {
 		a.RefreshToken = next.RefreshToken
 		a.LastRefresh = next.LastRefresh
 		if credentialsChanged {
-			a.dead = ""
+			next.Reauth = ""
 			a.lastRefresh = nil
 		}
+		a.Reauth = next.Reauth
 	}
 	a.Paused = next.Paused
 	a.RoutingMode = next.RoutingMode.normalized()
@@ -393,7 +396,7 @@ func (a *Account) paused() bool {
 func (a *Account) needsReauth() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.dead != ""
+	return a.Reauth != ""
 }
 
 func (a *Account) refreshDue(now time.Time) bool {
@@ -437,8 +440,8 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(acc
 		defer a.mu.Unlock()
 		return a.lastRefresh
 	}
-	if a.dead != "" {
-		err := fmt.Errorf("account %s needs reauth: %s", claimsFromToken(a.IDToken).Auth.AccountID, a.dead)
+	if a.Reauth != "" {
+		err := fmt.Errorf("account %s needs reauth: %s", claimsFromToken(a.IDToken).Auth.AccountID, a.Reauth)
 		a.mu.Unlock()
 		return err
 	}
@@ -461,8 +464,18 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(acc
 			next.IDToken = tokens.IDToken
 		}
 		next.LastRefresh = time.Now()
+		next.Reauth = ""
 		if persist != nil {
 			next, err = persist(next)
+		}
+	} else if permanent {
+		next.Reauth = err.Error()
+		if persist != nil {
+			if persisted, persistErr := persist(next); persistErr != nil {
+				err = errors.Join(err, persistErr)
+			} else {
+				next = persisted
+			}
 		}
 	}
 
@@ -477,7 +490,7 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(acc
 	if !superseded {
 		switch {
 		case err != nil && permanent:
-			a.dead = err.Error()
+			a.Reauth = next.Reauth
 		case err == nil:
 			a.accountState = next
 		}

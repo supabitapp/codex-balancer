@@ -95,6 +95,15 @@ var stateMigrations = []string{
 	`ALTER TABLE attempts ADD COLUMN session_key TEXT NOT NULL DEFAULT '';
 	ALTER TABLE attempts ADD COLUMN warmup INTEGER NOT NULL DEFAULT 0 CHECK (warmup IN (0, 1));
 	CREATE INDEX attempts_session_at ON attempts (session_key, at_ns);`,
+	`ALTER TABLE accounts ADD COLUMN reauth TEXT NOT NULL DEFAULT '';
+	CREATE TABLE account_snapshots (
+		account_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		fetched_at_ns INTEGER NOT NULL CHECK (fetched_at_ns > 0),
+		version TEXT NOT NULL,
+		payload BLOB NOT NULL CHECK (length(payload) > 0),
+		PRIMARY KEY (account_id, kind)
+	) STRICT;`,
 }
 
 type StateStore struct {
@@ -127,6 +136,14 @@ type storedEvent struct {
 	Usage       responseUsage
 }
 
+type storedAccountSnapshot struct {
+	Account   string
+	Kind      string
+	FetchedAt time.Time
+	Version   string
+	Payload   []byte
+}
+
 func defaultStatePath() string {
 	return filepath.Join(homeDir(), ".codex-balancer", "state.db")
 }
@@ -154,6 +171,32 @@ func (s *StateStore) loadPriceCatalog() (time.Time, []byte, error) {
 func (s *StateStore) savePriceCatalog(fetchedAt time.Time, payload []byte) error {
 	_, err := s.db.Exec(`INSERT INTO price_catalog (id, fetched_at_ns, payload) VALUES (1, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET fetched_at_ns = excluded.fetched_at_ns, payload = excluded.payload`, fetchedAt.UnixNano(), payload)
+	return err
+}
+
+func (s *StateStore) readAccountSnapshots(kind string) ([]storedAccountSnapshot, error) {
+	rows, err := s.db.Query(`SELECT account_id, kind, fetched_at_ns, version, payload FROM account_snapshots WHERE kind = ? ORDER BY account_id`, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var snapshots []storedAccountSnapshot
+	for rows.Next() {
+		var snapshot storedAccountSnapshot
+		var fetchedAt int64
+		if err := rows.Scan(&snapshot.Account, &snapshot.Kind, &fetchedAt, &snapshot.Version, &snapshot.Payload); err != nil {
+			return nil, err
+		}
+		snapshot.FetchedAt = decodeTime(fetchedAt)
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots, rows.Err()
+}
+
+func (s *StateStore) saveAccountSnapshot(snapshot storedAccountSnapshot) error {
+	_, err := s.db.Exec(`INSERT INTO account_snapshots (account_id, kind, fetched_at_ns, version, payload) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (account_id, kind) DO UPDATE SET fetched_at_ns = excluded.fetched_at_ns, version = excluded.version, payload = excluded.payload`,
+		snapshot.Account, snapshot.Kind, encodeTime(snapshot.FetchedAt), snapshot.Version, snapshot.Payload)
 	return err
 }
 
@@ -269,7 +312,7 @@ func (s *StateStore) Close() error {
 }
 
 func (s *StateStore) readAccounts() ([]*Account, error) {
-	rows, err := s.db.Query(`SELECT id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns FROM accounts ORDER BY account_id`)
+	rows, err := s.db.Query(`SELECT id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, reauth FROM accounts ORDER BY account_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +327,7 @@ func scanAccounts(rows *sql.Rows) ([]*Account, error) {
 		var paused int
 		var mode string
 		var lastRefresh int64
-		if err := rows.Scan(&state.IDToken, &state.AccessToken, &state.RefreshToken, &paused, &mode, &lastRefresh); err != nil {
+		if err := rows.Scan(&state.IDToken, &state.AccessToken, &state.RefreshToken, &paused, &mode, &lastRefresh, &state.Reauth); err != nil {
 			return nil, err
 		}
 		state.Paused = paused != 0
@@ -323,7 +366,7 @@ func (s *StateStore) restoreLastUsed(accounts []*Account) error {
 func (s *StateStore) mutateAccounts(change func([]*Account) ([]*Account, error)) ([]*Account, error) {
 	var accounts []*Account
 	err := s.immediate(func(conn *sql.Conn) error {
-		rows, err := conn.QueryContext(context.Background(), `SELECT id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns FROM accounts ORDER BY account_id`)
+		rows, err := conn.QueryContext(context.Background(), `SELECT id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, reauth FROM accounts ORDER BY account_id`)
 		if err != nil {
 			return err
 		}
@@ -342,6 +385,9 @@ func (s *StateStore) mutateAccounts(change func([]*Account) ([]*Account, error))
 			if err := insertAccount(conn, account); err != nil {
 				return err
 			}
+		}
+		if _, err := conn.ExecContext(context.Background(), `DELETE FROM account_snapshots WHERE account_id NOT IN (SELECT account_id FROM accounts)`); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -385,8 +431,8 @@ func insertAccount(exec sqlExecer, account *Account) error {
 		return errors.New("credentials carry no chatgpt_account_id")
 	}
 	_, err := exec.ExecContext(context.Background(), `INSERT INTO accounts (
-		account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns
-	) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, state.IDToken, state.AccessToken, state.RefreshToken, state.Paused, state.RoutingMode.normalized(), encodeTime(state.LastRefresh))
+		account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, reauth
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, state.IDToken, state.AccessToken, state.RefreshToken, state.Paused, state.RoutingMode.normalized(), encodeTime(state.LastRefresh), state.Reauth)
 	return err
 }
 

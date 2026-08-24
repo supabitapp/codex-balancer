@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sync"
@@ -244,11 +246,11 @@ func TestModelCatalogCoalescesClientVersionsWithinRefreshInterval(t *testing.T) 
 		map[string][]modelEntry{"account-a": {testModelEntry("gpt-common")}},
 		"0.1.0",
 	)
-	refreshedAt := catalog.refreshedAt
-	if catalog.needsRefresh([]string{"account-a"}, "0.2.0", refreshedAt.Add(modelRefreshInterval-time.Second)) {
+	nextRefresh := catalog.nextRefresh
+	if catalog.needsRefresh([]string{"account-a"}, "0.2.0", nextRefresh.Add(-time.Second)) {
 		t.Fatal("new client version bypassed refresh interval")
 	}
-	if !catalog.needsRefresh([]string{"account-a"}, "0.2.0", refreshedAt.Add(modelRefreshInterval)) {
+	if !catalog.needsRefresh([]string{"account-a"}, "0.2.0", nextRefresh) {
 		t.Fatal("catalog did not refresh after interval")
 	}
 }
@@ -330,7 +332,7 @@ func TestModelsRefreshesEveryActiveAccountAndServesUnion(t *testing.T) {
 func TestModelsRefreshSkipsReauthAccount(t *testing.T) {
 	a := testAccount("account-a", 0)
 	b := testAccount("account-b", 20)
-	b.dead = "refresh_token_invalidated"
+	b.Reauth = "refresh_token_invalidated"
 	var mu sync.Mutex
 	requests := []string{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +419,74 @@ func TestModelsRefreshFailureWaitsForRefreshInterval(t *testing.T) {
 		"client_version": "0.1.0",
 		"models":         float64(0),
 	})
+}
+
+func TestModelCatalogSurvivesRestartAndFailedRefresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := loadPool(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.add(testAccount("account-a", 0)); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"models":[{"slug":"gpt-common","context_window":272000}]}`)
+	}))
+	first := &server{
+		pool:     pool,
+		catalog:  newModelCatalog(),
+		upstream: upstream.URL,
+		client:   upstream.Client(),
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := first.refreshModels(context.Background(), "0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	upstream.Close()
+	want := first.catalog.entries()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reloaded, err := loadPool(reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := newModelCatalog()
+	if err := restoreModelCatalog(reopened, catalog, reloaded.all()); err != nil {
+		t.Fatal(err)
+	}
+	if got := catalog.entries(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("restored models = %#v, want %#v", got, want)
+	}
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer failing.Close()
+	catalog.invalidate()
+	restarted := &server{
+		pool:     reloaded,
+		catalog:  catalog,
+		upstream: failing.URL,
+		client:   failing.Client(),
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := restarted.refreshModels(context.Background(), "0.1.0"); err == nil {
+		t.Fatal("failed refresh succeeded")
+	}
+	if got := catalog.entries(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("models after failed refresh = %#v, want %#v", got, want)
+	}
 }
 
 func testModelEntry(slug string, serviceTiers ...string) modelEntry {

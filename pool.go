@@ -149,7 +149,7 @@ func (p *Pool) cycleRoutingMode(a *Account) (routingMode, error) {
 	return mode, err
 }
 
-func (p *Pool) persistTokens(state accountState) (accountState, error) {
+func (p *Pool) persistAccountState(state accountState) (accountState, error) {
 	id := claimsFromToken(state.IDToken).Auth.AccountID
 	var persisted accountState
 	err := p.mutate(func(accounts []*Account) ([]*Account, error) {
@@ -166,6 +166,7 @@ func (p *Pool) persistTokens(state accountState) (accountState, error) {
 		current.AccessToken = state.AccessToken
 		current.RefreshToken = state.RefreshToken
 		current.LastRefresh = state.LastRefresh
+		current.Reauth = state.Reauth
 		persisted = current
 		accounts[i] = accountFromState(current)
 		return accounts, nil
@@ -221,14 +222,15 @@ func (a *Account) routingCandidate() routingCandidate {
 		account:   a,
 		id:        claimsFromToken(a.IDToken).Auth.AccountID,
 		paused:    a.Paused,
-		reauth:    a.dead,
+		reauth:    a.Reauth,
 		cooldown:  a.cooldown,
 		primary:   a.primary,
 		secondary: a.secondary,
 		resetCredits: resetCreditState{
-			known:   a.resetCredits.known,
-			count:   a.resetCredits.count,
-			details: append([]resetCredit(nil), a.resetCredits.details...),
+			fetchedAt: a.resetCredits.fetchedAt,
+			known:     a.resetCredits.known,
+			count:     a.resetCredits.count,
+			details:   append([]resetCredit(nil), a.resetCredits.details...),
 		},
 		spent:    a.spent,
 		pressure: a.pressure(),

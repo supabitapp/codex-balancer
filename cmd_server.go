@@ -54,7 +54,7 @@ func serverCmd(args []string) error {
 	jsonLogs := fs.Bool("json", false, "format logs as JSON")
 	plain := fs.Bool("no-tui", false, "show logs on stderr instead of the dashboard")
 	logPath := fs.String("log-file", defaultLogPath(), "log file; empty disables file logging")
-	poll := fs.Duration("poll", 2*time.Minute, "how often to read each account's limits upstream; 0 turns it off")
+	poll := fs.Duration("poll", 10*time.Minute, "how often to refresh account limits; 0 turns it off")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -90,21 +90,15 @@ func serverCmd(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load price catalog: %w", err)
 	}
-	if prices.refreshIn(time.Now()) == 0 {
-		refreshCtx, cancelRefresh := context.WithTimeout(context.Background(), priceRefreshTimeout)
-		snapshot, refreshErr := prices.refresh(refreshCtx)
-		cancelRefresh()
-		if refreshErr != nil {
-			log.Warn("price refresh failed", "error", refreshErr)
-		} else {
-			prices.install(snapshot)
-		}
-	}
 	stats, err := newPersistentStats(store, prices.current(), func(err error) {
 		log.Error("state write failed", "error", err)
 	})
 	if err != nil {
 		return fmt.Errorf("load dashboard state: %w", err)
+	}
+	catalog := newModelCatalog()
+	if err := restoreModelCatalog(store, catalog, pool.all()); err != nil {
+		return fmt.Errorf("load model catalog: %w", err)
 	}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -113,7 +107,7 @@ func serverCmd(args []string) error {
 	srv := &server{
 		ctx:         ctx,
 		pool:        pool,
-		catalog:     newModelCatalog(),
+		catalog:     catalog,
 		prices:      prices,
 		stats:       stats,
 		upstream:    *upstream,
@@ -163,11 +157,7 @@ func serverCmd(args []string) error {
 	}
 	defer listener.Close()
 
-	srv.pollAllUsage(ctx)
-	if ctx.Err() != nil {
-		return nil
-	}
-
+	go srv.pollDueUsage(ctx, *poll)
 	go srv.watchUsage(ctx, *poll)
 	go srv.watchModels(ctx)
 	go srv.watchPriceCatalog(ctx)

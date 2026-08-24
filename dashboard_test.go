@@ -177,7 +177,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
-	account.adoptResetCredits(0, nil)
+	account.adoptResetCredits(now, 0, nil)
 	resetAt := now.Add(3 * 24 * time.Hour)
 	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: resetAt, seenAt: now}
 	account.adoptCreditBurn(now, 1_234.56)
@@ -357,7 +357,7 @@ func TestDashboardBankedResetTooltipShowsExpirations(t *testing.T) {
 	expiresAt := now.Add(4 * time.Minute)
 	laterExpiresAt := now.Add(2 * time.Hour)
 	account := testAccount("account-a", 20)
-	account.adoptResetCredits(2, []resetCredit{
+	account.adoptResetCredits(now, 2, []resetCredit{
 		{
 			ID:          "private-credit-id",
 			ResetType:   "codex_rate_limits",

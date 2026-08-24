@@ -62,7 +62,7 @@ func TestPoolRouteFallsBackOnlyWhenTheOwnerCannotContinue(t *testing.T) {
 	}{
 		{name: "spent owner cannot serve this quota window", mutate: func(account *Account) { account.spent = true }},
 		{name: "paused owner was removed from routing by the operator", mutate: func(account *Account) { account.Paused = true }},
-		{name: "signed-out owner cannot authenticate", mutate: func(account *Account) { account.dead = "reauth required" }},
+		{name: "signed-out owner cannot authenticate", mutate: func(account *Account) { account.Reauth = "reauth required" }},
 		{name: "removed owner no longer exists", removed: true},
 	}
 	for _, test := range tests {
@@ -118,7 +118,7 @@ func TestPoolRouteSkipsUnavailableAccounts(t *testing.T) {
 		{name: "paused", mutate: func(account *Account) { account.Paused = true }},
 		{name: "spent", mutate: func(account *Account) { account.spent = true }},
 		{name: "cooling", mutate: func(account *Account) { account.cooldown = time.Now().Add(time.Hour) }},
-		{name: "reauth", mutate: func(account *Account) { account.dead = "reauth required" }},
+		{name: "reauth", mutate: func(account *Account) { account.Reauth = "reauth required" }},
 		{name: "checking", mutate: func(account *Account) { account.primary = window{}; account.secondary = window{} }},
 	}
 	for _, test := range tests {
@@ -126,7 +126,7 @@ func TestPoolRouteSkipsUnavailableAccounts(t *testing.T) {
 			a.Paused = false
 			a.spent = false
 			a.cooldown = time.Time{}
-			a.dead = ""
+			a.Reauth = ""
 			a.primary = window{usedPercent: 10, seenAt: time.Now()}
 			a.secondary = window{usedPercent: 10, seenAt: time.Now()}
 			test.mutate(a)
@@ -220,7 +220,7 @@ func TestAccountStatusPreservesRoutingStates(t *testing.T) {
 	}
 	account.primary = window{usedPercent: 20, seenAt: now}
 	account.secondary = window{usedPercent: 20, seenAt: now}
-	account.dead = "reauth required"
+	account.Reauth = "reauth required"
 	if got := account.status(now); got != accountNeedsReauth {
 		t.Fatalf("status = %s, want needs reauth", got)
 	}
@@ -243,7 +243,7 @@ func TestAccountPriorityStatusRequiresAvailableReset(t *testing.T) {
 	expiresAt := now.Add(30 * time.Minute)
 	account := testAccount("account-a", 20)
 	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
-	account.adoptResetCredits(1, []resetCredit{{ResetType: "other", Status: "available", ExpiresAt: &expiresAt}})
+	account.adoptResetCredits(now, 1, []resetCredit{{ResetType: "other", Status: "available", ExpiresAt: &expiresAt}})
 	if got := account.status(now); got != accountLive {
 		t.Fatalf("status = %s, want live", got)
 	}
@@ -271,7 +271,7 @@ func testAccountWithPlan(id string, used float64, plan string) *Account {
 }
 
 func adoptTestResetCredit(account *Account, expiresAt time.Time) {
-	account.adoptResetCredits(1, []resetCredit{{
+	account.adoptResetCredits(time.Now(), 1, []resetCredit{{
 		ID:        "credit-" + account.id(),
 		ResetType: "codex_rate_limits",
 		Status:    "available",

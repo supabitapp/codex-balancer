@@ -12,6 +12,14 @@ import (
 
 var accountAPIBaseURL = "https://chatgpt.com/backend-api/wham"
 
+const (
+	usageSnapshotKind            = "usage"
+	resetCreditsSnapshotKind     = "reset_credits"
+	creditBurnSnapshotKind       = "credit_burn"
+	urgentUsageRefreshInterval   = 2 * time.Minute
+	accountDetailRefreshInterval = time.Hour
+)
+
 type usagePayload struct {
 	PlanType  string `json:"plan_type"`
 	RateLimit struct {
@@ -81,14 +89,14 @@ type consumeResetCreditResponse struct {
 	WindowsReset int64  `json:"windows_reset"`
 }
 
-func (u usageWindow) window() window {
+func (u usageWindow) window(fetchedAt time.Time) window {
 	if u.UsedPercent == nil {
 		return window{}
 	}
 	w := window{
 		usedPercent: *u.UsedPercent,
 		minutes:     u.LimitWindowSeconds / 60,
-		seenAt:      time.Now(),
+		seenAt:      fetchedAt,
 	}
 	if u.ResetAt > 0 {
 		w.resetsAt = time.Unix(u.ResetAt, 0)
@@ -111,10 +119,15 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return err
 	}
+	fetchedAt := time.Now()
+	if err := s.saveAccountSnapshot(account.id(), usageSnapshotKind, fetchedAt, payload); err != nil {
+		return err
+	}
 	account.adopt(
+		fetchedAt,
 		payload.PlanType,
-		payload.RateLimit.PrimaryWindow.window(),
-		payload.RateLimit.SecondaryWindow.window(),
+		payload.RateLimit.PrimaryWindow.window(fetchedAt),
+		payload.RateLimit.SecondaryWindow.window(fetchedAt),
 		payload.bankedResets(),
 	)
 	var limitReached any
@@ -146,7 +159,11 @@ func (s *server) pollResetCredits(ctx context.Context, account *Account) error {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return err
 	}
-	account.adoptResetCredits(payload.AvailableCount, payload.Credits)
+	fetchedAt := time.Now()
+	if err := s.saveAccountSnapshot(account.id(), resetCreditsSnapshotKind, fetchedAt, payload); err != nil {
+		return err
+	}
+	account.adoptResetCredits(fetchedAt, payload.AvailableCount, payload.Credits)
 	return nil
 }
 
@@ -174,6 +191,9 @@ func (s *server) pollCreditBurn(ctx context.Context, account *Account, now time.
 	}
 	var payload creditBurnPayload
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+	if err := s.saveAccountSnapshot(account.id(), creditBurnSnapshotKind, now, payload); err != nil {
 		return err
 	}
 	account.adoptCreditBurn(now, payload.total())
@@ -253,7 +273,11 @@ func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Accoun
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return consumeResetCreditResponse{}, "", err
 	}
-	account.adoptResetCredits(payload.AvailableCount, payload.Credits)
+	fetchedAt := time.Now()
+	if err := s.saveAccountSnapshot(account.id(), resetCreditsSnapshotKind, fetchedAt, payload); err != nil {
+		return consumeResetCreditResponse{}, "", err
+	}
+	account.adoptResetCredits(fetchedAt, payload.AvailableCount, payload.Credits)
 	credit, ok := expiringResetCredit(payload.Credits, now)
 	if !ok {
 		return consumeResetCreditResponse{}, "", nil
@@ -323,9 +347,10 @@ func (s *server) reauthorize(account *Account) error {
 	return nil
 }
 
-func (a *Account) adopt(planType string, primary, secondary window, banked *int64) {
+func (a *Account) adopt(fetchedAt time.Time, planType string, primary, secondary window, banked *int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.usageFetchedAt = fetchedAt
 	if planType != "" {
 		a.planType = planType
 	}
@@ -335,26 +360,25 @@ func (a *Account) adopt(planType string, primary, secondary window, banked *int6
 	if secondary.known() {
 		a.secondary = secondary
 	}
-	if banked == nil {
-		a.resetCredits = resetCreditState{}
-	} else if !a.resetCredits.known || a.resetCredits.count != *banked {
+	if banked != nil && (!a.resetCredits.known || a.resetCredits.count != *banked) {
 		a.resetCredits = resetCreditState{known: true, count: *banked}
 	}
 	if (a.primary.known() || a.secondary.known()) && a.pressure() < 100 {
 		a.spent = false
-		if a.dead == "" {
+		if a.Reauth == "" {
 			a.cooldown = time.Time{}
 		}
 	}
 }
 
-func (a *Account) adoptResetCredits(count int64, credits []resetCredit) {
+func (a *Account) adoptResetCredits(fetchedAt time.Time, count int64, credits []resetCredit) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.resetCredits = resetCreditState{
-		known:   true,
-		count:   count,
-		details: append([]resetCredit(nil), credits...),
+		fetchedAt: fetchedAt,
+		known:     true,
+		count:     count,
+		details:   append([]resetCredit(nil), credits...),
 	}
 }
 
@@ -364,37 +388,146 @@ func (a *Account) adoptCreditBurn(fetchedAt time.Time, credits float64) {
 	a.creditBurn = creditBurnState{fetchedAt: fetchedAt, credits: credits}
 }
 
+func (a *Account) pollsDue(now time.Time, every time.Duration) (usage, creditBurn, resetCredits bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	usageEvery := every
+	if a.spent || now.Before(a.cooldown) || a.pressure() >= 95 {
+		usageEvery = min(usageEvery, urgentUsageRefreshInterval)
+	}
+	usage = a.usageFetchedAt.IsZero() || now.Sub(a.usageFetchedAt) >= usageEvery
+	_, cycleKnown := creditCycleStart(now, a.primary, a.secondary)
+	creditBurn = cycleKnown && (a.creditBurn.fetchedAt.IsZero() || now.Sub(a.creditBurn.fetchedAt) >= accountDetailRefreshInterval)
+	resetCredits = a.resetCredits.fetchedAt.IsZero() || now.Sub(a.resetCredits.fetchedAt) >= accountDetailRefreshInterval
+	return usage, creditBurn, resetCredits
+}
+
+func (s *server) saveAccountSnapshot(account, kind string, fetchedAt time.Time, payload any) error {
+	if s.pool == nil || s.pool.store == nil {
+		return nil
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return s.pool.store.saveAccountSnapshot(storedAccountSnapshot{
+		Account:   account,
+		Kind:      kind,
+		FetchedAt: fetchedAt,
+		Payload:   data,
+	})
+}
+
+func restoreUsageSnapshots(store *StateStore, accounts []*Account) error {
+	byID := make(map[string]*Account, len(accounts))
+	for _, account := range accounts {
+		byID[account.id()] = account
+	}
+	for _, kind := range []string{usageSnapshotKind, resetCreditsSnapshotKind, creditBurnSnapshotKind} {
+		snapshots, err := store.readAccountSnapshots(kind)
+		if err != nil {
+			return err
+		}
+		for _, snapshot := range snapshots {
+			account := byID[snapshot.Account]
+			if account == nil {
+				continue
+			}
+			switch kind {
+			case usageSnapshotKind:
+				var payload usagePayload
+				if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
+					return fmt.Errorf("restore usage for %s: %w", snapshot.Account, err)
+				}
+				account.adopt(
+					snapshot.FetchedAt,
+					payload.PlanType,
+					payload.RateLimit.PrimaryWindow.window(snapshot.FetchedAt),
+					payload.RateLimit.SecondaryWindow.window(snapshot.FetchedAt),
+					payload.bankedResets(),
+				)
+				if payload.RateLimit.LimitReached != nil && *payload.RateLimit.LimitReached {
+					account.markSpent()
+				}
+			case resetCreditsSnapshotKind:
+				var payload resetCreditsPayload
+				if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
+					return fmt.Errorf("restore reset credits for %s: %w", snapshot.Account, err)
+				}
+				account.adoptResetCredits(snapshot.FetchedAt, payload.AvailableCount, payload.Credits)
+			case creditBurnSnapshotKind:
+				var payload creditBurnPayload
+				if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
+					return fmt.Errorf("restore credit burn for %s: %w", snapshot.Account, err)
+				}
+				account.adoptCreditBurn(snapshot.FetchedAt, payload.total())
+			}
+		}
+	}
+	return nil
+}
+
 func (s *server) pollAllUsage(ctx context.Context) {
+	s.pollAccountData(ctx, 0, true)
+}
+
+func (s *server) pollDueUsage(ctx context.Context, every time.Duration) {
+	if every <= 0 {
+		return
+	}
+	s.pollAccountData(ctx, every, false)
+}
+
+func (s *server) pollAccountData(ctx context.Context, every time.Duration, force bool) {
 	for _, account := range s.pool.all() {
 		if account.needsReauth() {
 			continue
 		}
-		if err := s.pollUsage(ctx, account); err != nil {
-			if ctx.Err() != nil {
-				return
+		usageDue, creditBurnDue, resetCreditsDue := true, true, true
+		if !force {
+			usageDue, creditBurnDue, resetCreditsDue = account.pollsDue(time.Now(), every)
+		}
+		if usageDue {
+			if err := s.pollUsage(ctx, account); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				s.log.Warn("usage poll failed", "account", account.id(), "error", err)
+				s.stats.note("usage poll failed", account.id(), err.Error())
 			}
-			s.log.Warn("usage poll failed", "account", account.id(), "error", err)
-			s.stats.note("usage poll failed", account.id(), err.Error())
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		if account.needsReauth() {
 			continue
 		}
-		if err := s.pollCreditBurn(ctx, account, time.Now()); err != nil {
-			if ctx.Err() != nil {
-				return
+		if !force {
+			_, creditBurnDue, resetCreditsDue = account.pollsDue(time.Now(), every)
+		}
+		if creditBurnDue {
+			if err := s.pollCreditBurn(ctx, account, time.Now()); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				s.log.Warn("credit burn poll failed", "account", account.id(), "error", err)
+				s.stats.note("credit burn poll failed", account.id(), err.Error())
 			}
-			s.log.Warn("credit burn poll failed", "account", account.id(), "error", err)
-			s.stats.note("credit burn poll failed", account.id(), err.Error())
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		if account.needsReauth() {
 			continue
 		}
-		if err := s.pollResetCredits(ctx, account); err != nil {
-			if ctx.Err() != nil {
-				return
+		if resetCreditsDue {
+			if err := s.pollResetCredits(ctx, account); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				s.log.Warn("reset credits poll failed", "account", account.id(), "error", err)
+				s.stats.note("reset credits poll failed", account.id(), err.Error())
 			}
-			s.log.Warn("reset credits poll failed", "account", account.id(), "error", err)
-			s.stats.note("reset credits poll failed", account.id(), err.Error())
 		}
 	}
 }
@@ -404,14 +537,14 @@ func (s *server) watchUsage(ctx context.Context, every time.Duration) {
 		return
 	}
 
-	ticker := time.NewTicker(every)
+	ticker := time.NewTicker(min(every, urgentUsageRefreshInterval))
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.pollAllUsage(ctx)
+			s.pollDueUsage(ctx, every)
 		}
 	}
 }

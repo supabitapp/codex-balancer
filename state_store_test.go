@@ -37,7 +37,7 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	want := []string{"accounts", "attempts", "client_identity", "events", "price_catalog"}
+	want := []string{"account_snapshots", "accounts", "attempts", "client_identity", "events", "price_catalog"}
 	if !slices.Equal(tables, want) {
 		t.Fatalf("tables = %v, want %v", tables, want)
 	}
@@ -261,7 +261,6 @@ func TestStateStoreRemovesLegacyDrainingMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	removeRouteFactMigration(t, store)
 	pool, err := loadPool(store)
 	if err != nil {
 		t.Fatal(err)
@@ -269,11 +268,12 @@ func TestStateStoreRemovesLegacyDrainingMode(t *testing.T) {
 	if err := pool.add(testAccount("account-a", 20)); err != nil {
 		t.Fatal(err)
 	}
+	removeRouteFactMigration(t, store)
 	if _, err := store.db.Exec(fmt.Sprintf(`ALTER TABLE accounts ADD COLUMN legacy_routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (legacy_routing_mode IN ('normal', 'priority', 'draining'));
 		UPDATE accounts SET legacy_routing_mode = 'draining';
 		ALTER TABLE accounts DROP COLUMN routing_mode;
 		ALTER TABLE accounts RENAME COLUMN legacy_routing_mode TO routing_mode;
-		PRAGMA user_version = %d;`, len(stateMigrations)-2)); err != nil {
+		PRAGMA user_version = %d;`, len(stateMigrations)-3)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -418,7 +418,7 @@ func TestStateStoreRemovesLegacyAffinityAndRotationData(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(stateMigrations)-3)); err != nil {
+	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", len(stateMigrations)-4)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -514,7 +514,9 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 
 func removeRouteFactMigration(t *testing.T, store *StateStore) {
 	t.Helper()
-	if _, err := store.db.Exec(`DROP INDEX attempts_session_at;
+	if _, err := store.db.Exec(`DROP TABLE account_snapshots;
+		ALTER TABLE accounts DROP COLUMN reauth;
+		DROP INDEX attempts_session_at;
 		ALTER TABLE attempts DROP COLUMN session_key;
 		ALTER TABLE attempts DROP COLUMN warmup;`); err != nil {
 		t.Fatal(err)

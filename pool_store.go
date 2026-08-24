@@ -23,6 +23,9 @@ func loadPool(store *StateStore) (*Pool, error) {
 	if err := store.restoreLastUsed(accounts); err != nil {
 		return nil, err
 	}
+	if err := restoreUsageSnapshots(store, accounts); err != nil {
+		return nil, err
+	}
 	return &Pool{store: store, accounts: accounts}, nil
 }
 

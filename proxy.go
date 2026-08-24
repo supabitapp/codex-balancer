@@ -119,7 +119,11 @@ func (s *server) models(w http.ResponseWriter, r *http.Request) {
 	}
 	clientVersion := strings.TrimSpace(r.URL.Query().Get("client_version"))
 	if clientVersion != "" {
-		if err := s.refreshModels(r.Context(), clientVersion); err != nil && s.log != nil {
+		ctx := r.Context()
+		if s.ctx != nil {
+			ctx = s.ctx
+		}
+		if err := s.refreshModels(ctx, clientVersion); err != nil && s.log != nil {
 			s.log.Warn("model refresh failed", "error", err)
 		}
 	}
@@ -184,7 +188,7 @@ func (s *server) refreshed(account *Account, id string) bool {
 	s.log.Debug("refreshing account", "account", id)
 	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
 	defer cancel()
-	if err := account.refresh(ctx, s.client, s.pool.persistTokens); err != nil {
+	if err := account.refresh(ctx, s.client, s.pool.persistAccountState); err != nil {
 		s.log.Warn("refresh failed", "account", id, "error", err)
 		return false
 	}

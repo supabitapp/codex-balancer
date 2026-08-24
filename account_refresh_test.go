@@ -244,3 +244,62 @@ func TestServerRefreshFailsWhenRotatedTokenCannotPersist(t *testing.T) {
 		t.Fatalf("account changed after failed persistence: %+v", got)
 	}
 }
+
+func TestPermanentRefreshFailurePersistsUntilCredentialsChange(t *testing.T) {
+	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, "invalid_grant")
+	}))
+	previous := oauthEndpoint
+	oauthEndpoint = oauth.URL
+	t.Cleanup(func() {
+		oauthEndpoint = previous
+		oauth.Close()
+	})
+
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := loadPool(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.add(testAccount("account-a", 10)); err != nil {
+		t.Fatal(err)
+	}
+	server := &server{
+		pool:   pool,
+		client: http.DefaultClient,
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if server.refreshed(pool.find("account-a"), "account-a") {
+		t.Fatal("permanent refresh failure succeeded")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reloaded, err := loadPool(reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.find("account-a").needsReauth() {
+		t.Fatal("reauth state did not survive restart")
+	}
+	replacement := testAccount("account-a", 10)
+	replacement.AccessToken = "new-access-token"
+	replacement.RefreshToken = "new-refresh-token"
+	if err := reloaded.add(replacement); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.find("account-a").needsReauth() {
+		t.Fatal("new credentials retained reauth state")
+	}
+}
