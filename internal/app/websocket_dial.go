@@ -1,0 +1,231 @@
+package app
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/coder/websocket"
+)
+
+type responsesWebSocketDialer struct {
+	server       *server
+	request      *http.Request
+	model        string
+	serviceTier  string
+	upstream     string
+	thread       string
+	owners       []string
+	skip         map[string]bool
+	reauthed     map[string]bool
+	resetRetried map[string]bool
+}
+
+type upstreamWebSocketDial struct {
+	conn     *websocket.Conn
+	response *http.Response
+	err      error
+	sent     time.Time
+}
+
+func newResponsesWebSocketDialer(s *server, request *http.Request, route websocketRoute, model, serviceTier string) (*responsesWebSocketDialer, error) {
+	upstream, err := responsesWebSocketURL(s.upstream)
+	if err != nil {
+		return nil, err
+	}
+	var owners []string
+	if s.pool.store != nil {
+		owners, err = s.pool.store.routeOwners(route.thread, route.session)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &responsesWebSocketDialer{
+		server:       s,
+		request:      request,
+		model:        model,
+		serviceTier:  serviceTier,
+		upstream:     upstream,
+		thread:       route.key(),
+		owners:       owners,
+		skip:         map[string]bool{},
+		reauthed:     map[string]bool{},
+		resetRetried: map[string]bool{},
+	}, nil
+}
+
+func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		decision := d.server.pickAccount(d.thread, d.owners, d.model, d.serviceTier, d.skip, attempt)
+		if decision.blocked != "" {
+			return nil, nil, errRouteOwnerUnavailable
+		}
+		account := decision.account
+		if account == nil {
+			return nil, nil, errNoAccountAvailable
+		}
+		if skip, err := d.refreshBeforeDial(account); err != nil {
+			return nil, nil, err
+		} else if skip {
+			continue
+		}
+
+		result := d.open(account, attempt)
+		if result.err == nil {
+			return d.routed(result, decision, account, attempt), nil, nil
+		}
+		retry, done, response, err := d.handleFailure(result, account, attempt)
+		if done {
+			return nil, response, err
+		}
+		if retry {
+			attempt--
+		}
+	}
+}
+
+func (d *responsesWebSocketDialer) refreshBeforeDial(account *Account) (bool, error) {
+	id := account.id()
+	if !account.refreshDue(time.Now()) || d.reauthed[id] {
+		return false, nil
+	}
+	d.reauthed[id] = true
+	if d.server.refreshed(account, id) {
+		return false, nil
+	}
+	if websocketOwnerMayRefresh(d.owners, account) {
+		return false, errRouteOwnerUnavailable
+	}
+	d.skip[id] = true
+	return true, nil
+}
+
+func (d *responsesWebSocketDialer) open(account *Account, attempt int) upstreamWebSocketDial {
+	result := upstreamWebSocketDial{}
+	for retry := 0; ; retry++ {
+		result.sent = time.Now()
+		ctx, cancel := context.WithTimeout(d.request.Context(), upstreamWait)
+		result.conn, result.response, result.err = websocket.Dial(ctx, d.upstream, &websocket.DialOptions{
+			HTTPClient: d.server.client,
+			HTTPHeader: responsesWebSocketHeaders(d.request.Header, account),
+		})
+		cancel()
+		if result.err == nil || result.response == nil || result.response.StatusCode < 500 || retry == maxUpstreamRetries {
+			return result
+		}
+		status := result.response.StatusCode
+		closeWebSocketResponse(result.response)
+		d.server.log.Info("retrying upstream websocket server failure", "thread", d.thread, "account", account.id(), "attempt", attempt+1, "retry", retry+1, "status", status)
+		if !d.server.waitForUpstreamRetry(d.request.Context(), retry+1) {
+			result.response = nil
+			result.err = context.Cause(d.request.Context())
+			return result
+		}
+	}
+}
+
+func (d *responsesWebSocketDialer) routed(result upstreamWebSocketDial, decision routingDecision, account *Account, attempt int) *websocketDial {
+	if result.response != nil {
+		account.observe(result.response.Header)
+	}
+	attrs := []any{"thread", d.thread, "attempt", attempt + 1, "prior_owner", decision.priorOwner, "account_move", decision.moved()}
+	attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
+	d.server.log.Debug("websocket routed", attrs...)
+	return &websocketDial{conn: result.conn, resp: result.response, account: account, moved: decision.moved()}
+}
+
+func (d *responsesWebSocketDialer) handleFailure(result upstreamWebSocketDial, account *Account, attempt int) (retry, done bool, response *http.Response, err error) {
+	if cause := context.Cause(d.request.Context()); cause != nil {
+		closeWebSocketResponse(result.response)
+		return false, true, nil, cause
+	}
+	id := account.id()
+	if result.response != nil && result.response.StatusCode == http.StatusUnauthorized && !d.reauthed[id] {
+		if err := d.refreshAfterUnauthorized(result.response, account); err != nil {
+			return false, true, nil, err
+		}
+		return true, false, nil, nil
+	}
+	if result.response == nil {
+		d.server.log.Warn("upstream websocket unreachable", "thread", d.thread, "account", id, "attempt", attempt+1, "error", result.err)
+		return false, true, nil, result.err
+	}
+	status := result.response.StatusCode
+	if status == http.StatusSwitchingProtocols {
+		d.invalidHandshake(result, account, attempt)
+		return false, false, nil, nil
+	}
+	if status >= http.StatusInternalServerError {
+		d.server.log.Warn("upstream websocket server failure", "thread", d.thread, "account", id, "attempt", attempt+1, "status", status)
+		return false, true, result.response, nil
+	}
+	usageLimit := (status == http.StatusTooManyRequests || status == http.StatusForbidden) && responseUsageLimitReached(result.response)
+	if status != http.StatusTooManyRequests && !usageLimit && status != http.StatusUnauthorized {
+		return false, true, result.response, nil
+	}
+	if d.rejectAccount(result, account, attempt, usageLimit) {
+		return true, false, nil, nil
+	}
+	return false, false, nil, nil
+}
+
+func (d *responsesWebSocketDialer) refreshAfterUnauthorized(response *http.Response, account *Account) error {
+	closeWebSocketResponse(response)
+	id := account.id()
+	d.reauthed[id] = true
+	if d.server.refreshed(account, id) {
+		return nil
+	}
+	if websocketOwnerMayRefresh(d.owners, account) {
+		return errRouteOwnerUnavailable
+	}
+	d.skip[id] = true
+	return nil
+}
+
+func (d *responsesWebSocketDialer) invalidHandshake(result upstreamWebSocketDial, account *Account, attempt int) {
+	closeWebSocketResponse(result.response)
+	id := account.id()
+	d.server.log.Warn("upstream websocket handshake invalid", "thread", d.thread, "account", id, "attempt", attempt+1, "error", result.err)
+	d.server.stats.failedOver(id, "invalid handshake")
+	account.failed(attempt)
+	d.skip[id] = true
+}
+
+func (d *responsesWebSocketDialer) rejectAccount(result upstreamWebSocketDial, account *Account, attempt int, usageLimit bool) bool {
+	response := result.response
+	status := response.StatusCode
+	id := account.id()
+	if status == http.StatusTooManyRequests || usageLimit {
+		account.observe(response.Header)
+		if usageLimit {
+			if account.markSpent() {
+				d.server.log.Info("account stopped accepting new websockets", "account", id, "source", "handshake", "thread", d.thread, "status", status)
+			}
+			if !workspaceUsageLimitReached(response.Header) && !d.resetRetried[id] && d.server.recoverUsageLimit(d.request.Context(), account, result.sent) {
+				d.resetRetried[id] = true
+				closeWebSocketResponse(response)
+				return true
+			}
+		} else {
+			account.rateLimited(response.Header, attempt)
+		}
+		d.server.stats.rateLimited(id)
+		attrs := []any{"thread", d.thread, "attempt", attempt + 1}
+		attrs = append(attrs, routingLogAttrs(account.routingCandidate(), time.Now())...)
+		d.server.log.Info("account rate limited", attrs...)
+	} else {
+		d.server.log.Warn("upstream websocket rejected credentials", "thread", d.thread, "account", id, "attempt", attempt+1, "status", status)
+		account.failed(attempt)
+	}
+	closeWebSocketResponse(response)
+	d.server.stats.failedOver(id, response.Status)
+	d.skip[id] = true
+	return false
+}
+
+func closeWebSocketResponse(response *http.Response) {
+	if response != nil && response.Body != nil {
+		response.Body.Close()
+	}
+}
