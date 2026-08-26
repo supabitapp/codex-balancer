@@ -40,9 +40,12 @@ SQLite stores credentials, routed turns, and events. The server fetches current 
 
 ## Point Codex at it
 
-On every machine that runs Codex, save the server key at `~/.codex/balancer-api-key` with mode `600`:
+On every machine that runs Codex, save only the server key in `~/.codex/balancer-api-key` with mode `600`:
 
 ```sh
+umask 077
+mkdir -p ~/.codex
+${EDITOR:-vi} ~/.codex/balancer-api-key
 chmod 600 ~/.codex/balancer-api-key
 ```
 
@@ -60,6 +63,8 @@ supports_websockets = true
 command = "/bin/sh"
 args = ["-c", "exec /bin/cat \"$HOME/.codex/balancer-api-key\""]
 ```
+
+Do not set `env_key` for this provider. Codex reads the bearer token from the file, so it works regardless of which shell or app launches Codex.
 
 ## Routing
 Routing logic is in ROUTING.md, keep that up to date and simple, human readable
