@@ -15,7 +15,7 @@ go install github.com/supabitapp/codex-balancer@latest
 ## Serve
 
 ```sh
-export CODEX_BALANCER_KEY=$(openssl rand -hex 16)
+export CODEX_BALANCER_API_KEY=$(openssl rand -hex 16)
 codex-balancer server           # serve the proxy with a TUI
 ```
 
@@ -40,14 +40,13 @@ SQLite stores credentials, routed turns, and events. The server fetches current 
 
 ## Point Codex at it
 
-On every machine that runs Codex, save only the server key in `~/.codex/balancer-api-key` with mode `600`:
+On every machine that runs Codex, export the server key before starting Codex:
 
 ```sh
-umask 077
-mkdir -p ~/.codex
-${EDITOR:-vi} ~/.codex/balancer-api-key
-chmod 600 ~/.codex/balancer-api-key
+export CODEX_BALANCER_API_KEY="<server-key>"
 ```
+
+For Fish, use `set -x CODEX_BALANCER_API_KEY "<server-key>"`. To persist it, add the appropriate command to a private startup file that your shell sources.
 
 In `~/.codex/config.toml`:
 
@@ -57,14 +56,12 @@ model_provider = "balancer"
 [model_providers.balancer]
 name = "OpenAI" # must be exactly this for server-side compaction to work
 base_url = "http://127.0.0.1:8317/v1"
+env_key = "CODEX_BALANCER_API_KEY"
+requires_openai_auth = true
 supports_websockets = true
-
-[model_providers.balancer.auth]
-command = "/bin/sh"
-args = ["-c", "exec /bin/cat \"$HOME/.codex/balancer-api-key\""]
 ```
 
-Do not set `env_key` for this provider. Codex reads the bearer token from the file, so it works regardless of which shell or app launches Codex.
+Codex reads the bearer token from the environment that launches it. Do not also configure `[model_providers.balancer.auth]`; command-backed auth and `env_key` are mutually exclusive.
 
 ## Routing
 Routing logic is in ROUTING.md, keep that up to date and simple, human readable

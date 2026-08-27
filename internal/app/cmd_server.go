@@ -30,13 +30,11 @@ Point Codex at it by adding to ~/.codex/config.toml:
   [model_providers.balancer]
   name = "OpenAI"
   base_url = "http://127.0.0.1:8317/v1"
+  env_key = "CODEX_BALANCER_API_KEY"
+  requires_openai_auth = true
   supports_websockets = true
 
-  [model_providers.balancer.auth]
-  command = "/bin/sh"
-  args = ["-c", "exec /bin/cat \"$HOME/.codex/balancer-api-key\""]
-
-Store the server key in ~/.codex/balancer-api-key with mode 600.
+Set CODEX_BALANCER_API_KEY to the server key before launching Codex.
 
 Flags:
 `
@@ -50,7 +48,7 @@ func serverCmd(args []string) error {
 	addr := fs.String("addr", "127.0.0.1:8317", "address to listen on")
 	path := fs.String("state", defaultStatePath(), "state database")
 	upstream := fs.String("upstream", "https://chatgpt.com/backend-api/codex", "upstream Codex base URL")
-	key := fs.String("key", os.Getenv("CODEX_BALANCER_KEY"), "bearer key clients must present (env CODEX_BALANCER_KEY)")
+	key := fs.String("key", os.Getenv("CODEX_BALANCER_API_KEY"), "bearer key clients must present (env CODEX_BALANCER_API_KEY)")
 	insecure := fs.Bool("no-auth", false, "serve without a bearer key; any local process can spend your quota")
 	jsonLogs := fs.Bool("json", false, "format logs as JSON")
 	plain := fs.Bool("no-tui", false, "show logs on stderr instead of the dashboard")
@@ -60,7 +58,7 @@ func serverCmd(args []string) error {
 		return err
 	}
 	if *key == "" && !*insecure {
-		return errors.New("set -key or CODEX_BALANCER_KEY, or pass -no-auth to accept unauthenticated clients")
+		return errors.New("set -key or CODEX_BALANCER_API_KEY, or pass -no-auth to accept unauthenticated clients")
 	}
 	if *insecure {
 		*key = ""
