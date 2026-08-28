@@ -46,6 +46,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`<link rel="icon" href="/favicon.svg" type="image/svg+xml">`,
+		`<link rel="stylesheet" href="` + waterCSSURL + `">`,
 		`src="` + dashboardAssetURL("dashboard.js") + `"`,
 		`src="/dashboard/assets/htmx-2.0.10.min.js"`,
 		`src="/dashboard/assets/ws-2.0.4.min.js"`,
@@ -148,7 +149,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`019fe5c2`,
 		`🇺🇸 US-1`,
 		`<td>☀️ high</td>`,
-		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
+		`<td><span class="status-mark">◌</span> checking</td>`,
 		`<span>1 checking</span>`,
 		`<th>WS</th>`,
 		`class="fast-icon"`,
@@ -228,14 +229,13 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 		name           string
 		used           []float64
 		wantMark       string
-		wantClass      string
 		wantInfo       string
 		wantInfoStrong string
 	}{
-		{name: "yes", used: []float64{0, 20}, wantMark: "👍", wantClass: "pace-good", wantInfo: "Lasts to reset.\nAt the average burn since reset. Expected capacity at reset: ", wantInfoStrong: "4.29%"},
-		{name: "close", used: []float64{0, 30}, wantMark: "👎", wantClass: "pace-danger", wantInfo: "Runs out in 5d16h.\nAt the average burn since reset. Expected to run out: ", wantInfoStrong: "20 August 2026, 04:00 UTC"},
-		{name: "no", used: []float64{20, 30}, wantMark: "👎", wantClass: "pace-danger", wantInfo: "Runs out in 3d0h.\nAt the average burn since reset. Expected to run out: ", wantInfoStrong: "17 August 2026, 12:00 UTC"},
-		{name: "empty", used: []float64{100, 100}, wantMark: "👎", wantClass: "pace-danger", wantInfo: "Empty.\nNothing left until reset."},
+		{name: "yes", used: []float64{0, 20}, wantMark: "👍", wantInfo: "Lasts to reset.\nAt the average burn since reset. Expected capacity at reset: ", wantInfoStrong: "4.29%"},
+		{name: "close", used: []float64{0, 30}, wantMark: "👎", wantInfo: "Runs out in 5d16h.\nAt the average burn since reset. Expected to run out: ", wantInfoStrong: "20 August 2026, 04:00 UTC"},
+		{name: "no", used: []float64{20, 30}, wantMark: "👎", wantInfo: "Runs out in 3d0h.\nAt the average burn since reset. Expected to run out: ", wantInfoStrong: "17 August 2026, 12:00 UTC"},
+		{name: "empty", used: []float64{100, 100}, wantMark: "👎", wantInfo: "Empty.\nNothing left until reset."},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -253,7 +253,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			server := &server{pool: &Pool{accounts: accounts}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 
 			view := server.currentDashboard(now)
-			if view.Overview[0].Name != "Pace" || view.Overview[0].Value != test.wantMark || view.Overview[0].ValueClass != test.wantClass || view.Overview[0].Info != test.wantInfo || view.Overview[0].InfoStrong != test.wantInfoStrong {
+			if view.Overview[0].Name != "Pace" || view.Overview[0].Value != test.wantMark || view.Overview[0].Info != test.wantInfo || view.Overview[0].InfoStrong != test.wantInfoStrong {
 				t.Fatalf("pace metric = %+v, want %q", view.Overview[0], test.wantMark)
 			}
 			payload, err := renderDashboard("dashboard", view)
@@ -264,11 +264,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 			expected := `<dt>Pace</dt><dd><span class="has-tooltip`
 			renderedInfoStrong := strings.ReplaceAll(test.wantInfoStrong, "+", "&#43;")
 			renderedWant := strings.ReplaceAll(test.wantMark, "+", "&#43;")
-			class := `class="has-tooltip"`
-			if test.wantClass != "" {
-				class = `class="has-tooltip ` + test.wantClass + `"`
-			}
-			checks := []string{expected, class, `data-tooltip="` + test.wantInfo + `"`, ">" + renderedWant + "</span>"}
+			checks := []string{expected, `class="has-tooltip"`, `data-tooltip="` + test.wantInfo + `"`, ">" + renderedWant + "</span>"}
 			if test.wantInfoStrong != "" {
 				checks = append(checks, `data-tooltip-strong="`+renderedInfoStrong+`"`)
 			}
@@ -421,7 +417,7 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 	body := string(payload)
 	for _, expected := range []string{
 		`<span>1 priority</span>`,
-		`class="status-mark status-priority"`,
+		`class="status-mark"`,
 		`>◆</span> priority</span>`,
 		`data-tooltip="Prioritized for new connections: a banked reset expires in 30m; 20% weekly capacity remains."`,
 		`aria-describedby="dashboard-tooltip"`,

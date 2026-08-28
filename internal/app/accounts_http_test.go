@@ -15,7 +15,7 @@ func TestAccountLoginPageRendersEmbeddedTemplate(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"https://example.com/device", "ABCD-EFGH", "15 minutes"} {
+	for _, want := range []string{waterCSSURL, "https://example.com/device", "ABCD-EFGH", "15 minutes"} {
 		if !strings.Contains(page.String(), want) {
 			t.Fatalf("rendered account page does not contain %q", want)
 		}

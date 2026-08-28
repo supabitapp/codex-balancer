@@ -19,12 +19,19 @@ const (
 	dashboardFrame           = 500 * time.Millisecond
 	dashboardMaxConnections  = 32
 	dashboardContextBaseline = 12_000
+	waterCSSURL              = "https://cdn.jsdelivr.net/npm/water.css@2/out/water.css"
 )
 
 //go:embed web/accounts.html web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
 var dashboardFiles embed.FS
 
-var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.FuncMap{
+func webTemplate(name string) *template.Template {
+	return template.New(name).Funcs(template.FuncMap{
+		"waterCSSURL": func() string { return waterCSSURL },
+	})
+}
+
+var dashboardTemplate = template.Must(webTemplate("dashboard").Funcs(template.FuncMap{
 	"dashboardAssetURL": dashboardAssetURL,
 	"dashboardStatus":   dashboardStatus,
 }).ParseFS(dashboardFiles, "web/dashboard.html"))
@@ -66,7 +73,6 @@ type dashboardStatusView struct {
 type dashboardMetric struct {
 	Name       string
 	Value      string
-	ValueClass string
 	Info       string
 	InfoStrong string
 }
@@ -126,7 +132,7 @@ func (s *server) dashboardPage(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline' "+waterCSSURL+"; script-src 'self'; connect-src 'self' ws: wss:; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -310,7 +316,6 @@ func dashboardPaceMetric(now time.Time, estimate usagePaceEstimate) dashboardMet
 		return dashboardMetric{
 			Name:       "Pace",
 			Value:      "👍",
-			ValueClass: "pace-good",
 			Info:       "Lasts to reset.\nAt the average burn since reset. Expected capacity at reset: ",
 			InfoStrong: formatPercent(-estimate.shortfallPercent),
 		}
@@ -324,16 +329,14 @@ func dashboardPaceMetric(now time.Time, estimate usagePaceEstimate) dashboardMet
 func dashboardPaceShortfall(now time.Time, estimate usagePaceEstimate) dashboardMetric {
 	if estimate.runway < time.Second {
 		return dashboardMetric{
-			Name:       "Pace",
-			Value:      "👎",
-			ValueClass: "pace-danger",
-			Info:       "Empty.\nNothing left until reset.",
+			Name:  "Pace",
+			Value: "👎",
+			Info:  "Empty.\nNothing left until reset.",
 		}
 	}
 	return dashboardMetric{
 		Name:       "Pace",
 		Value:      "👎",
-		ValueClass: "pace-danger",
 		Info:       "Runs out in " + short(estimate.runway) + ".\nAt the average burn since reset. Expected to run out: ",
 		InfoStrong: now.Add(estimate.runway).Format("2 January 2006, 15:04 MST"),
 	}

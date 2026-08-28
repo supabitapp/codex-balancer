@@ -5,43 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Codex Balancer</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{waterCSSURL}}">
 <script src="{{dashboardAssetURL "dashboard.js"}}" defer></script>
 <script src="/dashboard/assets/htmx-2.0.10.min.js" defer></script>
 <script src="/dashboard/assets/ws-2.0.4.min.js" defer></script>
 <style>
-:root {
-  color-scheme: light dark;
-  font-family: system-ui, sans-serif;
-  --gray-1: #fcfcfc;
-  --gray-3: #f0f0f0;
-  --gray-4: #e8e8e8;
-  --gray-7: #cecece;
-  --gray-11: #646464;
-  --gray-12: #202020;
-  --green-11: #218358;
-  --amber-11: #ab6400;
-  --red-11: #ce2c31;
-  background: var(--gray-1);
-  color: var(--gray-12);
-}
 * { box-sizing: border-box }
-body { min-height: 100vh; margin: 0; background: var(--gray-1); color: var(--gray-12) }
+body { max-width: none; min-height: 100vh; margin: 0; padding: 0 }
 main { width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding: 1rem 0 3rem }
 h2 { margin: 0 0 .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase }
 section { margin-top: 1rem }
-#summary, .dim, .empty, th, td, dt, dd { color: var(--gray-11) }
+#summary, .dim, .empty, th, td, dt, dd { color: var(--text-muted) }
 #summary { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }
 #summary, td, dd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace }
-.dot { margin: 0 .35rem; color: var(--gray-7) }
+.dot { margin: 0 .35rem; color: var(--text-muted) }
 .status-mark { display: inline-block; min-width: 1em; text-align: center }
-.status-mark.status-live { color: var(--green-11) }
-.status-mark.status-priority { color: var(--amber-11) }
-.status-mark.status-cooling { color: var(--amber-11) }
-.status-mark.status-needs_reauth { color: var(--red-11) }
 .has-tooltip { cursor: help; text-decoration: underline dotted; text-underline-offset: .2em }
-.pace-good { color: var(--green-11) }
-.pace-danger { color: var(--red-11) }
-#dashboard-tooltip { position: fixed; z-index: 1; width: max-content; max-width: min(28rem, calc(100vw - 1rem)); padding: .5rem .75rem; border-radius: .5rem; background: var(--gray-12); box-shadow: 0 .25rem 1rem rgb(0 0 0 / 20%); color: var(--gray-1); font-size: .8125rem; line-height: 1.4; pointer-events: none; white-space: pre-line }
+#dashboard-tooltip { position: fixed; z-index: 1; width: max-content; max-width: min(28rem, calc(100vw - 1rem)); padding: .5rem .75rem; border-radius: .5rem; background: var(--background); color: var(--text-main); font-size: .8125rem; line-height: 1.4; pointer-events: none; white-space: pre-line }
 #dashboard-tooltip strong { font-weight: 700 }
 .scroll { overflow-x: auto }
 #threads { --visible-rows: 16 }
@@ -49,34 +29,20 @@ section { margin-top: 1rem }
 #threads, #events { --row-height: 2.25rem; max-height: calc(var(--visible-rows) * var(--row-height)); overflow: auto; scrollbar-width: none }
 #threads::-webkit-scrollbar, #events::-webkit-scrollbar { display: none }
 #threads tr, #events tr { height: var(--row-height) }
-#threads thead, #events thead { position: sticky; top: 0; z-index: 1; background: var(--gray-1) }
+#threads thead, #events thead { position: sticky; top: 0; z-index: 1; background: var(--background-body) }
 table { width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums }
-tbody tr:nth-child(even) { background: var(--gray-3) }
-tbody tr:hover { background: var(--gray-4) }
+tbody tr:hover { background: var(--background-alt) }
 th, td { padding: .5rem .75rem .5rem 0; text-align: left }
 th:last-child, td:last-child { padding-right: 0 }
 th { font-size: .75rem; font-weight: 500 }
 td { font-weight: 400 }
 .spark { letter-spacing: .08em }
-.fast-icon { display: block; width: 1rem; height: 1rem; color: var(--amber-11); fill: currentColor; opacity: .75 }
+.fast-icon { display: block; width: 1rem; height: 1rem; fill: currentColor; opacity: .75 }
 .empty { padding: .5rem 0 }
 .overview { display: flex; gap: 1rem; margin: 0; overflow-x: auto }
 .overview div { display: grid; gap: .125rem; min-width: max-content }
 dt { font-size: .75rem }
 dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --gray-1: #111111;
-    --gray-3: #222222;
-    --gray-4: #2a2a2a;
-    --gray-7: #484848;
-    --gray-11: #b4b4b4;
-    --gray-12: #eeeeee;
-    --green-11: #3dd68c;
-    --amber-11: #ffca16;
-    --red-11: #ff9592;
-  }
-}
 @media (max-width: 760px) {
   main { width: min(calc(100% - 1.25rem), 100rem) }
 }
@@ -122,7 +88,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <div id="threads" hx-swap-oob="innerHTML">{{template "threads" .}}</div>
 <div id="events" hx-swap-oob="innerHTML">{{template "events" .}}</div>{{end}}
 
-{{define "overview"}}{{range .Overview}}<div><dt>{{.Name}}</dt><dd>{{if .Info}}<span class="has-tooltip{{if .ValueClass}} {{.ValueClass}}{{end}}" data-tooltip="{{.Info}}"{{if .InfoStrong}} data-tooltip-strong="{{.InfoStrong}}"{{end}} aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else if .ValueClass}}<span class="{{.ValueClass}}">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}{{end}}
+{{define "overview"}}{{range .Overview}}<div><dt>{{.Name}}</dt><dd>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}"{{if .InfoStrong}} data-tooltip-strong="{{.InfoStrong}}"{{end}} aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}{{end}}
 
 {{define "summary"}}{{range $index, $item := .Summary}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}{{end}}
 
@@ -143,7 +109,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <tbody>{{range .Accounts}}<tr>
 <td>{{.Name}}</td>
 <td class="dim">{{.Plan}}</td>
-{{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
+{{$status := dashboardStatus .Status}}<td>{{if .StatusInfo}}<span class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>

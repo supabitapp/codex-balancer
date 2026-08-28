@@ -51,7 +51,7 @@ type accountLoginPageData struct {
 	ExpiresIn       int
 }
 
-var accountLoginPage = template.Must(template.ParseFS(dashboardFiles, "web/accounts.html"))
+var accountLoginPage = template.Must(webTemplate("accounts.html").ParseFS(dashboardFiles, "web/accounts.html"))
 
 func (s *server) accountsPage(w http.ResponseWriter, r *http.Request) {
 	issuer := s.accountAuthIssuer()
@@ -87,7 +87,7 @@ func (s *server) accountsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src "+waterCSSURL+"; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

@@ -110,7 +110,7 @@ func callbackHandler(flow *loginFlow) http.Handler {
 			http.Error(w, result.err.Error(), http.StatusBadRequest)
 		} else {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			fmt.Fprintf(w, successPage, html.EscapeString(describe(result.account)))
+			fmt.Fprintf(w, successPage, waterCSSURL, html.EscapeString(describe(result.account)))
 		}
 	})
 	return mux
@@ -249,8 +249,17 @@ func openBrowser(link string) {
 }
 
 const successPage = `<!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Signed in</title>
-<body style="font: 16px/1.6 system-ui, sans-serif; display: grid; place-content: center; height: 100vh; margin: 0">
+<link rel="stylesheet" href="%s">
+</head>
+<body>
+<main>
 <p>Signed in as %s. Close this tab and go back to the terminal.</p>
+</main>
+</body>
+</html>
 `
