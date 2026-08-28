@@ -1,6 +1,11 @@
 const tooltip = document.querySelector("#dashboard-tooltip")
-const dashboardHost = document.querySelector("[ws-connect]")
+const streamStatus = document.querySelector("#stream-status")
 let active
+
+function setStreamStatus(state) {
+  streamStatus.dataset.state = state
+  streamStatus.textContent = state
+}
 
 function tooltipAnchor(element) {
   return element instanceof Element ? element.closest(".has-tooltip") : null
@@ -63,8 +68,12 @@ document.addEventListener("keydown", event => {
 document.addEventListener("scroll", placeTooltip, true)
 window.addEventListener("resize", placeTooltip)
 
-new MutationObserver(() => {
+document.addEventListener("htmx:sseMessage", () => {
   const hovered = document.querySelector(".has-tooltip:hover")
   if (hovered) showTooltip(hovered)
   else if (active && !active.isConnected) hideTooltip()
-}).observe(dashboardHost, {childList: true, subtree: true})
+})
+
+document.addEventListener("htmx:sseOpen", () => setStreamStatus("live"))
+document.addEventListener("htmx:sseError", () => setStreamStatus("reconnecting"))
+document.addEventListener("htmx:sseClose", () => setStreamStatus("disconnected"))

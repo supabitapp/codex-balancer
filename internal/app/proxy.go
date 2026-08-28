@@ -29,22 +29,22 @@ func newProxyClient() *http.Client {
 }
 
 type server struct {
-	ctx                  context.Context
-	pool                 *Pool
-	catalog              *modelCatalog
-	prices               *priceCatalog
-	stats                *Stats
-	logins               accountLoginStore
-	upstream             string
-	authIssuer           string
-	lookupAPIKey         func(string) (string, bool, error)
-	client               *http.Client
-	log                  *slog.Logger
-	admission            *admissionGate
-	retryBackoff         func(int) time.Duration
-	resources            *resourceMonitor
-	countries            countryResolver
-	dashboardConnections atomic.Int64
+	ctx              context.Context
+	pool             *Pool
+	catalog          *modelCatalog
+	prices           *priceCatalog
+	stats            *Stats
+	logins           accountLoginStore
+	upstream         string
+	authIssuer       string
+	lookupAPIKey     func(string) (string, bool, error)
+	client           *http.Client
+	log              *slog.Logger
+	admission        *admissionGate
+	retryBackoff     func(int) time.Duration
+	resources        *resourceMonitor
+	countries        countryResolver
+	dashboardStreams atomic.Int64
 }
 
 func upstreamRetryBackoff(retry int) time.Duration {
@@ -103,8 +103,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /dashboard/assets/dashboard.js", webAsset("web/dashboard.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
 	mux.HandleFunc("GET /dashboard/assets/htmx-2.0.10.min.js", webAsset("web/htmx-2.0.10.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
 	mux.HandleFunc("GET /dashboard/assets/idiomorph-0.7.4.min.js", webAsset("web/idiomorph-0.7.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
-	mux.HandleFunc("GET /dashboard/assets/ws-2.0.4.min.js", webAsset("web/ws-2.0.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
-	mux.HandleFunc("GET /dashboard/ws", s.dashboardWebSocket)
+	mux.HandleFunc("GET /dashboard/assets/sse-2.2.4.min.js", webAsset("web/sse-2.2.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
+	mux.HandleFunc("GET /dashboard/events", s.dashboardEvents)
 	mux.HandleFunc("GET /stats", s.statsJSON)
 	mux.Handle("GET /v1/responses", s.admitted(s.responsesWebSocket))
 	mux.HandleFunc("GET /v1/models", s.models)

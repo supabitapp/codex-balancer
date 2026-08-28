@@ -6,22 +6,22 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/coder/websocket"
 )
 
 const (
 	dashboardFrame           = 500 * time.Millisecond
-	dashboardMaxConnections  = 32
+	dashboardMaxStreams      = 32
+	dashboardEventName       = "dashboard"
 	dashboardContextBaseline = 12_000
 	waterCSSURL              = "https://cdn.jsdelivr.net/npm/water.css@2/out/water.css"
 )
 
-//go:embed web/accounts.html web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/idiomorph-0.7.4.min.js web/ws-2.0.4.min.js
+//go:embed web/accounts.html web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/idiomorph-0.7.4.min.js web/sse-2.2.4.min.js
 var dashboardFiles embed.FS
 
 func webTemplate(name string) *template.Template {
@@ -165,26 +165,25 @@ func (s *server) dashboardPage(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline' "+waterCSSURL+"; script-src 'self'; connect-src 'self' ws: wss:; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline' "+waterCSSURL+"; script-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Write(payload)
 }
 
-func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
-	if s.dashboardConnections.Add(1) > dashboardMaxConnections {
-		s.dashboardConnections.Add(-1)
+func (s *server) dashboardEvents(w http.ResponseWriter, r *http.Request) {
+	if s.dashboardStreams.Add(1) > dashboardMaxStreams {
+		s.dashboardStreams.Add(-1)
 		http.Error(w, "dashboard is busy", http.StatusServiceUnavailable)
 		return
 	}
-	defer s.dashboardConnections.Add(-1)
+	defer s.dashboardStreams.Add(-1)
 
-	conn, err := websocket.Accept(w, r, nil)
-	if err != nil {
-		return
-	}
-	defer conn.CloseNow()
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("X-Accel-Buffering", "no")
+	controller := http.NewResponseController(w)
 
 	ticker := time.NewTicker(dashboardFrame)
 	defer ticker.Stop()
@@ -195,7 +194,10 @@ func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if len(payload) > 0 {
-			if err := conn.Write(r.Context(), websocket.MessageText, payload); err != nil {
+			if err := writeSSEEvent(w, dashboardEventName, payload); err != nil {
+				return
+			}
+			if err := controller.Flush(); err != nil {
 				return
 			}
 		}
@@ -205,6 +207,25 @@ func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func writeSSEEvent(w io.Writer, event string, data []byte) error {
+	if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
+		return err
+	}
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if _, err := io.WriteString(w, "data: "); err != nil {
+			return err
+		}
+		if _, err := w.Write(line); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "\n"); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(w, "\n")
+	return err
 }
 
 func renderDashboard(name string, view dashboardView) ([]byte, error) {

@@ -9,7 +9,7 @@
 <script src="{{dashboardAssetURL "dashboard.js"}}" defer></script>
 <script src="/dashboard/assets/htmx-2.0.10.min.js" defer></script>
 <script src="/dashboard/assets/idiomorph-0.7.4.min.js" defer></script>
-<script src="/dashboard/assets/ws-2.0.4.min.js" defer></script>
+<script src="/dashboard/assets/sse-2.2.4.min.js" defer></script>
 <style>
 :root {
   --green-11: #218358;
@@ -25,6 +25,10 @@ section { margin-top: 1rem }
 #summary { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }
 #summary, td, dd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace }
 .dot { margin: 0 .35rem; color: var(--text-muted) }
+#stream-status { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none }
+#stream-status[data-state="live"] { color: var(--green-11) }
+#stream-status[data-state="connecting"], #stream-status[data-state="reconnecting"] { color: var(--amber-11) }
+#stream-status[data-state="disconnected"] { color: var(--red-11) }
 .status-mark { display: inline-block; min-width: 1em; text-align: center }
 .has-tooltip { cursor: help; text-decoration: underline dotted; text-underline-offset: .2em }
 #dashboard-tooltip { position: fixed; z-index: 1; width: max-content; max-width: min(28rem, calc(100vw - 1rem)); padding: .5rem .75rem; border-radius: .5rem; background: var(--background); color: var(--text-main); font-size: .8125rem; line-height: 1.4; pointer-events: none; white-space: pre-line }
@@ -64,8 +68,8 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 }
 </style>
 </head>
-<body hx-ext="ws,morph">
-<div ws-connect="/dashboard/ws">
+<body>
+<div hx-ext="sse,morph" sse-connect="/dashboard/events" sse-swap="dashboard" hx-swap="none">
 {{template "dashboard" .}}
 </div>
 <div id="dashboard-tooltip" role="tooltip" hidden></div>
@@ -74,7 +78,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 
 {{define "dashboard"}}<main id="dashboard">
 <section>
-<h2>Overview</h2>
+<h2>Overview <span id="stream-status" data-state="connecting" aria-live="polite">connecting</span></h2>
 <dl id="overview" class="overview">{{template "overview" .}}</dl>
 </section>
 <section>
@@ -102,8 +106,6 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </div>
 </section>
 </main>{{end}}
-
-{{define "dashboard-update"}}{{template "overview-update" .}}{{template "summary-update" .}}{{template "accounts-update" .}}{{template "workspace-summary-update" .}}{{template "workspaces-update" .}}{{template "routing-count-update" .}}{{template "threads-update" .}}{{template "events-update" .}}{{end}}
 
 {{define "overview-update"}}<dl id="overview" class="overview" hx-swap-oob="morph">{{template "overview" .}}</dl>{{end}}
 {{define "summary-update"}}<span id="summary" hx-swap-oob="morph">{{template "summary" .}}</span>{{end}}

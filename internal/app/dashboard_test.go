@@ -1,6 +1,8 @@
 package app
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -10,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/coder/websocket"
 )
 
 func TestRootRedirectsToDashboard(t *testing.T) {
@@ -26,7 +26,7 @@ func TestRootRedirectsToDashboard(t *testing.T) {
 	}
 }
 
-func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
+func TestDashboardPageConnectsHTMXSSE(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: newStatsWithPrices(testPriceSnapshot(t))}
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
@@ -44,15 +44,21 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Security-Policy"), "script-src 'self'") {
 		t.Fatalf("status = %s, CSP = %q", response.Status, response.Header.Get("Content-Security-Policy"))
 	}
+	if !strings.Contains(response.Header.Get("Content-Security-Policy"), "connect-src 'self'") || strings.Contains(response.Header.Get("Content-Security-Policy"), "ws:") {
+		t.Fatalf("dashboard CSP permits obsolete WebSocket connections: %q", response.Header.Get("Content-Security-Policy"))
+	}
 	for _, expected := range []string{
 		`<link rel="icon" href="/favicon.svg" type="image/svg+xml">`,
 		`<link rel="stylesheet" href="` + waterCSSURL + `">`,
 		`src="` + dashboardAssetURL("dashboard.js") + `"`,
 		`src="/dashboard/assets/htmx-2.0.10.min.js"`,
 		`src="/dashboard/assets/idiomorph-0.7.4.min.js"`,
-		`src="/dashboard/assets/ws-2.0.4.min.js"`,
-		`hx-ext="ws,morph"`,
-		`ws-connect="/dashboard/ws"`,
+		`src="/dashboard/assets/sse-2.2.4.min.js"`,
+		`hx-ext="sse,morph"`,
+		`sse-connect="/dashboard/events"`,
+		`sse-swap="dashboard"`,
+		`hx-swap="none"`,
+		`id="stream-status" data-state="connecting" aria-live="polite">connecting`,
 		`id="dashboard"`,
 		`table { width: max-content; min-width: 100%;`,
 		`.status-mark.status-live { color: var(--green-11) }`,
@@ -65,13 +71,18 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
 	}
-	overview := strings.Index(body, `<h2>Overview</h2>`)
+	overview := strings.Index(body, `<h2>Overview `)
 	accounts := strings.Index(body, `<h2>Accounts <span id="summary">`)
 	if overview < 0 || accounts < 0 || overview > accounts {
 		t.Fatalf("dashboard section order: overview = %d, accounts = %d", overview, accounts)
 	}
 	if strings.Contains(body, `<h2>Resources</h2>`) || strings.Contains(body, `id="resources"`) {
 		t.Fatal("dashboard has a Resources section")
+	}
+	for _, obsolete := range []string{`ws-connect=`, `hx-ext="ws`, `/dashboard/ws`} {
+		if strings.Contains(body, obsolete) {
+			t.Fatalf("dashboard still contains WebSocket markup %q", obsolete)
+		}
 	}
 }
 
@@ -90,7 +101,7 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 		{"/dashboard/assets/dashboard.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 500},
 		{"/dashboard/assets/htmx-2.0.10.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
 		{"/dashboard/assets/idiomorph-0.7.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
-		{"/dashboard/assets/ws-2.0.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
+		{"/dashboard/assets/sse-2.2.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
 	} {
 		response, err := http.Get(httpServer.URL + asset.path)
 		if err != nil {
@@ -110,7 +121,7 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 	}
 }
 
-func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
+func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("019fe5c2private")
 	stats.accepted("", "019fe5c2private", "019fe5c2private", "203.0.113.42", "ret", "unused", "gpt-5.6-sol", "high", serviceTierFast, turnMetadata{}, true)
@@ -128,19 +139,29 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/dashboard/ws", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, httpServer.URL+"/dashboard/events", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.CloseNow()
-	messageType, payload, err := conn.Read(ctx)
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if messageType != websocket.MessageText {
-		t.Fatalf("message type = %v", messageType)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("status = %s, content type = %q", response.Status, response.Header.Get("Content-Type"))
 	}
-	body := string(payload)
+	if response.Header.Get("Cache-Control") != "no-cache" || response.Header.Get("X-Accel-Buffering") != "no" {
+		t.Fatalf("cache control = %q, buffering = %q", response.Header.Get("Cache-Control"), response.Header.Get("X-Accel-Buffering"))
+	}
+	event, payload, err := readSSEEvent(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event != dashboardEventName {
+		t.Fatalf("event = %q, want %q", event, dashboardEventName)
+	}
+	body := payload
 	for _, expected := range []string{
 		`id="overview" class="overview" hx-swap-oob="morph"`,
 		`id="summary" hx-swap-oob="morph"`,
@@ -180,6 +201,40 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	}
 }
 
+func readSSEEvent(r io.Reader) (string, string, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 1_024), 4<<20)
+	event := ""
+	data := make([]string, 0)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			return event, strings.Join(data, "\n"), nil
+		}
+		if value, found := strings.CutPrefix(line, "event:"); found {
+			event = strings.TrimSpace(value)
+		}
+		if value, found := strings.CutPrefix(line, "data:"); found {
+			data = append(data, strings.TrimPrefix(value, " "))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", "", err
+	}
+	return "", "", io.ErrUnexpectedEOF
+}
+
+func TestWriteSSEEventPreservesMultilineHTML(t *testing.T) {
+	var output bytes.Buffer
+	if err := writeSSEEvent(&output, dashboardEventName, []byte("first\n\nthird")); err != nil {
+		t.Fatal(err)
+	}
+	want := "event: dashboard\ndata: first\ndata: \ndata: third\n\n"
+	if output.String() != want {
+		t.Fatalf("SSE event = %q, want %q", output.String(), want)
+	}
+}
+
 func TestDashboardChangesOnlyRenderChangedFragments(t *testing.T) {
 	previous := make(map[string][]byte)
 	view := dashboardView{}
@@ -216,6 +271,41 @@ func TestDashboardChangesOnlyRenderChangedFragments(t *testing.T) {
 			t.Fatalf("summary change unnecessarily rendered %q: %s", id, body)
 		}
 	}
+}
+
+func TestDashboardStreamRootAttributesMatchPage(t *testing.T) {
+	view := dashboardView{}
+	page, err := renderDashboard("dashboard", view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := renderDashboardChanges(view, make(map[string][]byte))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"overview", "summary", "accounts", "workspace-summary", "workspaces", "routing-count", "threads", "events"} {
+		pageTag := dashboardOpeningTag(t, string(page), id)
+		streamTag := dashboardOpeningTag(t, string(stream), id)
+		streamTag = strings.Replace(streamTag, ` hx-swap-oob="morph"`, "", 1)
+		if streamTag != pageTag {
+			t.Errorf("%s root differs:\npage:   %s\nstream: %s", id, pageTag, streamTag)
+		}
+	}
+}
+
+func dashboardOpeningTag(t *testing.T, payload, id string) string {
+	t.Helper()
+	marker := `id="` + id + `"`
+	idStart := strings.Index(payload, marker)
+	if idStart < 0 {
+		t.Fatalf("missing %q in %s", marker, payload)
+	}
+	tagStart := strings.LastIndex(payload[:idStart], "<")
+	tagEnd := strings.Index(payload[idStart:], ">")
+	if tagStart < 0 || tagEnd < 0 {
+		t.Fatalf("invalid opening tag for %q in %s", marker, payload)
+	}
+	return payload[tagStart : idStart+tagEnd+1]
 }
 
 func TestDashboardDOMIDsAreStableAndOpaque(t *testing.T) {
@@ -780,20 +870,18 @@ func TestDashboardContextShowsPercentAndCompactions(t *testing.T) {
 	}
 }
 
-func TestDashboardWebSocketRejectsWhenFull(t *testing.T) {
+func TestDashboardSSERejectsWhenFull(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: newStatsWithPrices(testPriceSnapshot(t))}
-	server.dashboardConnections.Store(dashboardMaxConnections)
+	server.dashboardStreams.Store(dashboardMaxStreams)
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/dashboard/ws", nil)
-	if conn != nil {
-		conn.CloseNow()
+	response, err := http.Get(httpServer.URL + "/dashboard/events")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err == nil || response == nil || response.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("response = %v, error = %v", response, err)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %s", response.Status)
 	}
-	response.Body.Close()
 }
