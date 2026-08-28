@@ -53,6 +53,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		`hx-ext="ws"`,
 		`ws-connect="/dashboard/ws"`,
 		`id="dashboard"`,
+		`table { width: max-content; min-width: 100%;`,
 		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
 		`no live threads`,
 	} {
