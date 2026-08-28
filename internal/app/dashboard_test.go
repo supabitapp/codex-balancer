@@ -174,7 +174,7 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
-		`🇺🇸 US-ret`,
+		`🇺🇸 ret`,
 		`<td>☀️ high</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<span>1 checking</span>`,
@@ -444,11 +444,11 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatalf("accounts = %d, want two", len(view.Accounts))
 	}
 	accountView := view.Accounts[0]
-	wantBurnInfo := "Approximate since reset at " + resetAt.Add(-7*24*time.Hour).Format("2 January 2006, 15:04 MST") + ". Daily analytics includes the full reset day."
-	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.CreditBurn != "1234.56" || accountView.CreditBurnInfo != wantBurnInfo || accountView.Traffic != "1" {
+	wantBurnInfo := "Calculated at $0.04 per credit since reset at " + resetAt.Add(-7*24*time.Hour).Format("2 January 2006, 15:04 MST") + ". Daily analytics includes the full reset day."
+	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.ValueBurn != "$49.38" || accountView.ValueBurnInfo != wantBurnInfo || accountView.Traffic != "1" {
 		t.Fatalf("account values = %+v", accountView)
 	}
-	if view.Accounts[1].CreditBurn != "--" || view.Accounts[1].CreditBurnInfo != "" {
+	if view.Accounts[1].ValueBurn != "--" || view.Accounts[1].ValueBurnInfo != "" {
 		t.Fatalf("unknown credit burn = %+v", view.Accounts[1])
 	}
 	if view.Accounts[1].Traffic != "99" {
@@ -459,7 +459,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>Credits burn ≈</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">1234.56</span>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Value Burn ≈</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">$49.38</span>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -467,6 +467,22 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	for _, removed := range []string{"<th>Turns</th>", "<th>Limits 24h</th>"} {
 		if strings.Contains(body, removed) {
 			t.Fatalf("dashboard contains removed column %q", removed)
+		}
+	}
+}
+
+func TestFormatCreditValue(t *testing.T) {
+	for _, test := range []struct {
+		credits float64
+		want    string
+	}{
+		{0, "$0.00"},
+		{7_163.55, "$286.54"},
+		{12_714.47, "$508.58"},
+		{3_052.43, "$122.10"},
+	} {
+		if got := formatCreditValue(test.credits); got != test.want {
+			t.Fatalf("credit value for %.2f = %q, want %q", test.credits, got, test.want)
 		}
 	}
 }
@@ -862,7 +878,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Client != "🇺🇸 US-ret" || thread.Model != "☀️ xhigh" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextUsed != "0% (1)" || thread.Latency != "2s" || thread.Requests != "1" || thread.Cost != "$0.012" {
+	if thread.Client != "🇺🇸 ret" || thread.Model != "☀️ xhigh" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextUsed != "0% (1)" || thread.Latency != "2s" || thread.Requests != "1" || thread.Cost != "$0.012" {
 		t.Fatalf("routing row = %+v", thread)
 	}
 	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Context window: 258.4K") || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Tokens used: 2.3K") || !strings.Contains(thread.ContextInfo, "Context used: 0%") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
@@ -873,7 +889,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<td class=\"dim\">🇺🇸 US-ret</td>", "<th>Model (thinking mode)</th>", "<td>☀️ xhigh</td>", "<th>Cache %</th>", "<th>Context used<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1"} {
+	for _, expected := range []string{"<td class=\"dim\">🇺🇸 ret</td>", "<th>Model (thinking mode)</th>", "<td>☀️ xhigh</td>", "<th>Cache %</th>", "<th>Context used<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -947,7 +963,7 @@ func TestDashboardModel(t *testing.T) {
 
 func TestDashboardClientNameUsesCountryAndAPIKeySuffix(t *testing.T) {
 	resolver := &countryResolver{states: map[string]countryState{"1.1.1.1": {code: "AU", ready: true}}}
-	if got := dashboardClientName(ThreadSnapshot{ClientIP: "1.1.1.1", APIKeySuffix: "xyz"}, resolver); got != "🇦🇺 AU-xyz" {
+	if got := dashboardClientName(ThreadSnapshot{ClientIP: "1.1.1.1", APIKeySuffix: "xyz"}, resolver); got != "🇦🇺 xyz" {
 		t.Fatalf("client name = %q, want country and token suffix", got)
 	}
 	if got := dashboardClientName(ThreadSnapshot{}, resolver); got != "Unknown" {

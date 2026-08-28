@@ -29,8 +29,8 @@ func TestCountryResolverTracksLivePublicIPs(t *testing.T) {
 		t.Fatalf("repeated country lookup IPs = %v", repeated)
 	}
 	resolver.apply(ips, map[string]string{"8.8.8.8": "US"})
-	if got := resolver.label("8.8.8.8"); got != "🇺🇸 US" {
-		t.Fatalf("country label = %q, want %q", got, "🇺🇸 US")
+	if got := resolver.label("8.8.8.8"); got != "🇺🇸" {
+		t.Fatalf("country label = %q, want %q", got, "🇺🇸")
 	}
 	resolver.queue(nil)
 	if len(resolver.states) != 0 {

@@ -129,7 +129,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Weekly %</th>
 <th>Banked</th>
 <th>Reset in</th>
-<th>Credits burn ≈</th>
+<th>Value Burn ≈</th>
 <th>WS</th>
 <th>Traffic 24h %</th>
 <th>Activity 24h</th>
@@ -141,7 +141,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span id="{{.DOMID}}-banked" class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>
-<td>{{if .CreditBurnInfo}}<span id="{{.DOMID}}-credit-burn" class="has-tooltip" data-tooltip="{{.CreditBurnInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.CreditBurn}}</span>{{else}}{{.CreditBurn}}{{end}}</td>
+<td>{{if .ValueBurnInfo}}<span id="{{.DOMID}}-value-burn" class="has-tooltip" data-tooltip="{{.ValueBurnInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.ValueBurn}}</span>{{else}}{{.ValueBurn}}{{end}}</td>
 <td>{{.OpenWebSockets}}</td>
 <td class="dim">{{.Traffic}}</td>
 <td class="spark">{{.Activity}}</td>

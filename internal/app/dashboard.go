@@ -20,6 +20,7 @@ const (
 	dashboardEventName       = "dashboard"
 	dashboardSubscriberQueue = 2
 	dashboardContextBaseline = 12_000
+	creditValueUSD           = 0.04
 	waterCSSURL              = "https://cdn.jsdelivr.net/npm/water.css@2/out/water.css"
 )
 
@@ -72,8 +73,8 @@ type dashboardAccountView struct {
 	Banked         string
 	BankedInfo     string
 	ResetIn        string
-	CreditBurn     string
-	CreditBurnInfo string
+	ValueBurn      string
+	ValueBurnInfo  string
 	OpenWebSockets string
 	Traffic        string
 	Activity       string
@@ -395,11 +396,11 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		if account.ResetAt != nil {
 			resetIn = short(account.ResetAt.Sub(now))
 		}
-		creditBurn := "--"
-		creditBurnInfo := ""
+		valueBurn := "--"
+		valueBurnInfo := ""
 		if account.CreditBurn != nil && account.CreditBurnSince != nil {
-			creditBurn = formatDecimal(*account.CreditBurn)
-			creditBurnInfo = "Approximate since reset at " + account.CreditBurnSince.In(now.Location()).Format("2 January 2006, 15:04 MST") + ". Daily analytics includes the full reset day."
+			valueBurn = formatCreditValue(*account.CreditBurn)
+			valueBurnInfo = "Calculated at $0.04 per credit since reset at " + account.CreditBurnSince.In(now.Location()).Format("2 January 2006, 15:04 MST") + ". Daily analytics includes the full reset day."
 		}
 		accounts = append(accounts, dashboardAccountView{
 			DOMID:          dashboardDOMID("account", account.ID),
@@ -411,8 +412,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Banked:         banked,
 			BankedInfo:     bankedInfo,
 			ResetIn:        resetIn,
-			CreditBurn:     creditBurn,
-			CreditBurnInfo: creditBurnInfo,
+			ValueBurn:      valueBurn,
+			ValueBurnInfo:  valueBurnInfo,
 			OpenWebSockets: dashboardNumber(account.OpenWebSockets),
 			Traffic:        dashboardNumber(traffic[i]),
 			Activity:       sparkline(account.Activity),
@@ -528,6 +529,10 @@ func dashboardSpendAmount(value string) string {
 	return formatDecimal(parsed)
 }
 
+func formatCreditValue(credits float64) string {
+	return fmt.Sprintf("$%.2f", credits*creditValueUSD)
+}
+
 func dashboardPaceMetric(now time.Time, estimate usagePaceEstimate) dashboardMetric {
 	if !estimate.known {
 		return dashboardMetric{
@@ -611,7 +616,7 @@ func dashboardClientName(thread ThreadSnapshot, countries *countryResolver) stri
 	if thread.APIKeySuffix == "" {
 		return country
 	}
-	return country + "-" + thread.APIKeySuffix
+	return country + " " + thread.APIKeySuffix
 }
 
 func newDashboardThreadView(thread ThreadSnapshot, account, clientName string, limits modelContextLimits, now time.Time) dashboardThreadView {

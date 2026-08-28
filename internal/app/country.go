@@ -161,7 +161,7 @@ func countryLabel(code string) string {
 		'🇦' + rune(code[0]-'A'),
 		'🇦' + rune(code[1]-'A'),
 	}
-	return string(flag) + " " + code
+	return string(flag)
 }
 
 func validCountryCode(code string) bool {
