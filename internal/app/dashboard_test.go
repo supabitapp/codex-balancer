@@ -54,6 +54,7 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		`ws-connect="/dashboard/ws"`,
 		`id="dashboard"`,
 		`table { width: max-content; min-width: 100%;`,
+		`.status-mark.status-live { color: var(--green-11) }`,
 		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
 		`no live threads`,
 	} {
@@ -150,7 +151,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`019fe5c2`,
 		`🇺🇸 US-1`,
 		`<td>☀️ high</td>`,
-		`<td><span class="status-mark">◌</span> checking</td>`,
+		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<span>1 checking</span>`,
 		`<th>WS</th>`,
 		`class="fast-icon"`,
@@ -418,7 +419,7 @@ func TestDashboardExplainsResetPriorityStatus(t *testing.T) {
 	body := string(payload)
 	for _, expected := range []string{
 		`<span>1 priority</span>`,
-		`class="status-mark"`,
+		`class="status-mark status-priority"`,
 		`>◆</span> priority</span>`,
 		`data-tooltip="Prioritized for new connections: a banked reset expires in 30m; 20% weekly capacity remains."`,
 		`aria-describedby="dashboard-tooltip"`,
