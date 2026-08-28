@@ -68,10 +68,12 @@ type dashboardAccountView struct {
 	Plan            string
 	Status          accountStatus
 	StatusInfo      string
+	FiveHour        string
+	FiveHourResetIn string
 	Weekly          string
+	WeeklyResetIn   string
 	Banked          string
 	BankedInfo      string
-	ResetIn         string
 	RoutedValue     string
 	RoutedValueInfo string
 	OpenWebSockets  string
@@ -382,19 +384,27 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			continue
 		}
 		counts[account.Status]++
+		fiveHour := "--"
+		if account.FiveHourRemainingPercent != nil {
+			fiveHour = formatDecimal(*account.FiveHourRemainingPercent)
+		}
+		fiveHourResetIn := "--"
+		if account.FiveHourResetAt != nil {
+			fiveHourResetIn = short(account.FiveHourResetAt.Sub(now))
+		}
 		weekly := "--"
 		if account.WeeklyRemainingPercent != nil {
 			weekly = formatDecimal(*account.WeeklyRemainingPercent)
+		}
+		weeklyResetIn := "--"
+		if account.WeeklyResetAt != nil {
+			weeklyResetIn = short(account.WeeklyResetAt.Sub(now))
 		}
 		banked := "--"
 		if account.BankedResets != nil {
 			banked = dashboardNumber(*account.BankedResets)
 		}
 		bankedInfo := dashboardResetInfo(now, account.ResetCredits)
-		resetIn := "--"
-		if account.ResetAt != nil {
-			resetIn = short(account.ResetAt.Sub(now))
-		}
 		routedValue := "--"
 		routedValueInfo := "No usage routed in this reset window."
 		if account.RoutedCredits != nil && account.RoutedCreditsSince != nil {
@@ -407,10 +417,12 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Plan:            account.Plan,
 			Status:          account.Status,
 			StatusInfo:      dashboardAccountStatusInfo(now, account),
+			FiveHour:        fiveHour,
+			FiveHourResetIn: fiveHourResetIn,
 			Weekly:          weekly,
+			WeeklyResetIn:   weeklyResetIn,
 			Banked:          banked,
 			BankedInfo:      bankedInfo,
-			ResetIn:         resetIn,
 			RoutedValue:     routedValue,
 			RoutedValueInfo: routedValueInfo,
 			OpenWebSockets:  dashboardNumber(account.OpenWebSockets),

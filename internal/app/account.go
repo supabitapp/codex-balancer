@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	oauthClientID        = "app_EMoamEEZ73f0CkXaXp7hrann"
-	tokenRefreshFallback = 8 * 24 * time.Hour
-	tokenRefreshLead     = 5 * time.Minute
+	oauthClientID         = "app_EMoamEEZ73f0CkXaXp7hrann"
+	tokenRefreshFallback  = 8 * 24 * time.Hour
+	tokenRefreshLead      = 5 * time.Minute
+	fiveHourWindowMinutes = 5 * 60
 )
 
 var oauthEndpoint = authBaseURL + "/oauth/token"
@@ -121,6 +122,15 @@ func longestWindow(windows ...window) window {
 		}
 	}
 	return longest
+}
+
+func windowByMinutes(minutes int, windows ...window) window {
+	for _, w := range windows {
+		if w.known() && w.minutes == minutes {
+			return w
+		}
+	}
+	return window{}
 }
 
 func creditCycleStart(now time.Time, windows ...window) (time.Time, bool) {

@@ -47,6 +47,31 @@ func TestStatsEndpointReportsPriorityRoutingMode(t *testing.T) {
 	}
 }
 
+func TestStatsEndpointReportsFiveHourAndWeeklyWindows(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	fiveHourReset := now.Add(4 * time.Hour)
+	weeklyReset := now.Add(6 * 24 * time.Hour)
+	account := testAccount("account-a", 0)
+	account.primary = window{usedPercent: 35, minutes: fiveHourWindowMinutes, resetsAt: fiveHourReset, seenAt: now}
+	account.secondary = window{usedPercent: 60, minutes: 7 * 24 * 60, resetsAt: weeklyReset, seenAt: now}
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(priceSnapshot{})}
+
+	stats := server.statsResponseAt(now, server.stats.snapshot())
+	if len(stats.Accounts) != 1 {
+		t.Fatalf("accounts = %d, want one", len(stats.Accounts))
+	}
+	got := stats.Accounts[0]
+	if got.FiveHourRemainingPercent == nil || *got.FiveHourRemainingPercent != 65 || got.WeeklyRemainingPercent == nil || *got.WeeklyRemainingPercent != 40 {
+		t.Fatalf("remaining quota = five-hour %v, weekly %v", got.FiveHourRemainingPercent, got.WeeklyRemainingPercent)
+	}
+	if got.FiveHourResetAt == nil || !got.FiveHourResetAt.Equal(fiveHourReset) || got.WeeklyResetAt == nil || !got.WeeklyResetAt.Equal(weeklyReset) {
+		t.Fatalf("reset times = five-hour %v, weekly %v", got.FiveHourResetAt, got.WeeklyResetAt)
+	}
+	if got.ResetAt == nil || !got.ResetAt.Equal(weeklyReset) {
+		t.Fatalf("legacy reset = %v, want weekly reset %v", got.ResetAt, weeklyReset)
+	}
+}
+
 func TestSnapshotKeepsThreadsUntilTheirLastLiveReferenceCloses(t *testing.T) {
 	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()
