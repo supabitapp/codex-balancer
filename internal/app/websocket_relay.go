@@ -15,7 +15,7 @@ type responsesWebSocketRelay struct {
 	server       *server
 	downstream   *websocket.Conn
 	request      *http.Request
-	apiKeyName   string
+	apiKey       apiKeyIdentity
 	route        websocketRoute
 	thread       string
 	ctx          context.Context
@@ -29,7 +29,7 @@ type responsesWebSocketRelay struct {
 	pinned       bool
 }
 
-func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *http.Request, initial *websocketDial, route websocketRoute, apiKeyName string) *responsesWebSocketRelay {
+func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *http.Request, initial *websocketDial, route websocketRoute, apiKey apiKeyIdentity) *responsesWebSocketRelay {
 	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -39,7 +39,7 @@ func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *
 		server:      s,
 		downstream:  downstream,
 		request:     request,
-		apiKeyName:  apiKeyName,
+		apiKey:      apiKey,
 		route:       route,
 		thread:      route.key(),
 		ctx:         ctx,
@@ -264,7 +264,7 @@ func (r *responsesWebSocketRelay) responseCreated() {
 		if routeThread == "" {
 			routeThread = turn.statsThread
 		}
-		r.server.stats.accepted(r.route.session, routeThread, turn.statsThread, requestIP(r.request), r.current.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata, turn.counted)
+		r.server.stats.accepted(r.route.session, routeThread, turn.statsThread, requestIP(r.request), r.apiKey.suffix, r.current.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata, turn.counted)
 		r.current.moved = false
 		if turn.counted {
 			r.server.stats.answered(turn.statsThread, r.current.account.id(), time.Since(turn.sent))
@@ -291,7 +291,7 @@ func (r *responsesWebSocketRelay) responseFinished(event websocketEnvelope) {
 		if !event.Response.Usage.empty() {
 			logResponseUsage(r.server.log, turn.statsThread, r.current.account.id(), model, serviceTier, turn.metadata, time.Since(turn.sent), event.Response.Usage)
 		}
-		r.server.stats.recordAPIKeyUsage(r.apiKeyName, turn.statsThread, r.current.account.id(), model, turn.effort, serviceTier, event.Response.Usage)
+		r.server.stats.recordAPIKeyUsage(r.apiKey.name, turn.statsThread, r.current.account.id(), model, turn.effort, serviceTier, event.Response.Usage)
 		if event.Type == "response.completed" {
 			r.server.stats.completed(turn.statsThread, r.current.account.id(), turn.metadata, time.Since(turn.sent))
 		}

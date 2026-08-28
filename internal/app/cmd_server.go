@@ -81,10 +81,6 @@ func serverCmd(args []string) error {
 		}
 		lookupAPIKey = store.apiKeyName
 	}
-	clientIDKey, err := store.clientIDKey()
-	if err != nil {
-		return fmt.Errorf("load client ID key: %w", err)
-	}
 	pool, err := loadPool(store)
 	if err != nil {
 		return err
@@ -117,7 +113,6 @@ func serverCmd(args []string) error {
 		stats:        stats,
 		upstream:     *upstream,
 		lookupAPIKey: lookupAPIKey,
-		clientIDKey:  clientIDKey,
 		client:       newProxyClient(),
 		log:          log,
 		admission:    newAdmissionGate(maxActiveProxyRequests),
@@ -178,7 +173,7 @@ func serverCmd(args []string) error {
 	log.Info("listening", "addr", listener.Addr().String(), "accounts", pool.count(), "upstream", *upstream, "log_file", *logPath)
 
 	if !*plain {
-		board := dashboard{pool: pool, catalog: srv.catalog, clientIDKey: clientIDKey, stats: stats, countries: &srv.countries, addr: listener.Addr().String()}
+		board := dashboard{pool: pool, catalog: srv.catalog, stats: stats, countries: &srv.countries, addr: listener.Addr().String()}
 		if _, err := tea.NewProgram(board, tea.WithContext(signalCtx)).Run(); err != nil &&
 			!errors.Is(err, context.Canceled) {
 			return err

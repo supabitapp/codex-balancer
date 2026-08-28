@@ -51,10 +51,10 @@ each key.
 State lives in `~/.codex-balancer/state.db`.
 
 SQLite stores account credentials and settings, client API keys with cumulative
-token counters, the latest route owner for active conversations, a stable client
-identity salt, and only the current month's response facts needed to reprice API
-cost. Limits, reset credits, credit burn, model lists, prices, dashboard events,
-and other computed state stay in memory and are fetched or rebuilt after restart.
+token counters, the latest route owner for active conversations, and only the
+current month's response facts needed to reprice API cost. Limits, reset credits,
+credit burn, model lists, prices, dashboard events, and other computed state stay
+in memory and are fetched or rebuilt after restart.
 
 ## Point Codex at it
 

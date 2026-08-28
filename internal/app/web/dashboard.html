@@ -187,7 +187,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </tr></thead>
 <tbody>{{if .Threads}}{{range .Threads}}<tr id="{{.DOMID}}">
 <td>{{if .Info}}<span id="{{.DOMID}}-info" class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.KeyPrefix}}</span>{{else}}{{.KeyPrefix}}{{end}}</td>
-<td class="dim">{{.ClientID}}</td>
+<td class="dim">{{.Client}}</td>
 <td>{{.Account}}</td>
 <td>{{if .ModelInfo}}<span id="{{.DOMID}}-model" class="has-tooltip" data-tooltip="{{.ModelInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Model}}</span>{{else}}{{.Model}}{{end}}</td>
 <td>{{if .Fast}}<span role="img" aria-label="Fast">⚡️</span>{{end}}</td>

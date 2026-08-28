@@ -47,10 +47,6 @@ func (s *StateStore) Close() error {
 	return s.raw.Close()
 }
 
-func (s *StateStore) clientIDKey() ([]byte, error) {
-	return s.raw.ClientIDKey()
-}
-
 func (s *StateStore) readAPIKeys() ([]storedAPIKey, error) {
 	return s.raw.ReadAPIKeys()
 }

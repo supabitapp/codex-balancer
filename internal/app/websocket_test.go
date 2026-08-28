@@ -1054,7 +1054,7 @@ func TestWebSocketTracksUsageHeadersAndMetadata(t *testing.T) {
 		t.Fatalf("primary usage = %v", primary.usedPercent)
 	}
 	snapshot := server.stats.snapshot()
-	if snapshot.MonthlyUsage.InputTokens != 10 || len(snapshot.Threads) != 1 || snapshot.Threads[0].Metadata.TurnID != "turn" || snapshot.Threads[0].Compactions != 1 {
+	if snapshot.MonthlyUsage.InputTokens != 10 || len(snapshot.Threads) != 1 || snapshot.Threads[0].Metadata.TurnID != "turn" || snapshot.Threads[0].Compactions != 1 || snapshot.Threads[0].APIKeySuffix != "ret" {
 		t.Fatalf("stats = %+v", snapshot)
 	}
 	usage, err := server.stats.store.apiKeyUsage()

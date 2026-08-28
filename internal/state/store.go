@@ -56,12 +56,7 @@ CREATE TABLE response_usage (
 	output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
 	reasoning_tokens INTEGER NOT NULL CHECK (reasoning_tokens >= 0)
 ) STRICT;
-CREATE INDEX response_usage_at ON response_usage (at_ns);
-CREATE TABLE client_identity (
-	id INTEGER PRIMARY KEY CHECK (id = 1),
-	key BLOB NOT NULL CHECK (length(key) = 32)
-) STRICT;
-INSERT INTO client_identity (id, key) VALUES (1, randomblob(32));`
+CREATE INDEX response_usage_at ON response_usage (at_ns);`
 
 type Store struct {
 	db   *sql.DB
@@ -211,14 +206,6 @@ func (s *Store) initialize() error {
 		return fmt.Errorf("state schema %d is unsupported; expected %d", version, schemaVersion)
 	}
 	return nil
-}
-
-func (s *Store) ClientIDKey() ([]byte, error) {
-	var key []byte
-	if err := s.db.QueryRow(`SELECT key FROM client_identity WHERE id = 1`).Scan(&key); err != nil {
-		return nil, err
-	}
-	return key, nil
 }
 
 func (s *Store) ReadAPIKeys() ([]APIKey, error) {

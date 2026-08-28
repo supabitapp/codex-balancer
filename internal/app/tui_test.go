@@ -122,12 +122,12 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
 	dashboard := dashboard{
-		pool:        &Pool{accounts: []*Account{account}},
-		clientIDKey: []byte("secret"),
-		countries:   &countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}},
+		pool:      &Pool{accounts: []*Account{account}},
+		countries: &countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}},
 		snap: Snapshot{Threads: []ThreadSnapshot{{
 			Key:                "019fe5c2private",
 			ClientIP:           "203.0.113.42",
+			APIKeySuffix:       "ret",
 			Account:            "account-a",
 			Model:              "gpt-5.6-sol",
 			Effort:             "xhigh",
@@ -144,7 +144,7 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 	view := dashboard.threads(220, 8)
 	for _, expected := range []string{
 		"Thread", "Client", "IP", "Account", "Model", "Fast", "Uncached", "Cache%", "Output", "Used/Cmp", "Latency", "Reqs", "Cost", "Active",
-		"019fe5c2", "🇺🇸 US-1", "203.0.113.42", "account-a@example.com", "☀️ xhigh", "⚡", "500", "75", "300", "-- (2)", "5.42s", "39", "$0.025",
+		"019fe5c2", "🇺🇸 US-ret", "203.0.113.42", "account-a@example.com", "☀️ xhigh", "⚡", "500", "75", "300", "-- (2)", "5.42s", "39", "$0.025",
 	} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("routing missing %q:\n%s", expected, view)
@@ -160,7 +160,7 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 		t.Fatalf("routing column order is not Client, IP, Account:\n%s", view)
 	}
 	compact := dashboard.threads(120, 8)
-	for _, expected := range []string{"Client", "🇺🇸 US-1", "IP", "203.0.113.42", "Used/Cmp", "5.42s", "Reqs", "39", "Cost", "$0.025", "Active"} {
+	for _, expected := range []string{"Client", "🇺🇸 US-ret", "IP", "203.0.113.42", "Used/Cmp", "5.42s", "Reqs", "39", "Cost", "$0.025", "Active"} {
 		if !strings.Contains(compact, expected) {
 			t.Fatalf("compact routing missing %q:\n%s", expected, compact)
 		}

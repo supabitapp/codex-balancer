@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -108,7 +107,7 @@ type dashboardThreadView struct {
 	DOMID         string
 	KeyPrefix     string
 	Info          string
-	ClientID      string
+	Client        string
 	Account       string
 	Model         string
 	ModelInfo     string
@@ -308,9 +307,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}
 
 	threadViews := make([]dashboardThreadView, 0, len(snapshot.Threads))
-	clientNames := dashboardClientNames(snapshot.Threads, s.clientIDKey, &s.countries)
 	for _, thread := range snapshot.Threads {
-		clientName := clientNames[clientIDForIP(thread.ClientIP, s.clientIDKey)]
+		clientName := dashboardClientName(thread, &s.countries)
 		threadViews = append(threadViews, newDashboardThreadView(thread, names[thread.Account], clientName, s.catalog.contextLimits(thread.Account, thread.Model), now))
 	}
 
@@ -472,34 +470,18 @@ func trafficPercentages(accounts []accountStatsResponse) []int64 {
 	return percentages
 }
 
-func dashboardClientNames(threads []ThreadSnapshot, clientIDKey []byte, countries *countryResolver) map[string]string {
-	countriesByID := make(map[string]string)
-	ids := make([]string, 0)
-	for _, thread := range threads {
-		id := clientIDForIP(thread.ClientIP, clientIDKey)
-		if id == "" {
-			continue
-		}
-		if _, exists := countriesByID[id]; exists {
-			continue
-		}
-		country := ""
-		if countries != nil {
-			country = countries.label(thread.ClientIP)
-		}
-		countriesByID[id] = country
-		ids = append(ids, id)
+func dashboardClientName(thread ThreadSnapshot, countries *countryResolver) string {
+	country := ""
+	if countries != nil {
+		country = countries.label(thread.ClientIP)
 	}
-	slices.Sort(ids)
-	names := make(map[string]string, len(ids))
-	for i, id := range ids {
-		country := countriesByID[id]
-		if country == "" {
-			country = "Unknown"
-		}
-		names[id] = fmt.Sprintf("%s-%d", country, i+1)
+	if country == "" {
+		country = "Unknown"
 	}
-	return names
+	if thread.APIKeySuffix == "" {
+		return country
+	}
+	return country + "-" + thread.APIKeySuffix
 }
 
 func newDashboardThreadView(thread ThreadSnapshot, account, clientName string, limits modelContextLimits, now time.Time) dashboardThreadView {
@@ -513,7 +495,7 @@ func newDashboardThreadView(thread ThreadSnapshot, account, clientName string, l
 		DOMID:         dashboardDOMID("thread", thread.Key),
 		KeyPrefix:     shortKey(thread.Key),
 		Info:          dashboardThreadInfo(thread.Metadata),
-		ClientID:      clientName,
+		Client:        clientName,
 		Account:       account,
 		Model:         model,
 		ModelInfo:     modelInfo,

@@ -41,17 +41,16 @@ func TestStateStoreCreatesOnlyMinimalSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	wantTables := []string{"accounts", "api_keys", "client_identity", "response_usage", "routes"}
+	wantTables := []string{"accounts", "api_keys", "response_usage", "routes"}
 	if !reflect.DeepEqual(tables, wantTables) {
 		t.Fatalf("tables = %v, want %v", tables, wantTables)
 	}
 
 	wantColumns := map[string][]string{
-		"accounts":        {"account_id", "id_token", "access_token", "refresh_token", "paused", "routing_mode", "last_refresh_ns", "last_used_at_ns", "reauth"},
-		"api_keys":        {"name", "secret", "created_at_ns", "revoked_at_ns", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"},
-		"client_identity": {"id", "key"},
-		"response_usage":  {"id", "at_ns", "model", "service_tier", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"},
-		"routes":          {"key", "account_id", "updated_at_ns"},
+		"accounts":       {"account_id", "id_token", "access_token", "refresh_token", "paused", "routing_mode", "last_refresh_ns", "last_used_at_ns", "reauth"},
+		"api_keys":       {"name", "secret", "created_at_ns", "revoked_at_ns", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"},
+		"response_usage": {"id", "at_ns", "model", "service_tier", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"},
+		"routes":         {"key", "account_id", "updated_at_ns"},
 	}
 	for table, want := range wantColumns {
 		got := tableColumns(t, store, table)
@@ -246,33 +245,6 @@ func TestPersistentStatsRestoresOnlyCurrentMonthUsage(t *testing.T) {
 	}
 	if rows != 1 {
 		t.Fatalf("retained usage rows = %d, want 1", rows)
-	}
-}
-
-func TestStateStoreClientIdentitySurvivesRestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "state.db")
-	store, err := openStateStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := store.clientIDKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := openStateStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	got, err := reopened.clientIDKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) || len(got) != 32 {
-		t.Fatalf("client identity key changed or has length %d", len(got))
 	}
 }
 

@@ -46,16 +46,15 @@ func newTUIStyles() tuiStyles {
 }
 
 type dashboard struct {
-	pool        *Pool
-	catalog     *modelCatalog
-	clientIDKey []byte
-	stats       *Stats
-	addr        string
-	width       int
-	height      int
-	cursor      int
-	snap        Snapshot
-	countries   *countryResolver
+	pool      *Pool
+	catalog   *modelCatalog
+	stats     *Stats
+	addr      string
+	width     int
+	height    int
+	cursor    int
+	snap      Snapshot
+	countries *countryResolver
 }
 
 type tickMsg time.Time
@@ -450,11 +449,10 @@ func (d dashboard) threads(width, height int) string {
 	names := d.accountNames()
 	now := time.Now()
 	views := make([]routingThreadView, 0, len(d.snap.Threads))
-	clientNames := dashboardClientNames(d.snap.Threads, d.clientIDKey, d.countries)
 	for _, t := range d.snap.Threads {
 		name := cmp.Or(names[t.Account], shortKey(t.Account))
 		views = append(views, routingThreadView{
-			dashboardThreadView: newDashboardThreadView(t, name, clientNames[clientIDForIP(t.ClientIP, d.clientIDKey)], d.catalog.contextLimits(t.Account, t.Model), now),
+			dashboardThreadView: newDashboardThreadView(t, name, dashboardClientName(t, d.countries), d.catalog.contextLimits(t.Account, t.Model), now),
 			clientIP:            t.ClientIP,
 		})
 	}
@@ -463,14 +461,17 @@ func (d dashboard) threads(width, height int) string {
 	}
 
 	accountWidth := len("Account")
+	clientWidth := len("Client")
 	modelWidth := len("Model")
 	ipWidth := len("IP")
 	for _, view := range views {
 		accountWidth = max(accountWidth, lipgloss.Width(view.Account))
+		clientWidth = max(clientWidth, lipgloss.Width(view.Client))
 		modelWidth = max(modelWidth, lipgloss.Width(view.Model))
 		ipWidth = max(ipWidth, lipgloss.Width(view.clientIP))
 	}
 	accountWidth = min(accountWidth, 30)
+	clientWidth = min(clientWidth, 16)
 	modelWidth = min(modelWidth, 28)
 	ipWidth = min(ipWidth, 39)
 
@@ -482,7 +483,7 @@ func (d dashboard) threads(width, height int) string {
 	}
 	columns := []routingColumn{
 		{"Thread", 8, styles.text, func(view routingThreadView) string { return view.KeyPrefix }},
-		{"Client", 8, styles.dim, func(view routingThreadView) string { return view.ClientID }},
+		{"Client", clientWidth, styles.dim, func(view routingThreadView) string { return view.Client }},
 		{"IP", ipWidth, styles.dim, func(view routingThreadView) string { return view.clientIP }},
 		{"Account", accountWidth, styles.spark, func(view routingThreadView) string { return view.Account }},
 		{"Model", modelWidth, styles.text, func(view routingThreadView) string { return view.Model }},

@@ -38,7 +38,6 @@ type server struct {
 	upstream             string
 	authIssuer           string
 	lookupAPIKey         func(string) (string, bool, error)
-	clientIDKey          []byte
 	client               *http.Client
 	log                  *slog.Logger
 	admission            *admissionGate
@@ -212,9 +211,14 @@ func copyWebSocketHeaders(dst, src http.Header) {
 	}
 }
 
-func (s *server) authorizeAPIKey(r *http.Request) (string, bool) {
+type apiKeyIdentity struct {
+	name   string
+	suffix string
+}
+
+func (s *server) authorizeAPIKey(r *http.Request) (apiKeyIdentity, bool) {
 	if s.lookupAPIKey == nil {
-		return "", true
+		return apiKeyIdentity{}, true
 	}
 	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	name, valid, err := s.lookupAPIKey(presented)
@@ -222,9 +226,19 @@ func (s *server) authorizeAPIKey(r *http.Request) (string, bool) {
 		if s.log != nil {
 			s.log.Error("API key lookup failed", "error", err)
 		}
-		return "", false
+		return apiKeyIdentity{}, false
 	}
-	return name, valid
+	if !valid {
+		return apiKeyIdentity{}, false
+	}
+	return apiKeyIdentity{name: name, suffix: tokenSuffix(presented)}, true
+}
+
+func tokenSuffix(token string) string {
+	if len(token) <= 3 {
+		return token
+	}
+	return token[len(token)-3:]
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

@@ -221,15 +221,6 @@ func TestRequestIPFallsBackToRemoteAddress(t *testing.T) {
 	}
 }
 
-func TestClientIDForIP(t *testing.T) {
-	if got := clientIDForIP("203.0.113.42", []byte("secret")); got != "52f3c1d8" {
-		t.Fatalf("clientIDForIP() = %q, want 52f3c1d8", got)
-	}
-	if got := clientIDForIP("203.0.113.42", nil); got != "" {
-		t.Fatalf("clientIDForIP() without key = %q", got)
-	}
-}
-
 func TestThreadCostPricesEachResponse(t *testing.T) {
 	prices := testPriceSnapshot(t)
 	stats := newStatsWithPrices(prices)
@@ -261,7 +252,7 @@ func TestCatalogRefreshRepricesMonthlyUsageWithoutPersistingThreadHistory(t *tes
 		t.Fatal(err)
 	}
 	stats.activateThread("thread")
-	stats.accepted("", "thread", "thread", "client", "account", "gpt-5.4", "high", "default", turnMetadata{}, true)
+	stats.accepted("", "thread", "thread", "client", "", "account", "gpt-5.4", "high", "default", turnMetadata{}, true)
 	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
 	stats.recordUsage("thread", "account", "gpt-5.4", "high", "default", usage)
 	before := stats.snapshot().Threads[0]

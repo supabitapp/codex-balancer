@@ -113,16 +113,15 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("019fe5c2private")
-	stats.accepted("", "019fe5c2private", "019fe5c2private", "203.0.113.42", "unused", "gpt-5.6-sol", "high", serviceTierFast, turnMetadata{}, true)
+	stats.accepted("", "019fe5c2private", "019fe5c2private", "203.0.113.42", "ret", "unused", "gpt-5.6-sol", "high", serviceTierFast, turnMetadata{}, true)
 	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "high", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
 	account := accountFromState(accountState{IDToken: "x." + tokenPayload + ".x"})
 	server := &server{
-		pool:        &Pool{accounts: []*Account{account}},
-		stats:       stats,
-		clientIDKey: []byte("secret"),
-		countries:   countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}},
+		pool:      &Pool{accounts: []*Account{account}},
+		stats:     stats,
+		countries: countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}},
 	}
 	httpServer := httptest.NewServer(server.routes())
 	defer httpServer.Close()
@@ -154,7 +153,7 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
-		`🇺🇸 US-1`,
+		`🇺🇸 US-ret`,
 		`<td>☀️ high</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<span>1 checking</span>`,
@@ -649,6 +648,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "019fe5c2private", TurnID: "019fe730private", SubagentKind: "compact"}
 	stats.activateThread("thread")
 	stats.applyRouted(now, "thread", "203.0.113.42", "account", "gpt-5.6-sol", "xhigh", "", metadata)
+	stats.threads["thread"].apiKeySuffix = "ret"
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300, TotalTokens: 2_300}
 	usage.InputDetails.CachedTokens = 1_500
 	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "xhigh", "default", usage)
@@ -660,11 +660,10 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	model["effective_context_window_percent"] = 95
 	catalog.replace([]string{"account"}, map[string][]modelEntry{"account": {model}}, "0.147.0")
 	server := &server{
-		pool:        &Pool{},
-		stats:       stats,
-		catalog:     catalog,
-		clientIDKey: []byte("secret"),
-		countries:   countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}},
+		pool:      &Pool{},
+		stats:     stats,
+		catalog:   catalog,
+		countries: countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}},
 	}
 
 	view := server.currentDashboard(now)
@@ -672,7 +671,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.ClientID != "🇺🇸 US-1" || thread.Model != "☀️ xhigh" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextUsed != "0% (1)" || thread.Latency != "2s" || thread.Requests != "1" || thread.Cost != "$0.012" {
+	if thread.Client != "🇺🇸 US-ret" || thread.Model != "☀️ xhigh" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextUsed != "0% (1)" || thread.Latency != "2s" || thread.Requests != "1" || thread.Cost != "$0.012" {
 		t.Fatalf("routing row = %+v", thread)
 	}
 	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Context window: 258.4K") || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Tokens used: 2.3K") || !strings.Contains(thread.ContextInfo, "Context used: 0%") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
@@ -683,7 +682,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<td class=\"dim\">🇺🇸 US-1</td>", "<th>Model (thinking mode)</th>", "<td>☀️ xhigh</td>", "<th>Cache %</th>", "<th>Context used<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1"} {
+	for _, expected := range []string{"<td class=\"dim\">🇺🇸 US-ret</td>", "<th>Model (thinking mode)</th>", "<td>☀️ xhigh</td>", "<th>Cache %</th>", "<th>Context used<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -714,10 +713,9 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 	stats.applyUsageAt(now.Add(2*time.Second), "thread", "account", "gpt-5.6-sol", "xhigh", "default", responseUsage{InputTokens: 1_000})
 	stats.applyUsageAt(now.Add(3*time.Second), "thread", "account", "gpt-5.6-luna", "low", "default", responseUsage{InputTokens: 1_000})
 	server := &server{
-		pool:        &Pool{},
-		stats:       stats,
-		catalog:     newModelCatalog(),
-		clientIDKey: []byte("secret"),
+		pool:    &Pool{},
+		stats:   stats,
+		catalog: newModelCatalog(),
 	}
 
 	view := server.currentDashboard(now.Add(3 * time.Second))
@@ -756,45 +754,13 @@ func TestDashboardModel(t *testing.T) {
 	}
 }
 
-func TestDashboardClientNamesUseCountryAndUniqueOrdinals(t *testing.T) {
-	key := []byte("secret")
-	clients := []struct {
-		ip      string
-		country string
-	}{
-		{"1.1.1.1", "AU"},
-		{"8.8.8.8", "US"},
-		{"9.9.9.9", "US"},
-		{"208.67.222.222", "US"},
-		{"185.228.168.9", "CH"},
-		{"76.76.2.0", "US"},
+func TestDashboardClientNameUsesCountryAndAPIKeySuffix(t *testing.T) {
+	resolver := &countryResolver{states: map[string]countryState{"1.1.1.1": {code: "AU", ready: true}}}
+	if got := dashboardClientName(ThreadSnapshot{ClientIP: "1.1.1.1", APIKeySuffix: "xyz"}, resolver); got != "🇦🇺 AU-xyz" {
+		t.Fatalf("client name = %q, want country and token suffix", got)
 	}
-	threads := make([]ThreadSnapshot, 0, len(clients)+1)
-	states := make(map[string]countryState, len(clients))
-	wantCountries := make(map[string]string, len(clients))
-	for _, client := range clients {
-		threads = append(threads, ThreadSnapshot{ClientIP: client.ip})
-		states[client.ip] = countryState{code: client.country, ready: true}
-		wantCountries[clientIDForIP(client.ip, key)] = countryLabel(client.country)
-	}
-	threads = append(threads, ThreadSnapshot{ClientIP: clients[0].ip})
-
-	names := dashboardClientNames(threads, key, &countryResolver{states: states})
-	if len(names) != 6 {
-		t.Fatalf("client names = %v, want six", names)
-	}
-	ordinals := make(map[string]bool, len(names))
-	for id, name := range names {
-		country := wantCountries[id]
-		if !strings.HasPrefix(name, country+"-") {
-			t.Fatalf("client %s = %q, want country %q", id, name, country)
-		}
-		ordinals[strings.TrimPrefix(name, country+"-")] = true
-	}
-	for _, ordinal := range []string{"1", "2", "3", "4", "5", "6"} {
-		if !ordinals[ordinal] {
-			t.Fatalf("client ordinals = %v, missing %s", ordinals, ordinal)
-		}
+	if got := dashboardClientName(ThreadSnapshot{}, resolver); got != "Unknown" {
+		t.Fatalf("unknown client name = %q", got)
 	}
 }
 

@@ -1,9 +1,6 @@
 package app
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"net"
 	"net/http"
@@ -68,6 +65,7 @@ type rollingCounter struct {
 type threadStats struct {
 	key                string
 	clientIP           string
+	apiKeySuffix       string
 	account            string
 	model              string
 	models             []threadModel
@@ -174,7 +172,7 @@ func (s *Stats) failedOver(account, reason string) {
 	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
-func (s *Stats) accepted(session, routeThread, statsThread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata, counted bool) {
+func (s *Stats) accepted(session, routeThread, statsThread, clientIP, apiKeySuffix, account, model, effort, serviceTier string, metadata turnMetadata, counted bool) {
 	now := time.Now()
 	s.persistRoute(storedRoute{At: now, Session: session, Thread: routeThread, Account: account})
 	if !counted {
@@ -183,6 +181,9 @@ func (s *Stats) accepted(session, routeThread, statsThread, clientIP, account, m
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.applyRouted(now, statsThread, clientIP, account, model, effort, serviceTier, metadata)
+	if thread := s.threads[statsThread]; thread != nil {
+		thread.apiKeySuffix = apiKeySuffix
+	}
 }
 
 func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata) {
@@ -462,6 +463,7 @@ type AccountSnapshot struct {
 type ThreadSnapshot struct {
 	Key                string `json:"key"`
 	ClientIP           string `json:"-"`
+	APIKeySuffix       string `json:"-"`
 	Account            string `json:"account"`
 	Model              string `json:"model"`
 	models             []threadModel
@@ -524,6 +526,7 @@ func (s *Stats) snapshot() Snapshot {
 		out.Threads = append(out.Threads, ThreadSnapshot{
 			Key:                t.key,
 			ClientIP:           t.clientIP,
+			APIKeySuffix:       t.apiKeySuffix,
 			Account:            t.account,
 			Model:              t.model,
 			models:             models,
@@ -825,14 +828,4 @@ func requestIP(r *http.Request) string {
 		return ""
 	}
 	return parsed.Unmap().String()
-}
-
-func clientIDForIP(ip string, key []byte) string {
-	if ip == "" || len(key) == 0 {
-		return ""
-	}
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte("codex-balancer-client\x00"))
-	mac.Write([]byte(ip))
-	return hex.EncodeToString(mac.Sum(nil)[:4])
 }

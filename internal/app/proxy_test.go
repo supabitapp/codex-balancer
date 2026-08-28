@@ -30,6 +30,12 @@ func TestServerAcceptsMultipleDatabaseAPIKeysAndSeesChanges(t *testing.T) {
 		}
 	}
 	server := &server{lookupAPIKey: store.apiKeyName}
+	identityRequest := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	identityRequest.Header.Set("Authorization", "Bearer secret-a")
+	identity, valid := server.authorizeAPIKey(identityRequest)
+	if !valid || identity.name != "client-0" || identity.suffix != "t-a" {
+		t.Fatalf("API key identity = %+v, %t", identity, valid)
+	}
 	assertStatus := func(secret string, want int) {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
