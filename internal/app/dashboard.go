@@ -22,7 +22,7 @@ const (
 	waterCSSURL              = "https://cdn.jsdelivr.net/npm/water.css@2/out/water.css"
 )
 
-//go:embed web/accounts.html web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/ws-2.0.4.min.js
+//go:embed web/accounts.html web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/idiomorph-0.7.4.min.js web/ws-2.0.4.min.js
 var dashboardFiles embed.FS
 
 func webTemplate(name string) *template.Template {
@@ -35,6 +35,17 @@ var dashboardTemplate = template.Must(webTemplate("dashboard").Funcs(template.Fu
 	"dashboardAssetURL": dashboardAssetURL,
 	"dashboardStatus":   dashboardStatus,
 }).ParseFS(dashboardFiles, "web/dashboard.html"))
+
+var dashboardUpdateTemplates = []string{
+	"overview-update",
+	"summary-update",
+	"accounts-update",
+	"workspace-summary-update",
+	"workspaces-update",
+	"routing-count-update",
+	"threads-update",
+	"events-update",
+}
 
 type dashboardView struct {
 	Summary    []dashboardCount
@@ -51,6 +62,7 @@ type dashboardCount struct {
 }
 
 type dashboardAccountView struct {
+	DOMID          string
 	Name           string
 	Plan           string
 	Status         accountStatus
@@ -67,6 +79,7 @@ type dashboardAccountView struct {
 }
 
 type dashboardWorkspaceView struct {
+	DOMID       string
 	Name        string
 	Plan        string
 	Status      accountStatus
@@ -84,6 +97,7 @@ type dashboardStatusView struct {
 }
 
 type dashboardMetric struct {
+	DOMID      string
 	Name       string
 	Value      string
 	Info       string
@@ -91,6 +105,7 @@ type dashboardMetric struct {
 }
 
 type dashboardThreadView struct {
+	DOMID         string
 	KeyPrefix     string
 	Info          string
 	ClientID      string
@@ -111,6 +126,7 @@ type dashboardThreadView struct {
 }
 
 type dashboardEventView struct {
+	DOMID   string
 	At      string
 	Kind    string
 	Account string
@@ -124,6 +140,11 @@ func dashboardAssetURL(name string) string {
 	}
 	hash := sha256.Sum256(content)
 	return fmt.Sprintf("/dashboard/assets/%s?v=%x", name, hash[:8])
+}
+
+func dashboardDOMID(prefix string, values ...string) string {
+	hash := sha256.Sum256([]byte(strings.Join(values, "\x00")))
+	return fmt.Sprintf("%s-%x", prefix, hash[:8])
 }
 
 func webAsset(path, contentType, cacheControl string) http.HandlerFunc {
@@ -168,17 +189,16 @@ func (s *server) dashboardWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	ticker := time.NewTicker(dashboardFrame)
 	defer ticker.Stop()
-	var previous []byte
+	previous := make(map[string][]byte, len(dashboardUpdateTemplates))
 	for {
-		payload, err := renderDashboard("dashboard-update", s.currentDashboard(time.Now()))
+		payload, err := renderDashboardChanges(s.currentDashboard(time.Now()), previous)
 		if err != nil {
 			return
 		}
-		if !bytes.Equal(payload, previous) {
+		if len(payload) > 0 {
 			if err := conn.Write(r.Context(), websocket.MessageText, payload); err != nil {
 				return
 			}
-			previous = payload
 		}
 		select {
 		case <-r.Context().Done():
@@ -192,6 +212,22 @@ func renderDashboard(name string, view dashboardView) ([]byte, error) {
 	var output bytes.Buffer
 	if err := dashboardTemplate.ExecuteTemplate(&output, name, view); err != nil {
 		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func renderDashboardChanges(view dashboardView, previous map[string][]byte) ([]byte, error) {
+	var output bytes.Buffer
+	for _, name := range dashboardUpdateTemplates {
+		fragment, err := renderDashboard(name, view)
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Equal(fragment, previous[name]) {
+			continue
+		}
+		output.Write(fragment)
+		previous[name] = fragment
 	}
 	return output.Bytes(), nil
 }
@@ -237,6 +273,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			creditBurnInfo = "Approximate since reset at " + account.CreditBurnSince.In(now.Location()).Format("2 January 2006, 15:04 MST") + ". Daily analytics includes the full reset day."
 		}
 		accounts = append(accounts, dashboardAccountView{
+			DOMID:          dashboardDOMID("account", account.ID),
 			Name:           name,
 			Plan:           account.Plan,
 			Status:         account.Status,
@@ -281,6 +318,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	for i := len(snapshot.Events) - 1; i >= 0; i-- {
 		event := snapshot.Events[i]
 		events = append(events, dashboardEventView{
+			DOMID:   dashboardDOMID("event", event.At.Format(time.RFC3339Nano), event.Kind, event.Account, event.Detail),
 			At:      event.At.UTC().Format("15:04:05") + " UTC",
 			Kind:    displayEventKind(event.Kind),
 			Account: eventAccountName(names, event.Account),
@@ -311,6 +349,9 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Info:  priceInfo,
 		},
 	)
+	for i := range overview {
+		overview[i].DOMID = dashboardDOMID("metric", overview[i].Name)
+	}
 	return dashboardView{
 		Summary:    summary,
 		Accounts:   accounts,
@@ -323,6 +364,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 
 func newDashboardWorkspaceView(now time.Time, name string, account accountStatsResponse) dashboardWorkspaceView {
 	view := dashboardWorkspaceView{
+		DOMID:       dashboardDOMID("workspace", account.ID),
 		Name:        name,
 		Plan:        account.Plan,
 		Status:      account.Status,
@@ -468,6 +510,7 @@ func newDashboardThreadView(thread ThreadSnapshot, account, clientName string, l
 	}
 	model, modelInfo := dashboardThreadModel(thread)
 	return dashboardThreadView{
+		DOMID:         dashboardDOMID("thread", thread.Key),
 		KeyPrefix:     shortKey(thread.Key),
 		Info:          dashboardThreadInfo(thread.Metadata),
 		ClientID:      clientName,

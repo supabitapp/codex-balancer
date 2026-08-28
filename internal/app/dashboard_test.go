@@ -49,8 +49,9 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		`<link rel="stylesheet" href="` + waterCSSURL + `">`,
 		`src="` + dashboardAssetURL("dashboard.js") + `"`,
 		`src="/dashboard/assets/htmx-2.0.10.min.js"`,
+		`src="/dashboard/assets/idiomorph-0.7.4.min.js"`,
 		`src="/dashboard/assets/ws-2.0.4.min.js"`,
-		`hx-ext="ws"`,
+		`hx-ext="ws,morph"`,
 		`ws-connect="/dashboard/ws"`,
 		`id="dashboard"`,
 		`table { width: max-content; min-width: 100%;`,
@@ -88,6 +89,7 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 		{"/favicon.svg", "image/svg+xml", "public, max-age=3600", 100},
 		{"/dashboard/assets/dashboard.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 500},
 		{"/dashboard/assets/htmx-2.0.10.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
+		{"/dashboard/assets/idiomorph-0.7.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
 		{"/dashboard/assets/ws-2.0.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
 	} {
 		response, err := http.Get(httpServer.URL + asset.path)
@@ -141,14 +143,14 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	}
 	body := string(payload)
 	for _, expected := range []string{
-		`id="overview" hx-swap-oob="innerHTML"`,
-		`id="summary" hx-swap-oob="innerHTML"`,
-		`id="accounts" hx-swap-oob="innerHTML"`,
-		`id="workspace-summary" hx-swap-oob="innerHTML"`,
-		`id="workspaces" hx-swap-oob="innerHTML"`,
-		`id="routing-count" hx-swap-oob="innerHTML"`,
-		`id="threads" hx-swap-oob="innerHTML"`,
-		`id="events" hx-swap-oob="innerHTML"`,
+		`id="overview" hx-swap-oob="morph:innerHTML"`,
+		`id="summary" hx-swap-oob="morph:innerHTML"`,
+		`id="accounts" hx-swap-oob="morph:innerHTML"`,
+		`id="workspace-summary" hx-swap-oob="morph:innerHTML"`,
+		`id="workspaces" hx-swap-oob="morph:innerHTML"`,
+		`id="routing-count" hx-swap-oob="morph:innerHTML"`,
+		`id="threads" hx-swap-oob="morph:innerHTML"`,
+		`id="events" hx-swap-oob="morph:innerHTML"`,
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,
@@ -176,6 +178,59 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard update exposed %q", private)
 		}
+	}
+}
+
+func TestDashboardChangesOnlyRenderChangedFragments(t *testing.T) {
+	previous := make(map[string][]byte)
+	view := dashboardView{}
+
+	initial, err := renderDashboardChanges(view, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"overview", "summary", "accounts", "workspace-summary", "workspaces", "routing-count", "threads", "events"} {
+		if !strings.Contains(string(initial), `id="`+id+`"`) {
+			t.Fatalf("initial dashboard update missing %q: %s", id, initial)
+		}
+	}
+
+	unchanged, err := renderDashboardChanges(view, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unchanged) != 0 {
+		t.Fatalf("unchanged dashboard rendered %q", unchanged)
+	}
+
+	view.Summary = []dashboardCount{{Count: 1, Label: "live"}}
+	changed, err := renderDashboardChanges(view, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(changed)
+	if !strings.Contains(body, `id="summary"`) || !strings.Contains(body, `1 live`) {
+		t.Fatalf("changed dashboard missing summary: %s", body)
+	}
+	for _, id := range []string{"overview", "accounts", "workspace-summary", "workspaces", "routing-count", "threads", "events"} {
+		if strings.Contains(body, `id="`+id+`"`) {
+			t.Fatalf("summary change unnecessarily rendered %q: %s", id, body)
+		}
+	}
+}
+
+func TestDashboardDOMIDsAreStableAndOpaque(t *testing.T) {
+	const secret = "private-account-or-thread-key"
+	first := dashboardDOMID("thread", secret)
+	second := dashboardDOMID("thread", secret)
+	if first != second {
+		t.Fatalf("dashboard DOM ID changed from %q to %q", first, second)
+	}
+	if !strings.HasPrefix(first, "thread-") || strings.Contains(first, secret) {
+		t.Fatalf("dashboard DOM ID %q is not opaque", first)
+	}
+	if first == dashboardDOMID("thread", "other-key") {
+		t.Fatalf("different keys produced dashboard DOM ID %q", first)
 	}
 }
 
@@ -326,7 +381,7 @@ func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := string(payload)
-			expected := `<dt>Pace</dt><dd><span class="has-tooltip`
+			expected := `<dt>Pace</dt><dd><span id="metric-`
 			renderedInfoStrong := strings.ReplaceAll(test.wantInfoStrong, "+", "&#43;")
 			renderedWant := strings.ReplaceAll(test.wantMark, "+", "&#43;")
 			checks := []string{expected, `class="has-tooltip"`, `data-tooltip="` + test.wantInfo + `"`, ">" + renderedWant + "</span>"}

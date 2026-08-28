@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="{{waterCSSURL}}">
 <script src="{{dashboardAssetURL "dashboard.js"}}" defer></script>
 <script src="/dashboard/assets/htmx-2.0.10.min.js" defer></script>
+<script src="/dashboard/assets/idiomorph-0.7.4.min.js" defer></script>
 <script src="/dashboard/assets/ws-2.0.4.min.js" defer></script>
 <style>
 :root {
@@ -63,7 +64,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 }
 </style>
 </head>
-<body hx-ext="ws">
+<body hx-ext="ws,morph">
 <div ws-connect="/dashboard/ws">
 {{template "dashboard" .}}
 </div>
@@ -102,16 +103,18 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </section>
 </main>{{end}}
 
-{{define "dashboard-update"}}<dl id="overview" hx-swap-oob="innerHTML">{{template "overview" .}}</dl>
-<span id="summary" hx-swap-oob="innerHTML">{{template "summary" .}}</span>
-<div id="accounts" hx-swap-oob="innerHTML">{{template "accounts" .}}</div>
-<span id="workspace-summary" hx-swap-oob="innerHTML">{{len .Workspaces}} not routed</span>
-<div id="workspaces" hx-swap-oob="innerHTML">{{template "workspaces" .}}</div>
-<span id="routing-count" hx-swap-oob="innerHTML">{{len .Threads}}</span>
-<div id="threads" hx-swap-oob="innerHTML">{{template "threads" .}}</div>
-<div id="events" hx-swap-oob="innerHTML">{{template "events" .}}</div>{{end}}
+{{define "dashboard-update"}}{{template "overview-update" .}}{{template "summary-update" .}}{{template "accounts-update" .}}{{template "workspace-summary-update" .}}{{template "workspaces-update" .}}{{template "routing-count-update" .}}{{template "threads-update" .}}{{template "events-update" .}}{{end}}
 
-{{define "overview"}}{{range .Overview}}<div><dt>{{.Name}}</dt><dd>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}"{{if .InfoStrong}} data-tooltip-strong="{{.InfoStrong}}"{{end}} aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}{{end}}
+{{define "overview-update"}}<dl id="overview" hx-swap-oob="morph:innerHTML">{{template "overview" .}}</dl>{{end}}
+{{define "summary-update"}}<span id="summary" hx-swap-oob="morph:innerHTML">{{template "summary" .}}</span>{{end}}
+{{define "accounts-update"}}<div id="accounts" hx-swap-oob="morph:innerHTML">{{template "accounts" .}}</div>{{end}}
+{{define "workspace-summary-update"}}<span id="workspace-summary" hx-swap-oob="morph:innerHTML">{{len .Workspaces}} not routed</span>{{end}}
+{{define "workspaces-update"}}<div id="workspaces" hx-swap-oob="morph:innerHTML">{{template "workspaces" .}}</div>{{end}}
+{{define "routing-count-update"}}<span id="routing-count" hx-swap-oob="morph:innerHTML">{{len .Threads}}</span>{{end}}
+{{define "threads-update"}}<div id="threads" hx-swap-oob="morph:innerHTML">{{template "threads" .}}</div>{{end}}
+{{define "events-update"}}<div id="events" hx-swap-oob="morph:innerHTML">{{template "events" .}}</div>{{end}}
+
+{{define "overview"}}{{range .Overview}}<div id="{{.DOMID}}"><dt>{{.Name}}</dt><dd>{{if .Info}}<span id="{{.DOMID}}-tooltip" class="has-tooltip" data-tooltip="{{.Info}}"{{if .InfoStrong}} data-tooltip-strong="{{.InfoStrong}}"{{end}} aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}{{end}}
 
 {{define "summary"}}{{range $index, $item := .Summary}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}{{end}}
 
@@ -129,14 +132,14 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Traffic 24h %</th>
 <th>Activity 24h</th>
 </tr></thead>
-<tbody>{{range .Accounts}}<tr>
+<tbody>{{range .Accounts}}<tr id="{{.DOMID}}">
 <td>{{.Name}}</td>
 <td class="dim">{{.Plan}}</td>
-{{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
+{{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span id="{{.DOMID}}-status" class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
 <td>{{.Weekly}}</td>
-<td>{{if .BankedInfo}}<span class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
+<td>{{if .BankedInfo}}<span id="{{.DOMID}}-banked" class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>
-<td>{{if .CreditBurnInfo}}<span class="has-tooltip" data-tooltip="{{.CreditBurnInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.CreditBurn}}</span>{{else}}{{.CreditBurn}}{{end}}</td>
+<td>{{if .CreditBurnInfo}}<span id="{{.DOMID}}-credit-burn" class="has-tooltip" data-tooltip="{{.CreditBurnInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.CreditBurn}}</span>{{else}}{{.CreditBurn}}{{end}}</td>
 <td>{{.OpenWebSockets}}</td>
 <td class="dim">{{.Traffic}}</td>
 <td class="spark">{{.Activity}}</td>
@@ -156,10 +159,10 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Used %</th>
 <th>Reset in</th>
 </tr></thead>
-<tbody>{{range .Workspaces}}<tr>
+<tbody>{{range .Workspaces}}<tr id="{{.DOMID}}">
 <td>{{.Name}}</td>
 <td class="dim">{{.Plan}}</td>
-{{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
+{{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span id="{{.DOMID}}-status" class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
 <td>{{.Limit}}</td>
 <td>{{.Used}}</td>
 <td>{{.Remaining}}</td>
@@ -182,14 +185,14 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Cost</th>
 <th>Last active</th>
 </tr></thead>
-<tbody>{{if .Threads}}{{range .Threads}}<tr>
-<td>{{if .Info}}<span class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.KeyPrefix}}</span>{{else}}{{.KeyPrefix}}{{end}}</td>
+<tbody>{{if .Threads}}{{range .Threads}}<tr id="{{.DOMID}}">
+<td>{{if .Info}}<span id="{{.DOMID}}-info" class="has-tooltip" data-tooltip="{{.Info}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.KeyPrefix}}</span>{{else}}{{.KeyPrefix}}{{end}}</td>
 <td class="dim">{{.ClientID}}</td>
 <td>{{.Account}}</td>
-<td>{{if .ModelInfo}}<span class="has-tooltip" data-tooltip="{{.ModelInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Model}}</span>{{else}}{{.Model}}{{end}}</td>
+<td>{{if .ModelInfo}}<span id="{{.DOMID}}-model" class="has-tooltip" data-tooltip="{{.ModelInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Model}}</span>{{else}}{{.Model}}{{end}}</td>
 <td>{{if .Fast}}<span role="img" aria-label="Fast">⚡️</span>{{end}}</td>
 <td>{{.CacheRate}}</td>
-<td>{{if .ContextInfo}}<span class="has-tooltip" data-tooltip="{{.ContextInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.ContextUsed}}</span>{{else}}{{.ContextUsed}}{{end}}</td>
+<td>{{if .ContextInfo}}<span id="{{.DOMID}}-context" class="has-tooltip" data-tooltip="{{.ContextInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.ContextUsed}}</span>{{else}}{{.ContextUsed}}{{end}}</td>
 <td>{{.Cost}}</td>
 <td class="dim">{{.Last}}</td>
 </tr>{{end}}{{else}}<tr><td class="empty" colspan="9">no live threads</td></tr>{{end}}</tbody>
@@ -204,7 +207,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Account</th>
 <th>Detail</th>
 </tr></thead>
-<tbody>{{if .Events}}{{range .Events}}<tr>
+<tbody>{{if .Events}}{{range .Events}}<tr id="{{.DOMID}}">
 <td class="dim">{{.At}}</td>
 <td>{{.Kind}}</td>
 <td>{{.Account}}</td>
