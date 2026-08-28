@@ -10,13 +10,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	dashboardFrame           = 500 * time.Millisecond
+	dashboardInterval        = time.Second
 	dashboardMaxStreams      = 32
 	dashboardEventName       = "dashboard"
+	dashboardSubscriberQueue = 2
 	dashboardContextBaseline = 12_000
 	waterCSSURL              = "https://cdn.jsdelivr.net/npm/water.css@2/out/water.css"
 )
@@ -132,6 +134,77 @@ type dashboardEventView struct {
 	Detail  string
 }
 
+type dashboardBroadcaster struct {
+	mu          sync.Mutex
+	subscribers map[chan []byte]struct{}
+	latest      []byte
+	running     bool
+}
+
+func (b *dashboardBroadcaster) subscribe() (chan []byte, bool) {
+	updates := make(chan []byte, dashboardSubscriberQueue)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.subscribers == nil {
+		b.subscribers = make(map[chan []byte]struct{})
+	}
+	b.subscribers[updates] = struct{}{}
+	if len(b.latest) > 0 {
+		updates <- b.latest
+	}
+	start := !b.running
+	if start {
+		b.running = true
+	}
+	return updates, start
+}
+
+func (b *dashboardBroadcaster) unsubscribe(updates chan []byte) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.subscribers[updates]; !ok {
+		return
+	}
+	delete(b.subscribers, updates)
+	close(updates)
+}
+
+func (b *dashboardBroadcaster) publish(update, full []byte) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.latest = full
+	for updates := range b.subscribers {
+		select {
+		case updates <- update:
+		default:
+			delete(b.subscribers, updates)
+			close(updates)
+		}
+	}
+}
+
+func (b *dashboardBroadcaster) stopIfIdle() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.subscribers) > 0 {
+		return false
+	}
+	b.latest = nil
+	b.running = false
+	return true
+}
+
+func (b *dashboardBroadcaster) stop() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for updates := range b.subscribers {
+		delete(b.subscribers, updates)
+		close(updates)
+	}
+	b.latest = nil
+	b.running = false
+}
+
 func dashboardAssetURL(name string) string {
 	content, err := dashboardFiles.ReadFile("web/" + name)
 	if err != nil {
@@ -185,15 +258,19 @@ func (s *server) dashboardEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(w)
 
-	ticker := time.NewTicker(dashboardFrame)
-	defer ticker.Stop()
-	previous := make(map[string][]byte, len(dashboardUpdateTemplates))
+	updates, start := s.dashboardUpdates.subscribe()
+	defer s.dashboardUpdates.unsubscribe(updates)
+	if start {
+		go s.broadcastDashboard()
+	}
 	for {
-		payload, err := renderDashboardChanges(s.currentDashboard(time.Now()), previous)
-		if err != nil {
+		select {
+		case <-r.Context().Done():
 			return
-		}
-		if len(payload) > 0 {
+		case payload, ok := <-updates:
+			if !ok {
+				return
+			}
 			if err := writeSSEEvent(w, dashboardEventName, payload); err != nil {
 				return
 			}
@@ -201,8 +278,32 @@ func (s *server) dashboardEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+}
+
+func (s *server) broadcastDashboard() {
+	ticker := time.NewTicker(dashboardInterval)
+	defer ticker.Stop()
+	previous := make(map[string][]byte, len(dashboardUpdateTemplates))
+	var done <-chan struct{}
+	if s.ctx != nil {
+		done = s.ctx.Done()
+	}
+	for {
+		if s.dashboardUpdates.stopIfIdle() {
+			return
+		}
+		payload, err := renderDashboardChanges(s.currentDashboard(time.Now()), previous)
+		if err != nil {
+			s.dashboardUpdates.stop()
+			return
+		}
+		if len(payload) > 0 {
+			s.dashboardUpdates.publish(payload, fullDashboardUpdate(previous))
+		}
 		select {
-		case <-r.Context().Done():
+		case <-done:
+			s.dashboardUpdates.stop()
 			return
 		case <-ticker.C:
 		}
@@ -250,6 +351,14 @@ func renderDashboardChanges(view dashboardView, previous map[string][]byte) ([]b
 		previous[name] = fragment
 	}
 	return output.Bytes(), nil
+}
+
+func fullDashboardUpdate(fragments map[string][]byte) []byte {
+	var output bytes.Buffer
+	for _, name := range dashboardUpdateTemplates {
+		output.Write(fragments[name])
+	}
+	return output.Bytes()
 }
 
 func (s *server) currentDashboard(now time.Time) dashboardView {

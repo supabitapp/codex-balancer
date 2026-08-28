@@ -271,6 +271,106 @@ func TestDashboardChangesOnlyRenderChangedFragments(t *testing.T) {
 			t.Fatalf("summary change unnecessarily rendered %q: %s", id, body)
 		}
 	}
+
+	full := string(fullDashboardUpdate(previous))
+	for _, id := range []string{"overview", "summary", "accounts", "workspace-summary", "workspaces", "routing-count", "threads", "events"} {
+		if !strings.Contains(full, `id="`+id+`"`) {
+			t.Fatalf("full dashboard update missing %q: %s", id, full)
+		}
+	}
+	if !strings.Contains(full, `1 live`) {
+		t.Fatalf("full dashboard update contains stale summary: %s", full)
+	}
+}
+
+func TestDashboardBroadcasterSharesUpdatesAndProducer(t *testing.T) {
+	var broadcaster dashboardBroadcaster
+	first, start := broadcaster.subscribe()
+	if !start {
+		t.Fatal("first subscriber did not start the producer")
+	}
+	second, start := broadcaster.subscribe()
+	if start {
+		t.Fatal("second subscriber started another producer")
+	}
+
+	broadcaster.publish([]byte("first delta"), []byte("first full snapshot"))
+	if got := readDashboardUpdate(t, first); got != "first delta" {
+		t.Fatalf("first subscriber update = %q", got)
+	}
+	if got := readDashboardUpdate(t, second); got != "first delta" {
+		t.Fatalf("second subscriber update = %q", got)
+	}
+
+	late, start := broadcaster.subscribe()
+	if start {
+		t.Fatal("late subscriber started another producer")
+	}
+	if got := readDashboardUpdate(t, late); got != "first full snapshot" {
+		t.Fatalf("late subscriber initial update = %q", got)
+	}
+
+	broadcaster.publish([]byte("second delta"), []byte("second full snapshot"))
+	for name, updates := range map[string]chan []byte{"first": first, "second": second, "late": late} {
+		if got := readDashboardUpdate(t, updates); got != "second delta" {
+			t.Fatalf("%s subscriber update = %q", name, got)
+		}
+		broadcaster.unsubscribe(updates)
+	}
+	if !broadcaster.stopIfIdle() {
+		t.Fatal("producer did not stop without subscribers")
+	}
+
+	restarted, start := broadcaster.subscribe()
+	if !start {
+		t.Fatal("subscriber did not restart an idle producer")
+	}
+	select {
+	case update := <-restarted:
+		t.Fatalf("restarted producer reused stale snapshot %q", update)
+	default:
+	}
+	broadcaster.unsubscribe(restarted)
+	broadcaster.stopIfIdle()
+}
+
+func TestDashboardBroadcasterIsolatesStalledSubscriber(t *testing.T) {
+	var broadcaster dashboardBroadcaster
+	updates, _ := broadcaster.subscribe()
+	for range dashboardSubscriberQueue + 1 {
+		broadcaster.publish([]byte("update"), []byte("full"))
+	}
+
+	count := 0
+	for range updates {
+		count++
+	}
+	if count != dashboardSubscriberQueue {
+		t.Fatalf("stalled subscriber retained %d updates, want %d", count, dashboardSubscriberQueue)
+	}
+	if !broadcaster.stopIfIdle() {
+		t.Fatal("stalled subscriber remained connected")
+	}
+}
+
+func readDashboardUpdate(t *testing.T, updates <-chan []byte) string {
+	t.Helper()
+	select {
+	case update, ok := <-updates:
+		if !ok {
+			t.Fatal("dashboard updates closed")
+		}
+		return string(update)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for dashboard update")
+		return ""
+	}
+}
+
+func TestDashboardBroadcastInterval(t *testing.T) {
+	if dashboardInterval != time.Second {
+		t.Fatalf("dashboard interval = %s, want 1s", dashboardInterval)
+	}
 }
 
 func TestDashboardStreamRootAttributesMatchPage(t *testing.T) {

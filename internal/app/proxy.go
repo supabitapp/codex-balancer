@@ -45,6 +45,7 @@ type server struct {
 	resources        *resourceMonitor
 	countries        countryResolver
 	dashboardStreams atomic.Int64
+	dashboardUpdates dashboardBroadcaster
 }
 
 func upstreamRetryBackoff(retry int) time.Duration {
