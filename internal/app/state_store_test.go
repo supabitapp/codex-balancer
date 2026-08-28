@@ -37,7 +37,7 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	want := []string{"account_snapshots", "accounts", "attempts", "client_identity", "events", "price_catalog"}
+	want := []string{"account_snapshots", "accounts", "api_keys", "attempts", "client_identity", "events", "price_catalog"}
 	if !slices.Equal(tables, want) {
 		t.Fatalf("tables = %v, want %v", tables, want)
 	}
@@ -84,6 +84,86 @@ func TestStateStoreRouteOwnersPreferThreadSuccessOverNewerSessionSuccess(t *test
 	}
 	if got := fmt.Sprint(owners); got != "[account-a account-b]" {
 		t.Fatalf("route owners = %s, want the thread owner before the newer session owner", got)
+	}
+}
+
+func TestStateStorePersistsAndRevokesMultipleAPIKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Unix(100, 200)
+	for _, key := range []storedAPIKey{
+		{Name: "alice", Secret: "secret-a", CreatedAt: createdAt},
+		{Name: "bob", Secret: "secret-b", CreatedAt: createdAt.Add(time.Second)},
+	} {
+		if err := store.addAPIKey(key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if valid, err := store.validAPIKey("secret-a"); err != nil || !valid {
+		t.Fatalf("first key valid = %t, error = %v", valid, err)
+	}
+	if valid, err := store.validAPIKey("secret-b"); err != nil || !valid {
+		t.Fatalf("second key valid = %t, error = %v", valid, err)
+	}
+	if valid, err := store.validAPIKey("wrong"); err != nil || valid {
+		t.Fatalf("wrong key valid = %t, error = %v", valid, err)
+	}
+	revokedAt := createdAt.Add(2 * time.Second)
+	revoked, err := store.revokeAPIKey("alice", revokedAt)
+	if err != nil || !revoked {
+		t.Fatalf("revoke = %t, error = %v", revoked, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if valid, err := reopened.validAPIKey("secret-a"); err != nil || valid {
+		t.Fatalf("revoked key valid = %t, error = %v", valid, err)
+	}
+	if valid, err := reopened.validAPIKey("secret-b"); err != nil || !valid {
+		t.Fatalf("remaining key valid = %t, error = %v", valid, err)
+	}
+	keys, err := reopened.readAPIKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || keys[0].Name != "alice" || !keys[0].RevokedAt.Equal(revokedAt) || keys[1].Name != "bob" || !keys[1].RevokedAt.IsZero() {
+		t.Fatalf("keys = %+v", keys)
+	}
+}
+
+func TestStateStoreReprovisionsARevokedAPIKeyName(t *testing.T) {
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	createdAt := time.Unix(100, 0)
+	if err := store.addAPIKey(storedAPIKey{Name: "client", Secret: "old-secret", CreatedAt: createdAt}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.addAPIKey(storedAPIKey{Name: "client", Secret: "duplicate", CreatedAt: createdAt}); err == nil {
+		t.Fatal("reprovisioned an active API key name")
+	}
+	if revoked, err := store.revokeAPIKey("client", createdAt.Add(time.Second)); err != nil || !revoked {
+		t.Fatalf("revoke = %t, error = %v", revoked, err)
+	}
+	if err := store.addAPIKey(storedAPIKey{Name: "client", Secret: "new-secret", CreatedAt: createdAt.Add(2 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if valid, err := store.validAPIKey("old-secret"); err != nil || valid {
+		t.Fatalf("old key valid = %t, error = %v", valid, err)
+	}
+	if valid, err := store.validAPIKey("new-secret"); err != nil || !valid {
+		t.Fatalf("new key valid = %t, error = %v", valid, err)
 	}
 }
 
@@ -273,7 +353,7 @@ func TestStateStoreRemovesLegacyDrainingMode(t *testing.T) {
 		UPDATE accounts SET legacy_routing_mode = 'draining';
 		ALTER TABLE accounts DROP COLUMN routing_mode;
 		ALTER TABLE accounts RENAME COLUMN legacy_routing_mode TO routing_mode;
-		PRAGMA user_version = %d;`, stateSchemaVersion-3)); err != nil {
+		PRAGMA user_version = %d;`, stateSchemaVersion-4)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -418,7 +498,7 @@ func TestStateStoreRemovesLegacyAffinityAndRotationData(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", stateSchemaVersion-4)); err != nil {
+	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", stateSchemaVersion-5)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -514,7 +594,8 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 
 func removeRouteFactMigration(t *testing.T, store *StateStore) {
 	t.Helper()
-	if _, err := store.db.Exec(`DROP TABLE account_snapshots;
+	if _, err := store.db.Exec(`DROP TABLE api_keys;
+		DROP TABLE account_snapshots;
 		ALTER TABLE accounts DROP COLUMN reauth;
 		DROP INDEX attempts_session_at;
 		ALTER TABLE attempts DROP COLUMN session_key;

@@ -34,7 +34,12 @@ Point Codex at it by adding to ~/.codex/config.toml:
   requires_openai_auth = true
   supports_websockets = true
 
-Set CODEX_BALANCER_API_KEY to the server key before launching Codex.
+Provision a key with "codex-balancer keys add <name>", then set
+CODEX_BALANCER_API_KEY to that key before launching Codex.
+
+The server reads API keys from the state database. During an upgrade, it
+imports the deprecated -key flag or CODEX_BALANCER_API_KEY server environment
+variable if the database contains no key records.
 
 Flags:
 `
@@ -48,7 +53,7 @@ func serverCmd(args []string) error {
 	addr := fs.String("addr", "127.0.0.1:8317", "address to listen on")
 	path := fs.String("state", defaultStatePath(), "state database")
 	upstream := fs.String("upstream", "https://chatgpt.com/backend-api/codex", "upstream Codex base URL")
-	key := fs.String("key", os.Getenv("CODEX_BALANCER_API_KEY"), "bearer key clients must present (env CODEX_BALANCER_API_KEY)")
+	legacyKey := fs.String("key", os.Getenv("CODEX_BALANCER_API_KEY"), "deprecated bearer key to import into an empty state database")
 	insecure := fs.Bool("no-auth", false, "serve without a bearer key; any local process can spend your quota")
 	jsonLogs := fs.Bool("json", false, "format logs as JSON")
 	plain := fs.Bool("no-tui", false, "show logs on stderr instead of the dashboard")
@@ -57,18 +62,25 @@ func serverCmd(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *key == "" && !*insecure {
-		return errors.New("set -key or CODEX_BALANCER_API_KEY, or pass -no-auth to accept unauthenticated clients")
-	}
-	if *insecure {
-		*key = ""
-	}
-
 	store, err := openStateStore(*path)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	var validateAPIKey func(string) (bool, error)
+	if !*insecure {
+		if err := importLegacyAPIKey(store, *legacyKey); err != nil {
+			return fmt.Errorf("import legacy API key: %w", err)
+		}
+		count, err := store.activeAPIKeyCount()
+		if err != nil {
+			return fmt.Errorf("load API keys: %w", err)
+		}
+		if count == 0 {
+			return errors.New("no active API keys; run \"codex-balancer keys add <name>\" or pass -no-auth")
+		}
+		validateAPIKey = store.validAPIKey
+	}
 	clientIDKey, err := store.clientIDKey()
 	if err != nil {
 		return fmt.Errorf("load client ID key: %w", err)
@@ -104,18 +116,18 @@ func serverCmd(args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv := &server{
-		ctx:         ctx,
-		pool:        pool,
-		catalog:     catalog,
-		prices:      prices,
-		stats:       stats,
-		upstream:    *upstream,
-		key:         *key,
-		clientIDKey: clientIDKey,
-		client:      newProxyClient(),
-		log:         log,
-		admission:   newAdmissionGate(maxActiveProxyRequests),
-		resources:   newResourceMonitor(),
+		ctx:            ctx,
+		pool:           pool,
+		catalog:        catalog,
+		prices:         prices,
+		stats:          stats,
+		upstream:       *upstream,
+		validateAPIKey: validateAPIKey,
+		clientIDKey:    clientIDKey,
+		client:         newProxyClient(),
+		log:            log,
+		admission:      newAdmissionGate(maxActiveProxyRequests),
+		resources:      newResourceMonitor(),
 	}
 	pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)

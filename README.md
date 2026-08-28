@@ -15,9 +15,12 @@ go install github.com/supabitapp/codex-balancer@latest
 ## Serve
 
 ```sh
-export CODEX_BALANCER_API_KEY=$(openssl rand -hex 16)
+export CODEX_BALANCER_API_KEY=$(codex-balancer keys add my-laptop)
 codex-balancer server           # serve the proxy with a TUI
 ```
+
+`keys add` prints the generated key. Save it on the client that will use it.
+Run the command with another name to provision another client.
 
 The server runs at http://127.0.0.1:8317
 
@@ -34,13 +37,22 @@ codex-balancer accounts add                 # sign in through a local browser
 codex-balancer accounts list
 ```
 
+Use the CLI to manage client API keys:
+
+```sh
+codex-balancer keys add my-laptop
+codex-balancer keys list
+codex-balancer keys rm my-laptop
+```
+
 State lives in `~/.codex-balancer/state.db`.
 
-SQLite stores credentials, routed turns, and events. The server fetches current limits, reset credits, current-cycle credit burn, auth state, and model lists. It derives status, totals, activity, response time, and current-month cost from those facts.
+SQLite stores client API keys, account credentials, routed turns, and events. The server fetches current limits, reset credits, current-cycle credit burn, auth state, and model lists. It derives status, totals, activity, response time, and current-month cost from those facts.
 
 ## Point Codex at it
 
-On every machine that runs Codex, export the server key before starting Codex:
+On each machine that runs Codex, export a key from the server before starting
+Codex:
 
 ```sh
 export CODEX_BALANCER_API_KEY="<server-key>"

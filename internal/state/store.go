@@ -104,6 +104,12 @@ var stateMigrations = []string{
 		payload BLOB NOT NULL CHECK (length(payload) > 0),
 		PRIMARY KEY (account_id, kind)
 	) STRICT;`,
+	`CREATE TABLE api_keys (
+		name TEXT PRIMARY KEY CHECK (length(name) > 0),
+		secret TEXT NOT NULL UNIQUE CHECK (length(secret) > 0),
+		created_at_ns INTEGER NOT NULL CHECK (created_at_ns > 0),
+		revoked_at_ns INTEGER
+	) STRICT;`,
 }
 
 type Store struct {
@@ -162,6 +168,13 @@ type AccountSnapshot struct {
 	FetchedAt time.Time
 	Version   string
 	Payload   []byte
+}
+
+type APIKey struct {
+	Name      string
+	Secret    string
+	CreatedAt time.Time
+	RevokedAt time.Time
 }
 
 func SchemaVersion() int { return len(stateMigrations) }
@@ -283,6 +296,64 @@ func (s *Store) ClientIDKey() ([]byte, error) {
 		return nil, err
 	}
 	return key, nil
+}
+
+func (s *Store) ReadAPIKeys() ([]APIKey, error) {
+	rows, err := s.db.Query(`SELECT name, secret, created_at_ns, revoked_at_ns FROM api_keys ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []APIKey
+	for rows.Next() {
+		var key APIKey
+		var createdAt int64
+		var revokedAt sql.NullInt64
+		if err := rows.Scan(&key.Name, &key.Secret, &createdAt, &revokedAt); err != nil {
+			return nil, err
+		}
+		key.CreatedAt = decodeTime(createdAt)
+		if revokedAt.Valid {
+			key.RevokedAt = decodeTime(revokedAt.Int64)
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (s *Store) AddAPIKey(key APIKey) error {
+	if key.Name == "" {
+		return errors.New("API key has no name")
+	}
+	if key.Secret == "" {
+		return errors.New("API key has no secret")
+	}
+	if key.CreatedAt.IsZero() {
+		return errors.New("API key has no creation time")
+	}
+	result, err := s.db.Exec(`INSERT INTO api_keys (name, secret, created_at_ns) VALUES (?, ?, ?)
+		ON CONFLICT (name) DO UPDATE SET secret = excluded.secret, created_at_ns = excluded.created_at_ns, revoked_at_ns = NULL
+		WHERE api_keys.revoked_at_ns IS NOT NULL`, key.Name, key.Secret, encodeTime(key.CreatedAt))
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return fmt.Errorf("active API key %q already exists", key.Name)
+	}
+	return nil
+}
+
+func (s *Store) RevokeAPIKey(name string, at time.Time) (bool, error) {
+	result, err := s.db.Exec(`UPDATE api_keys SET revoked_at_ns = ? WHERE name = ? AND revoked_at_ns IS NULL`, encodeTime(at), name)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed != 0, err
 }
 
 func (s *Store) LoadPriceCatalog() (time.Time, []byte, error) {

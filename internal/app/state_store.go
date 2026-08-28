@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"path/filepath"
@@ -21,6 +22,7 @@ type StateStore struct {
 
 type storedAttempt = statepkg.Attempt
 type storedAccountSnapshot = statepkg.AccountSnapshot
+type storedAPIKey = statepkg.APIKey
 
 type storedEvent struct {
 	At          time.Time
@@ -53,6 +55,46 @@ func (s *StateStore) Close() error {
 
 func (s *StateStore) clientIDKey() ([]byte, error) {
 	return s.raw.ClientIDKey()
+}
+
+func (s *StateStore) readAPIKeys() ([]storedAPIKey, error) {
+	return s.raw.ReadAPIKeys()
+}
+
+func (s *StateStore) addAPIKey(key storedAPIKey) error {
+	return s.raw.AddAPIKey(key)
+}
+
+func (s *StateStore) revokeAPIKey(name string, at time.Time) (bool, error) {
+	return s.raw.RevokeAPIKey(name, at)
+}
+
+func (s *StateStore) validAPIKey(presented string) (bool, error) {
+	keys, err := s.readAPIKeys()
+	if err != nil {
+		return false, err
+	}
+	valid := 0
+	for _, key := range keys {
+		if key.RevokedAt.IsZero() {
+			valid |= subtle.ConstantTimeCompare([]byte(presented), []byte(key.Secret))
+		}
+	}
+	return valid == 1, nil
+}
+
+func (s *StateStore) activeAPIKeyCount() (int, error) {
+	keys, err := s.readAPIKeys()
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, key := range keys {
+		if key.RevokedAt.IsZero() {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *StateStore) loadPriceCatalog() (time.Time, []byte, error) {

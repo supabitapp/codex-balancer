@@ -1,8 +1,10 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -14,6 +16,45 @@ func TestResponsesRejectsHTTP(t *testing.T) {
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
 	}
+}
+
+func TestServerAcceptsMultipleDatabaseAPIKeysAndSeesChanges(t *testing.T) {
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for index, secret := range []string{"secret-a", "secret-b"} {
+		if err := store.addAPIKey(storedAPIKey{Name: fmt.Sprintf("client-%d", index), Secret: secret, CreatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := &server{validateAPIKey: store.validAPIKey}
+	assertStatus := func(secret string, want int) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		if secret != "" {
+			request.Header.Set("Authorization", "Bearer "+secret)
+		}
+		response := httptest.NewRecorder()
+		server.routes().ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("key %q status = %d, want %d", secret, response.Code, want)
+		}
+	}
+	assertStatus("secret-a", http.StatusOK)
+	assertStatus("secret-b", http.StatusOK)
+	assertStatus("wrong", http.StatusUnauthorized)
+	assertStatus("", http.StatusUnauthorized)
+
+	if err := store.addAPIKey(storedAPIKey{Name: "client-2", Secret: "secret-c", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus("secret-c", http.StatusOK)
+	if revoked, err := store.revokeAPIKey("client-0", time.Now()); err != nil || !revoked {
+		t.Fatalf("revoke = %t, error = %v", revoked, err)
+	}
+	assertStatus("secret-a", http.StatusUnauthorized)
 }
 
 func TestResetHeaderAcceptsHTTPDate(t *testing.T) {

@@ -117,7 +117,6 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	server := &server{
 		pool:        &Pool{accounts: []*Account{account}},
 		stats:       stats,
-		key:         "secret",
 		clientIDKey: []byte("secret"),
 		countries:   countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}},
 	}

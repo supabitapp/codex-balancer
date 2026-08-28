@@ -6,7 +6,7 @@ Requires=codex-balancer.socket
 
 [Service]
 ExecStart=/usr/local/bin/codex-balancer server -addr 0.0.0.0:8000 -no-tui
-EnvironmentFile=%h/.config/codex-balancer/server.env
+EnvironmentFile=-%h/.config/codex-balancer/server.env
 Restart=always
 RestartSec=2
 UMask=0077

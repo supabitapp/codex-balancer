@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -38,7 +37,7 @@ type server struct {
 	logins               accountLoginStore
 	upstream             string
 	authIssuer           string
-	key                  string
+	validateAPIKey       func(string) (bool, error)
 	clientIDKey          []byte
 	client               *http.Client
 	log                  *slog.Logger
@@ -213,15 +212,18 @@ func copyWebSocketHeaders(dst, src http.Header) {
 }
 
 func (s *server) authorized(r *http.Request) bool {
-	if s.key == "" {
+	if s.validateAPIKey == nil {
 		return true
 	}
 	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return s.validKey(presented)
-}
-
-func (s *server) validKey(presented string) bool {
-	return subtle.ConstantTimeCompare([]byte(presented), []byte(s.key)) == 1
+	valid, err := s.validateAPIKey(presented)
+	if err != nil {
+		if s.log != nil {
+			s.log.Error("API key lookup failed", "error", err)
+		}
+		return false
+	}
+	return valid
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
