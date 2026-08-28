@@ -758,8 +758,9 @@ func TestDashboardOverview(t *testing.T) {
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
 	stats.applyUsageAt(now, "", "", "gpt-5.6-sol", "", "default", usage)
+	miniUsage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
+	stats.applyUsageAt(now, "", "", "gpt-5.4-mini", "", "default", miniUsage)
 	stats.wsOpen = 3
-	stats.apiCostNanoDollars = 7_746_820_000_000
 	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
 	wantValues := map[string]string{
@@ -769,9 +770,9 @@ func TestDashboardOverview(t *testing.T) {
 		"RAM":           "--",
 		"network in":    "--",
 		"network out":   "--",
-		"input tokens":  "2K",
+		"input tokens":  "3K",
 		"cached input":  "1.5K",
-		"output tokens": "300",
+		"output tokens": "400",
 		"uptime":        "28m",
 	}
 	wantNames := []string{"Pace", "active WS", "CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "API estimate"}
@@ -779,7 +780,7 @@ func TestDashboardOverview(t *testing.T) {
 		t.Fatalf("overview metrics = %+v", view.Overview)
 	}
 	wantInfo := "From Aug 1"
-	wantPriceInfo := "☕ 1291 iced lattes ($6 each)\n🌮 646 tacos ($12 each)\n" + wantInfo + ". Prices from models.dev, updated 11 August 2026, 16:00 BST"
+	wantPriceInfo := "gpt-5.6-sol: $0.012\ngpt-5.4-mini: $0.0012\n" + wantInfo + ". Prices from models.dev, updated 11 August 2026, 16:00 BST"
 	apiEstimateFound := false
 	for i, metric := range view.Overview {
 		if metric.Name != wantNames[i] {
@@ -802,6 +803,9 @@ func TestDashboardOverview(t *testing.T) {
 			}
 		case "API estimate":
 			apiEstimateFound = true
+			if metric.Value != "$0.013" {
+				t.Fatalf("API estimate value = %q, want $0.013", metric.Value)
+			}
 			if metric.Info != wantPriceInfo {
 				t.Fatalf("API estimate info = %q, want %q", metric.Info, wantPriceInfo)
 			}
@@ -817,18 +821,15 @@ func TestDashboardOverview(t *testing.T) {
 	}
 }
 
-func TestFunCostEquivalents(t *testing.T) {
-	for _, test := range []struct {
-		cost int64
-		want string
-	}{
-		{0, "☕ 0 iced lattes ($6 each)\n🌮 0 tacos ($12 each)"},
-		{3_000_000_000, "☕ 1 iced latte ($6 each)\n🌮 0 tacos ($12 each)"},
-		{9_000_000_000, "☕ 2 iced lattes ($6 each)\n🌮 1 taco ($12 each)"},
-	} {
-		if got := funCostEquivalents(test.cost); got != test.want {
-			t.Fatalf("fun cost equivalents for %d = %q, want %q", test.cost, got, test.want)
-		}
+func TestFormatModelCosts(t *testing.T) {
+	costs := []ModelCostSnapshot{
+		{Model: "gpt-5.6-sol", APICostNanoDollars: 52_050_000_000},
+		{Model: "unknown", UnpricedResponses: 2},
+		{UnpricedResponses: 1},
+	}
+	want := "gpt-5.6-sol: $52.05\nunknown: -- (2 unpriced responses)\nunknown model: -- (1 unpriced response)"
+	if got := formatModelCosts(costs); got != want {
+		t.Fatalf("model costs = %q, want %q", got, want)
 	}
 }
 

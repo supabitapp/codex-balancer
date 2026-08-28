@@ -273,6 +273,9 @@ func TestCatalogRefreshRepricesMonthlyUsageWithoutPersistingThreadHistory(t *tes
 	if monthly.APICostNanoDollars != want || monthly.UnpricedResponses != 0 {
 		t.Fatalf("monthly cost after refresh = %d with %d unpriced, want %d with none", monthly.APICostNanoDollars, monthly.UnpricedResponses, want)
 	}
+	if len(monthly.ModelCosts) != 1 || monthly.ModelCosts[0] != (ModelCostSnapshot{Model: "gpt-5.4", APICostNanoDollars: want}) {
+		t.Fatalf("monthly model costs after refresh = %+v, want gpt-5.4 cost %d", monthly.ModelCosts, want)
+	}
 }
 
 func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
@@ -281,7 +284,7 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	previousMonth := time.Date(2026, time.July, 31, 23, 59, 0, 0, time.UTC)
 	currentMonth := previousMonth.Add(time.Minute)
 	stats.usageMonth = calendarMonth(previousMonth)
-	stats.applyUsageAt(previousMonth, "", "", "unknown", "", "default", responseUsage{InputTokens: 1_000})
+	stats.applyUsageAt(previousMonth, "", "", "old-unknown", "", "default", responseUsage{InputTokens: 1_000})
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
 	stats.applyUsageAt(currentMonth, "", "", "gpt-5.6-sol", "", "default", usage)
@@ -296,5 +299,17 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	}
 	if stats.apiCostNanoDollars != want || stats.unpricedResponses != 1 {
 		t.Fatalf("API estimate = %d with %d unpriced, want %d with one", stats.apiCostNanoDollars, stats.unpricedResponses, want)
+	}
+	if len(stats.monthlyModelCosts) != 2 {
+		t.Fatalf("monthly model costs = %+v, want current priced and unpriced models", stats.monthlyModelCosts)
+	}
+	if _, exists := stats.monthlyModelCosts["old-unknown"]; exists {
+		t.Fatalf("monthly model costs retained previous month: %+v", stats.monthlyModelCosts)
+	}
+	if got := stats.monthlyModelCosts["gpt-5.6-sol"]; got.apiCostNanoDollars != want || got.unpricedResponses != 0 {
+		t.Fatalf("priced model cost = %+v, want %d with none unpriced", got, want)
+	}
+	if got := stats.monthlyModelCosts["unknown"]; got.apiCostNanoDollars != 0 || got.unpricedResponses != 1 {
+		t.Fatalf("unpriced model cost = %+v, want zero with one unpriced", got)
 	}
 }

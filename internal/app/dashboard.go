@@ -458,8 +458,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	if !snapshot.PriceFetchedAt.IsZero() {
 		priceInfo += ". Prices from models.dev, updated " + snapshot.PriceFetchedAt.In(now.Location()).Format("2 January 2006, 15:04 MST")
 	}
-	if snapshot.UnpricedResponses == 0 {
-		priceInfo = funCostEquivalents(snapshot.APICostNanoDollars) + "\n" + priceInfo
+	if modelCosts := formatModelCosts(snapshot.ModelCosts); modelCosts != "" {
+		priceInfo = modelCosts + "\n" + priceInfo
 	}
 	overview := []dashboardMetric{
 		dashboardPaceMetric(now, stats.weeklyPace),
@@ -832,28 +832,22 @@ func dashboardNumber(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
 
-func funCostEquivalents(nanoDollars int64) string {
-	equivalents := [...]struct {
-		emoji        string
-		singular     string
-		plural       string
-		priceDollars int64
-	}{
-		{"☕", "iced latte", "iced lattes", 6},
-		{"🌮", "taco", "tacos", 12},
-	}
-	lines := make([]string, 0, len(equivalents))
-	for _, equivalent := range equivalents {
-		priceNanoDollars := equivalent.priceDollars * 1_000_000_000
-		count := nanoDollars / priceNanoDollars
-		if nanoDollars%priceNanoDollars >= priceNanoDollars/2 {
-			count++
+func formatModelCosts(costs []ModelCostSnapshot) string {
+	lines := make([]string, 0, len(costs))
+	for _, cost := range costs {
+		model := cost.Model
+		if model == "" {
+			model = "unknown model"
 		}
-		name := equivalent.plural
-		if count == 1 {
-			name = equivalent.singular
+		price := formatAPIPrice(cost.APICostNanoDollars, cost.UnpricedResponses)
+		if cost.UnpricedResponses > 0 {
+			response := "responses"
+			if cost.UnpricedResponses == 1 {
+				response = "response"
+			}
+			price += fmt.Sprintf(" (%d unpriced %s)", cost.UnpricedResponses, response)
 		}
-		lines = append(lines, fmt.Sprintf("%s %d %s ($%d each)", equivalent.emoji, count, name, equivalent.priceDollars))
+		lines = append(lines, model+": "+price)
 	}
 	return strings.Join(lines, "\n")
 }

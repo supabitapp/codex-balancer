@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"errors"
 	"net"
 	"net/http"
@@ -43,6 +44,7 @@ type Stats struct {
 	monthlyUsage       responseUsage
 	apiCostNanoDollars int64
 	unpricedResponses  int64
+	monthlyModelCosts  map[string]modelCost
 	accounts           map[string]*accountStats
 	threads            map[string]*threadStats
 	liveThreads        map[string]int
@@ -89,6 +91,11 @@ type threadModel struct {
 	efforts []string
 }
 
+type modelCost struct {
+	apiCostNanoDollars int64
+	unpricedResponses  int64
+}
+
 type Event struct {
 	At      time.Time `json:"at"`
 	Kind    string    `json:"kind"`
@@ -99,12 +106,13 @@ type Event struct {
 func newStatsWithPrices(prices priceSnapshot) *Stats {
 	now := time.Now()
 	return &Stats{
-		started:     now,
-		usageMonth:  calendarMonth(now),
-		prices:      prices,
-		accounts:    map[string]*accountStats{},
-		threads:     map[string]*threadStats{},
-		liveThreads: map[string]int{},
+		started:           now,
+		usageMonth:        calendarMonth(now),
+		prices:            prices,
+		monthlyModelCosts: make(map[string]modelCost),
+		accounts:          map[string]*accountStats{},
+		threads:           map[string]*threadStats{},
+		liveThreads:       map[string]int{},
 	}
 }
 
@@ -348,11 +356,16 @@ func (s *Stats) applyUsageAt(at time.Time, thread, account, model, effort, servi
 	}
 	s.syncUsageMonth(month)
 	s.monthlyUsage.add(usage)
+	modelCost := s.monthlyModelCosts[model]
 	if !known {
 		s.unpricedResponses++
+		modelCost.unpricedResponses++
+		s.monthlyModelCosts[model] = modelCost
 		return
 	}
 	s.apiCostNanoDollars += cost
+	modelCost.apiCostNanoDollars += cost
+	s.monthlyModelCosts[model] = modelCost
 }
 
 func (s *Stats) reprice(prices priceSnapshot) error {
@@ -369,14 +382,20 @@ func (s *Stats) reprice(prices priceSnapshot) error {
 	}
 	var usage responseUsage
 	var cost, unpriced int64
+	modelCosts := make(map[string]modelCost)
 	for _, event := range events {
 		usage.add(event.Usage)
 		price, known := prices.estimate(event.Model, event.ServiceTier, event.Usage)
+		modelCost := modelCosts[event.Model]
 		if !known {
 			unpriced++
+			modelCost.unpricedResponses++
+			modelCosts[event.Model] = modelCost
 			continue
 		}
 		cost += price
+		modelCost.apiCostNanoDollars += price
+		modelCosts[event.Model] = modelCost
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -384,6 +403,7 @@ func (s *Stats) reprice(prices priceSnapshot) error {
 	s.monthlyUsage = usage
 	s.apiCostNanoDollars = cost
 	s.unpricedResponses = unpriced
+	s.monthlyModelCosts = modelCosts
 	s.prices = prices
 	return nil
 }
@@ -423,10 +443,17 @@ type Snapshot struct {
 	MonthlyUsage       responseUsage
 	APICostNanoDollars int64
 	UnpricedResponses  int64
+	ModelCosts         []ModelCostSnapshot
 	PriceFetchedAt     time.Time
 	Accounts           map[string]AccountSnapshot
 	Threads            []ThreadSnapshot
 	Events             []Event
+}
+
+type ModelCostSnapshot struct {
+	Model              string
+	APICostNanoDollars int64
+	UnpricedResponses  int64
 }
 
 type AccountSnapshot struct {
@@ -473,11 +500,25 @@ func (s *Stats) snapshot() Snapshot {
 		MonthlyUsage:       s.monthlyUsage,
 		APICostNanoDollars: s.apiCostNanoDollars,
 		UnpricedResponses:  s.unpricedResponses,
+		ModelCosts:         make([]ModelCostSnapshot, 0, len(s.monthlyModelCosts)),
 		PriceFetchedAt:     s.prices.fetchedAt,
 		Accounts:           make(map[string]AccountSnapshot, len(s.accounts)),
 		Threads:            make([]ThreadSnapshot, 0, len(s.threads)),
 		Events:             append([]Event{}, s.events...),
 	}
+	for model, cost := range s.monthlyModelCosts {
+		out.ModelCosts = append(out.ModelCosts, ModelCostSnapshot{
+			Model:              model,
+			APICostNanoDollars: cost.apiCostNanoDollars,
+			UnpricedResponses:  cost.unpricedResponses,
+		})
+	}
+	slices.SortFunc(out.ModelCosts, func(left, right ModelCostSnapshot) int {
+		if left.APICostNanoDollars != right.APICostNanoDollars {
+			return cmp.Compare(right.APICostNanoDollars, left.APICostNanoDollars)
+		}
+		return strings.Compare(left.Model, right.Model)
+	})
 	if s.ttfbN > 0 {
 		out.TTFB = s.ttfbSum / time.Duration(s.ttfbN)
 	}
@@ -550,6 +591,7 @@ func (s *Stats) syncUsageMonth(month int) {
 	s.monthlyUsage = responseUsage{}
 	s.apiCostNanoDollars = 0
 	s.unpricedResponses = 0
+	s.monthlyModelCosts = make(map[string]modelCost)
 }
 
 func (c *rollingCounter) add(at time.Time) {
