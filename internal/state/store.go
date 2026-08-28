@@ -40,11 +40,9 @@ CREATE TABLE api_keys (
 	reasoning_tokens INTEGER NOT NULL DEFAULT 0 CHECK (reasoning_tokens >= 0)
 ) STRICT;
 CREATE TABLE routes (
-	kind TEXT NOT NULL CHECK (kind IN ('thread', 'session')),
-	key TEXT NOT NULL CHECK (length(key) > 0),
+	key TEXT PRIMARY KEY CHECK (length(key) > 0),
 	account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
-	updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns > 0),
-	PRIMARY KEY (kind, key)
+	updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns > 0)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX routes_account ON routes (account_id);
 CREATE TABLE response_usage (
@@ -378,17 +376,11 @@ func (s *Store) RecordRoute(route Route) error {
 		if changed == 0 {
 			return fmt.Errorf("route account %q does not exist", route.Account)
 		}
-		for _, item := range []struct {
-			kind string
-			key  string
-		}{{"thread", route.Thread}, {"session", route.Session}} {
-			if item.key == "" {
-				continue
-			}
-			if _, err := conn.ExecContext(context.Background(), `INSERT INTO routes (kind, key, account_id, updated_at_ns)
-				VALUES (?, ?, ?, ?) ON CONFLICT (kind, key) DO UPDATE SET account_id = excluded.account_id,
+		for _, key := range routeKeys(route.Thread, route.Session) {
+			if _, err := conn.ExecContext(context.Background(), `INSERT INTO routes (key, account_id, updated_at_ns)
+				VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET account_id = excluded.account_id,
 				updated_at_ns = excluded.updated_at_ns WHERE excluded.updated_at_ns >= routes.updated_at_ns`,
-				item.kind, item.key, route.Account, encodeTime(route.At)); err != nil {
+				key, route.Account, encodeTime(route.At)); err != nil {
 				return err
 			}
 		}
@@ -398,15 +390,9 @@ func (s *Store) RecordRoute(route Route) error {
 
 func (s *Store) RouteOwners(thread, session string) ([]string, error) {
 	owners := make([]string, 0, 2)
-	for _, item := range []struct {
-		kind string
-		key  string
-	}{{"thread", thread}, {"session", session}} {
-		if item.key == "" {
-			continue
-		}
+	for _, key := range routeKeys(thread, session) {
 		var account string
-		err := s.db.QueryRow(`SELECT account_id FROM routes WHERE kind = ? AND key = ?`, item.kind, item.key).Scan(&account)
+		err := s.db.QueryRow(`SELECT account_id FROM routes WHERE key = ?`, key).Scan(&account)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -418,6 +404,17 @@ func (s *Store) RouteOwners(thread, session string) ([]string, error) {
 		}
 	}
 	return owners, nil
+}
+
+func routeKeys(thread, session string) []string {
+	keys := make([]string, 0, 2)
+	if thread != "" {
+		keys = append(keys, thread)
+	}
+	if session != "" && session != thread {
+		keys = append(keys, session)
+	}
+	return keys
 }
 
 func (s *Store) RecordUsage(event UsageEvent) error {

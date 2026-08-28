@@ -51,7 +51,7 @@ func TestStateStoreCreatesOnlyMinimalSchema(t *testing.T) {
 		"api_keys":        {"name", "secret", "created_at_ns", "revoked_at_ns", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"},
 		"client_identity": {"id", "key"},
 		"response_usage":  {"id", "at_ns", "model", "service_tier", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"},
-		"routes":          {"kind", "key", "account_id", "updated_at_ns"},
+		"routes":          {"key", "account_id", "updated_at_ns"},
 	}
 	for table, want := range wantColumns {
 		got := tableColumns(t, store, table)
@@ -104,12 +104,29 @@ func TestStateStorePersistsLatestRoutesAndLastUsed(t *testing.T) {
 	if err := store.recordRoute(storedRoute{At: older, Session: "session", Thread: "thread", Account: "account-a"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.recordRoute(storedRoute{At: newer, Session: "shared", Thread: "shared", Account: "account-b"}); err != nil {
+		t.Fatal(err)
+	}
+	var routeCount int
+	if err := store.db.QueryRow(`SELECT count(*) FROM routes`).Scan(&routeCount); err != nil {
+		t.Fatal(err)
+	}
+	if routeCount != 3 {
+		t.Fatalf("routes = %d, want distinct thread, session, and shared keys", routeCount)
+	}
 	owners, err := store.routeOwners("thread", "session")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(owners, []string{"account-b"}) {
 		t.Fatalf("owners = %v, want account-b", owners)
+	}
+	owners, err = store.routeOwners("shared", "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(owners, []string{"account-b"}) {
+		t.Fatalf("shared owners = %v, want one account-b", owners)
 	}
 	accounts, err := store.readAccounts()
 	if err != nil {
