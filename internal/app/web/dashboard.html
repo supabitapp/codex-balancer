@@ -83,6 +83,12 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </div>
 </section>
 <section>
+<h2>Business &amp; Enterprise <span id="workspace-summary">{{len .Workspaces}} not routed</span></h2>
+<div id="workspaces" class="scroll">
+{{template "workspaces" .}}
+</div>
+</section>
+<section>
 <h2>Active Threads&nbsp; <span id="routing-count">{{len .Threads}}</span></h2>
 <div id="threads" class="scroll">
 {{template "threads" .}}
@@ -99,6 +105,8 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 {{define "dashboard-update"}}<dl id="overview" hx-swap-oob="innerHTML">{{template "overview" .}}</dl>
 <span id="summary" hx-swap-oob="innerHTML">{{template "summary" .}}</span>
 <div id="accounts" hx-swap-oob="innerHTML">{{template "accounts" .}}</div>
+<span id="workspace-summary" hx-swap-oob="innerHTML">{{len .Workspaces}} not routed</span>
+<div id="workspaces" hx-swap-oob="innerHTML">{{template "workspaces" .}}</div>
 <span id="routing-count" hx-swap-oob="innerHTML">{{len .Threads}}</span>
 <div id="threads" hx-swap-oob="innerHTML">{{template "threads" .}}</div>
 <div id="events" hx-swap-oob="innerHTML">{{template "events" .}}</div>{{end}}
@@ -132,6 +140,31 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.OpenWebSockets}}</td>
 <td class="dim">{{.Traffic}}</td>
 <td class="spark">{{.Activity}}</td>
+</tr>{{end}}</tbody>
+</table>{{else}}<div class="empty">(none)</div>{{end}}
+{{end}}
+
+{{define "workspaces"}}
+{{if .Workspaces}}<table>
+<thead><tr>
+<th>Account</th>
+<th>Plan</th>
+<th>Status</th>
+<th>Credit limit</th>
+<th>Used</th>
+<th>Remaining</th>
+<th>Used %</th>
+<th>Reset in</th>
+</tr></thead>
+<tbody>{{range .Workspaces}}<tr>
+<td>{{.Name}}</td>
+<td class="dim">{{.Plan}}</td>
+{{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
+<td>{{.Limit}}</td>
+<td>{{.Used}}</td>
+<td>{{.Remaining}}</td>
+<td>{{.UsedPercent}}</td>
+<td class="dim">{{.ResetIn}}</td>
 </tr>{{end}}</tbody>
 </table>{{else}}<div class="empty">(none)</div>{{end}}
 {{end}}

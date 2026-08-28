@@ -37,11 +37,12 @@ var dashboardTemplate = template.Must(webTemplate("dashboard").Funcs(template.Fu
 }).ParseFS(dashboardFiles, "web/dashboard.html"))
 
 type dashboardView struct {
-	Summary  []dashboardCount
-	Accounts []dashboardAccountView
-	Overview []dashboardMetric
-	Threads  []dashboardThreadView
-	Events   []dashboardEventView
+	Summary    []dashboardCount
+	Accounts   []dashboardAccountView
+	Workspaces []dashboardWorkspaceView
+	Overview   []dashboardMetric
+	Threads    []dashboardThreadView
+	Events     []dashboardEventView
 }
 
 type dashboardCount struct {
@@ -63,6 +64,18 @@ type dashboardAccountView struct {
 	OpenWebSockets string
 	Traffic        string
 	Activity       string
+}
+
+type dashboardWorkspaceView struct {
+	Name        string
+	Plan        string
+	Status      accountStatus
+	StatusInfo  string
+	Limit       string
+	Used        string
+	Remaining   string
+	UsedPercent string
+	ResetIn     string
 }
 
 type dashboardStatusView struct {
@@ -192,13 +205,18 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	counts := map[accountStatus]int{}
 	names := make(map[string]string, len(stats.Accounts))
 	accounts := make([]dashboardAccountView, 0, len(stats.Accounts))
+	workspaces := make([]dashboardWorkspaceView, 0)
 	for i, account := range stats.Accounts {
-		counts[account.Status]++
 		name := account.Email
 		if name == "" {
 			name = "account " + strconv.Itoa(i+1)
 		}
 		names[account.ID] = name
+		if managedWorkspacePlan(account.Plan) {
+			workspaces = append(workspaces, newDashboardWorkspaceView(now, name, account))
+			continue
+		}
+		counts[account.Status]++
 		weekly := "--"
 		if account.WeeklyRemainingPercent != nil {
 			weekly = formatDecimal(*account.WeeklyRemainingPercent)
@@ -294,12 +312,50 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		},
 	)
 	return dashboardView{
-		Summary:  summary,
-		Accounts: accounts,
-		Overview: overview,
-		Threads:  threadViews,
-		Events:   events,
+		Summary:    summary,
+		Accounts:   accounts,
+		Workspaces: workspaces,
+		Overview:   overview,
+		Threads:    threadViews,
+		Events:     events,
 	}
+}
+
+func newDashboardWorkspaceView(now time.Time, name string, account accountStatsResponse) dashboardWorkspaceView {
+	view := dashboardWorkspaceView{
+		Name:        name,
+		Plan:        account.Plan,
+		Status:      account.Status,
+		StatusInfo:  dashboardAccountStatusInfo(now, account),
+		Limit:       "--",
+		Used:        "--",
+		Remaining:   "--",
+		UsedPercent: "--",
+		ResetIn:     "--",
+	}
+	if spend := account.SpendControl; spend != nil {
+		view.Limit = dashboardSpendAmount(spend.Limit)
+		view.Used = dashboardSpendAmount(spend.Used)
+		view.Remaining = dashboardSpendAmount(spend.Remaining)
+		if spend.UsedPercent != nil {
+			view.UsedPercent = formatDecimal(*spend.UsedPercent)
+		}
+		if spend.ResetAt != nil {
+			view.ResetIn = short(spend.ResetAt.Sub(now))
+		}
+	}
+	return view
+}
+
+func dashboardSpendAmount(value string) string {
+	if value == "" {
+		return "--"
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return value
+	}
+	return formatDecimal(parsed)
 }
 
 func dashboardPaceMetric(now time.Time, estimate usagePaceEstimate) dashboardMetric {
@@ -567,6 +623,8 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 		return dashboardStatusView{Mark: "⏸", Label: "paused"}
 	case accountNeedsReauth:
 		return dashboardStatusView{Mark: "✕", Label: "reauth"}
+	case accountNotRouted:
+		return dashboardStatusView{Mark: "○", Label: "not routed"}
 	case accountCooling:
 		return dashboardStatusView{Mark: "◐", Label: "cooling"}
 	case accountChecking:
@@ -582,6 +640,8 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 
 func dashboardAccountStatusInfo(now time.Time, account accountStatsResponse) string {
 	switch account.Status {
+	case accountNotRouted:
+		return "Business and Enterprise workspaces are displayed here but excluded from routing."
 	case accountPriority:
 		if account.RoutingMode == routingModePriority {
 			return "Manual priority for new connections."

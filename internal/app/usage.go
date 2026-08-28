@@ -30,6 +30,43 @@ type usagePayload struct {
 	RateLimitResetCredits *struct {
 		AvailableCount int64 `json:"available_count"`
 	} `json:"rate_limit_reset_credits"`
+	SpendControl *spendControlPayload `json:"spend_control"`
+}
+
+type spendControlPayload struct {
+	Reached         bool               `json:"reached"`
+	IndividualLimit *spendControlLimit `json:"individual_limit"`
+}
+
+type spendControlLimit struct {
+	Source            string   `json:"source"`
+	Limit             string   `json:"limit"`
+	Used              string   `json:"used"`
+	Remaining         string   `json:"remaining"`
+	UsedPercent       *float64 `json:"used_percent"`
+	RemainingPercent  *float64 `json:"remaining_percent"`
+	ResetAfterSeconds int64    `json:"reset_after_seconds"`
+	ResetAt           int64    `json:"reset_at"`
+}
+
+func cloneSpendControl(value *spendControlPayload) *spendControlPayload {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	if value.IndividualLimit != nil {
+		limit := *value.IndividualLimit
+		if value.IndividualLimit.UsedPercent != nil {
+			used := *value.IndividualLimit.UsedPercent
+			limit.UsedPercent = &used
+		}
+		if value.IndividualLimit.RemainingPercent != nil {
+			remaining := *value.IndividualLimit.RemainingPercent
+			limit.RemainingPercent = &remaining
+		}
+		cloned.IndividualLimit = &limit
+	}
+	return &cloned
 }
 
 func (p usagePayload) bankedResets() *int64 {
@@ -129,6 +166,7 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 		payload.RateLimit.PrimaryWindow.window(fetchedAt),
 		payload.RateLimit.SecondaryWindow.window(fetchedAt),
 		payload.bankedResets(),
+		payload.SpendControl,
 	)
 	var limitReached any
 	if payload.RateLimit.LimitReached != nil {
@@ -347,10 +385,11 @@ func (s *server) reauthorize(account *Account) error {
 	return nil
 }
 
-func (a *Account) adopt(fetchedAt time.Time, planType string, primary, secondary window, banked *int64) {
+func (a *Account) adopt(fetchedAt time.Time, planType string, primary, secondary window, banked *int64, spendControl *spendControlPayload) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.usageFetchedAt = fetchedAt
+	a.spendControl = cloneSpendControl(spendControl)
 	if planType != "" {
 		a.planType = planType
 	}
@@ -445,6 +484,7 @@ func restoreUsageSnapshots(store *StateStore, accounts []*Account) error {
 					payload.RateLimit.PrimaryWindow.window(snapshot.FetchedAt),
 					payload.RateLimit.SecondaryWindow.window(snapshot.FetchedAt),
 					payload.bankedResets(),
+					payload.SpendControl,
 				)
 				if payload.RateLimit.LimitReached != nil && *payload.RateLimit.LimitReached {
 					account.markSpent()

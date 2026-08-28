@@ -47,6 +47,7 @@ type Account struct {
 	spent          bool
 	resetCredits   resetCreditState
 	creditBurn     creditBurnState
+	spendControl   *spendControlPayload
 	usageFetchedAt time.Time
 	lastUsed       time.Time
 }
@@ -94,6 +95,7 @@ const (
 	accountCooling     accountStatus = "cooling"
 	accountPaused      accountStatus = "paused"
 	accountNeedsReauth accountStatus = "needs_reauth"
+	accountNotRouted   accountStatus = "not_routed"
 
 	routingModeNormal   routingMode = "normal"
 	routingModePriority routingMode = "priority"
@@ -211,6 +213,15 @@ func weeklyPlanCapacity(plan string) float64 {
 		return 50_400
 	default:
 		return 0
+	}
+}
+
+func managedWorkspacePlan(plan string) bool {
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case "business", "enterprise":
+		return true
+	default:
+		return false
 	}
 }
 

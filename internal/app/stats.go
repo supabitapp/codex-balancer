@@ -646,10 +646,22 @@ type accountStatsResponse struct {
 	ResetAt                *time.Time                    `json:"reset_at"`
 	CreditBurn             *float64                      `json:"credit_burn,omitempty"`
 	CreditBurnSince        *time.Time                    `json:"credit_burn_since,omitempty"`
+	SpendControl           *spendControlStatsResponse    `json:"spend_control,omitempty"`
 	Turns                  int64                         `json:"turns"`
 	OpenWebSockets         int64                         `json:"open_websockets"`
 	RateLimits             int64                         `json:"rate_limits"`
 	Activity               []int64                       `json:"activity"`
+}
+
+type spendControlStatsResponse struct {
+	Reached          bool       `json:"reached"`
+	Source           string     `json:"source,omitempty"`
+	Limit            string     `json:"limit,omitempty"`
+	Used             string     `json:"used,omitempty"`
+	Remaining        string     `json:"remaining,omitempty"`
+	UsedPercent      *float64   `json:"used_percent,omitempty"`
+	RemainingPercent *float64   `json:"remaining_percent,omitempty"`
+	ResetAt          *time.Time `json:"reset_at,omitempty"`
 }
 
 type routingPriorityStatsResponse struct {
@@ -688,10 +700,12 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		primary, secondary := candidate.primary, candidate.secondary
 		traffic := snapshot.Accounts[claims.Auth.AccountID]
 		weekly := longestWindow(primary, secondary)
-		weeklyWindows = append(weeklyWindows, weightedWindow{
-			capacity: weeklyPlanCapacity(plan),
-			window:   weekly,
-		})
+		if !managedWorkspacePlan(plan) {
+			weeklyWindows = append(weeklyWindows, weightedWindow{
+				capacity: weeklyPlanCapacity(plan),
+				window:   weekly,
+			})
+		}
 		var weeklyRemaining *float64
 		if remaining, known := remainingPercent(weekly); known {
 			weeklyRemaining = &remaining
@@ -727,6 +741,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 				RemainingPercent: priority.remainingPercent,
 			}
 		}
+		spendControl := spendControlStats(candidate.spendControl)
 		out.Accounts = append(out.Accounts, accountStatsResponse{
 			ID:                     claims.Auth.AccountID,
 			Email:                  maskEmail(claims.Email),
@@ -740,6 +755,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			ResetAt:                resetAt,
 			CreditBurn:             creditBurn,
 			CreditBurnSince:        creditBurnSince,
+			SpendControl:           spendControl,
 			Turns:                  traffic.Turns,
 			OpenWebSockets:         traffic.WSOpen,
 			RateLimits:             traffic.Limited,
@@ -747,6 +763,26 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		})
 	}
 	out.weeklyPace = usagePaceAt(now, weeklyWindows...)
+	return out
+}
+
+func spendControlStats(control *spendControlPayload) *spendControlStatsResponse {
+	if control == nil {
+		return nil
+	}
+	out := &spendControlStatsResponse{Reached: control.Reached}
+	if limit := control.IndividualLimit; limit != nil {
+		out.Source = limit.Source
+		out.Limit = limit.Limit
+		out.Used = limit.Used
+		out.Remaining = limit.Remaining
+		out.UsedPercent = limit.UsedPercent
+		out.RemainingPercent = limit.RemainingPercent
+		if limit.ResetAt > 0 {
+			resetAt := time.Unix(limit.ResetAt, 0)
+			out.ResetAt = &resetAt
+		}
+	}
 	return out
 }
 

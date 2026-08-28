@@ -112,6 +112,59 @@ func TestUsagePollAdoptsCurrentPlan(t *testing.T) {
 	}
 }
 
+func TestUsagePollAdoptsManagedWorkspaceSpendControl(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	resetAt := now.Add(4 * 24 * time.Hour)
+	account := testAccountWithPlan("account-a", 20, "business")
+	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"plan_type":  "business",
+			"rate_limit": nil,
+			"spend_control": map[string]any{
+				"reached": false,
+				"individual_limit": map[string]any{
+					"source":              "account_user_spend_controls",
+					"limit":               "150000",
+					"used":                "71549.42661845684",
+					"remaining":           "78450.57338154316",
+					"used_percent":        48,
+					"remaining_percent":   52,
+					"reset_after_seconds": int64((4 * 24 * time.Hour) / time.Second),
+					"reset_at":            resetAt.Unix(),
+				},
+			},
+		})
+	}))
+	defer usage.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = usage.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+	server := &server{
+		pool:   &Pool{accounts: []*Account{account}},
+		stats:  newStatsWithPrices(testPriceSnapshot(t)),
+		client: usage.Client(),
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	if err := server.pollUsage(context.Background(), account); err != nil {
+		t.Fatal(err)
+	}
+	stats := server.currentStats(now)
+	if len(stats.Accounts) != 1 || stats.Accounts[0].Status != accountNotRouted {
+		t.Fatalf("accounts = %+v, want one not-routed workspace", stats.Accounts)
+	}
+	spend := stats.Accounts[0].SpendControl
+	if spend == nil || spend.Source != "account_user_spend_controls" || spend.Limit != "150000" || spend.Used != "71549.42661845684" || spend.Remaining != "78450.57338154316" {
+		t.Fatalf("spend control = %+v", spend)
+	}
+	if spend.UsedPercent == nil || *spend.UsedPercent != 48 || spend.RemainingPercent == nil || *spend.RemainingPercent != 52 || spend.ResetAt == nil || !spend.ResetAt.Equal(resetAt) {
+		t.Fatalf("spend control percentages/reset = %+v", spend)
+	}
+	if picked := server.pool.route(nil, nil).account; picked != nil {
+		t.Fatalf("picked = %s, want managed workspace excluded", picked.id())
+	}
+}
+
 func TestUsagePollRefreshesExpiringAccessToken(t *testing.T) {
 	refreshCalls := useOAuthRefreshServer(t)
 	server := newTestServer(t, []*Account{testAccount("account-a", 20)})
@@ -404,6 +457,73 @@ func TestUsageSnapshotsSurviveRestartAndSuppressFreshPolls(t *testing.T) {
 	restarted.pollDueUsage(context.Background(), 10*time.Minute)
 	if requests != 3 {
 		t.Fatalf("restart requests = %d, want 3", requests)
+	}
+}
+
+func TestManagedWorkspaceSpendControlSurvivesRestart(t *testing.T) {
+	resetAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"plan_type":  "enterprise",
+			"rate_limit": nil,
+			"spend_control": map[string]any{
+				"reached": true,
+				"individual_limit": map[string]any{
+					"limit":        "250000",
+					"used":         "250000",
+					"remaining":    "0",
+					"used_percent": 100,
+					"reset_at":     resetAt.Unix(),
+				},
+			},
+		})
+	}))
+	defer upstream.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = upstream.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := loadPool(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := testAccountWithPlan("account-a", 0, "enterprise")
+	if err := pool.add(account); err != nil {
+		t.Fatal(err)
+	}
+	server := &server{
+		pool:   pool,
+		client: upstream.Client(),
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := server.pollUsage(context.Background(), account); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reloaded, err := loadPool(reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := reloaded.find("account-a").routingCandidate()
+	if candidate.status(time.Now()) != accountNotRouted || candidate.spendControl == nil || !candidate.spendControl.Reached {
+		t.Fatalf("restored candidate = %+v", candidate)
+	}
+	limit := candidate.spendControl.IndividualLimit
+	if limit == nil || limit.Limit != "250000" || limit.Used != "250000" || limit.Remaining != "0" || limit.ResetAt != resetAt.Unix() {
+		t.Fatalf("restored spend limit = %+v", limit)
 	}
 }
 

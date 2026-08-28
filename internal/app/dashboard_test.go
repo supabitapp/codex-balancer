@@ -55,6 +55,8 @@ func TestDashboardPageConnectsHTMXWebSocket(t *testing.T) {
 		`id="dashboard"`,
 		`table { width: max-content; min-width: 100%;`,
 		`.status-mark.status-live { color: var(--green-11) }`,
+		`<h2>Business &amp; Enterprise <span id="workspace-summary">0 not routed</span></h2>`,
+		`id="workspaces"`,
 		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
 		`no live threads`,
 	} {
@@ -142,6 +144,8 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 		`id="overview" hx-swap-oob="innerHTML"`,
 		`id="summary" hx-swap-oob="innerHTML"`,
 		`id="accounts" hx-swap-oob="innerHTML"`,
+		`id="workspace-summary" hx-swap-oob="innerHTML"`,
+		`id="workspaces" hx-swap-oob="innerHTML"`,
 		`id="routing-count" hx-swap-oob="innerHTML"`,
 		`id="threads" hx-swap-oob="innerHTML"`,
 		`id="events" hx-swap-oob="innerHTML"`,
@@ -219,6 +223,67 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	for _, removed := range []string{"<th>Turns</th>", "<th>Limits 24h</th>"} {
 		if strings.Contains(body, removed) {
 			t.Fatalf("dashboard contains removed column %q", removed)
+		}
+	}
+}
+
+func TestDashboardSeparatesManagedWorkspacesAndShowsSpendControl(t *testing.T) {
+	now := time.Date(2026, time.August, 28, 14, 0, 0, 0, time.UTC)
+	usedPercent := 48.0
+	remainingPercent := 52.0
+	business := testAccountWithPlan("business", 0, "business")
+	business.spendControl = &spendControlPayload{
+		IndividualLimit: &spendControlLimit{
+			Source:           "account_user_spend_controls",
+			Limit:            "150000",
+			Used:             "71549.42661845684",
+			Remaining:        "78450.57338154316",
+			UsedPercent:      &usedPercent,
+			RemainingPercent: &remainingPercent,
+			ResetAt:          now.Add(4 * 24 * time.Hour).Unix(),
+		},
+	}
+	enterprise := testAccountWithPlan("enterprise", 0, "enterprise")
+	routable := testAccount("routable", 20)
+	server := &server{
+		pool:  &Pool{accounts: []*Account{business, enterprise, routable}},
+		stats: newStatsWithPrices(testPriceSnapshot(t)),
+	}
+
+	view := server.currentDashboard(now)
+	if len(view.Accounts) != 1 || view.Accounts[0].Plan != "pro" {
+		t.Fatalf("routable accounts = %+v", view.Accounts)
+	}
+	if len(view.Workspaces) != 2 {
+		t.Fatalf("workspaces = %+v, want business and enterprise", view.Workspaces)
+	}
+	workspace := view.Workspaces[0]
+	if workspace.Plan != "business" || workspace.Status != accountNotRouted || workspace.Limit != "150000" || workspace.Used != "71549.43" || workspace.Remaining != "78450.57" || workspace.UsedPercent != "48" || workspace.ResetIn != "4d0h" {
+		t.Fatalf("business workspace = %+v", workspace)
+	}
+	if view.Workspaces[1].Limit != "--" || view.Workspaces[1].Used != "--" || view.Workspaces[1].ResetIn != "--" {
+		t.Fatalf("enterprise workspace without spend data = %+v", view.Workspaces[1])
+	}
+	if len(view.Summary) != 1 || view.Summary[0] != (dashboardCount{Count: 1, Label: "live"}) {
+		t.Fatalf("routable summary = %+v", view.Summary)
+	}
+
+	payload, err := renderDashboard("dashboard", view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(payload)
+	for _, expected := range []string{
+		`<h2>Business &amp; Enterprise <span id="workspace-summary">2 not routed</span></h2>`,
+		`<th>Credit limit</th>`,
+		`<th>Remaining</th>`,
+		`<span class="status-mark status-not_routed">○</span> not routed`,
+		`>71549.43</td>`,
+		`>78450.57</td>`,
+		`>4d0h</td>`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("dashboard missing %q:\n%s", expected, body)
 		}
 	}
 }

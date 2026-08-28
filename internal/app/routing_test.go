@@ -137,6 +137,24 @@ func TestPoolRouteSkipsUnavailableAccounts(t *testing.T) {
 	}
 }
 
+func TestPoolRouteExcludesManagedWorkspacePlans(t *testing.T) {
+	for _, plan := range []string{"business", "enterprise"} {
+		t.Run(plan, func(t *testing.T) {
+			workspace := testAccountWithPlan("workspace", 0, plan)
+			routable := testAccount("routable", 20)
+			pool := &Pool{accounts: []*Account{workspace, routable}}
+
+			decision := pool.route([]string{workspace.id()}, nil)
+			if decision.account != routable || decision.blocked != "" {
+				t.Fatalf("decision = %+v, want the managed workspace excluded and the routable account selected", decision)
+			}
+			if got := workspace.status(time.Now()); got != accountNotRouted {
+				t.Fatalf("status = %s, want not routed", got)
+			}
+		})
+	}
+}
+
 func TestPoolRouteChoosesRoomierAccountWhenAnotherIsNearlySpent(t *testing.T) {
 	roomier := testAccount("account-roomier", 10)
 	nearlySpent := testAccount("account-nearly-spent", 99)

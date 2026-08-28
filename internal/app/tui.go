@@ -136,7 +136,7 @@ func (d dashboard) View() tea.View {
 func (d dashboard) title() string {
 	total := 0.0
 	for _, account := range d.pool.all() {
-		if account.paused() {
+		if account.paused() || managedWorkspacePlan(account.plan()) {
 			continue
 		}
 		primary, secondary, _, reauth := account.health()
@@ -189,7 +189,7 @@ func (d dashboard) render() string {
 
 func (d dashboard) header() string {
 	styles := d.styles()
-	live, priority, checking, cooling, dead, held := 0, 0, 0, 0, 0, 0
+	live, priority, checking, cooling, dead, held, notRouted := 0, 0, 0, 0, 0, 0, 0
 	now := time.Now()
 	for _, a := range d.pool.all() {
 		switch a.status(now) {
@@ -197,6 +197,8 @@ func (d dashboard) header() string {
 			held++
 		case accountNeedsReauth:
 			dead++
+		case accountNotRouted:
+			notRouted++
 		case accountCooling:
 			cooling++
 		case accountChecking:
@@ -214,6 +216,9 @@ func (d dashboard) header() string {
 	}
 	if checking > 0 {
 		parts = append(parts, styles.dim.Render(fmt.Sprintf("%d checking", checking)))
+	}
+	if notRouted > 0 {
+		parts = append(parts, styles.dim.Render(fmt.Sprintf("%d not routed", notRouted)))
 	}
 	if cooling > 0 {
 		parts = append(parts, styles.hot.Render(fmt.Sprintf("%d cooling", cooling)))
@@ -311,6 +316,8 @@ func (d dashboard) accounts(limit int) string {
 			status = styles.dim.Render(fit("⏸ paused", statusW))
 		case accountNeedsReauth:
 			status = styles.bad.Render(fit("✕ "+reauth, statusW))
+		case accountNotRouted:
+			status = styles.dim.Render(fit("○ not routed", statusW))
 		case accountCooling:
 			status = styles.hot.Render(fit("◐ cooling", statusW))
 		case accountChecking:
