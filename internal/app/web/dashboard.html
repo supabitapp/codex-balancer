@@ -46,7 +46,6 @@ td { font-weight: 400 }
 .status-mark.status-cooling { color: var(--amber-11) }
 .status-mark.status-needs_reauth { color: var(--red-11) }
 .spark { letter-spacing: .08em }
-.fast-icon { display: block; width: 1rem; height: 1rem; fill: currentColor; opacity: .75 }
 .empty { padding: .5rem 0 }
 .overview { display: flex; gap: 1rem; margin: 0; overflow-x: auto }
 .overview div { display: grid; gap: .125rem; min-width: max-content }
@@ -155,7 +154,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td class="dim">{{.ClientID}}</td>
 <td>{{.Account}}</td>
 <td>{{if .ModelInfo}}<span class="has-tooltip" data-tooltip="{{.ModelInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Model}}</span>{{else}}{{.Model}}{{end}}</td>
-<td>{{if .Fast}}<svg class="fast-icon" viewBox="0 0 15 15" role="img" aria-label="Fast"><title>Fast</title><path d="M8.5 1 3.75 8H7l-.5 6 4.75-7H8l.5-6Z"/></svg>{{end}}</td>
+<td>{{if .Fast}}<span role="img" aria-label="Fast">⚡️</span>{{end}}</td>
 <td>{{.CacheRate}}</td>
 <td>{{if .ContextInfo}}<span class="has-tooltip" data-tooltip="{{.ContextInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.ContextUsed}}</span>{{else}}{{.ContextUsed}}{{end}}</td>
 <td>{{.Cost}}</td>
