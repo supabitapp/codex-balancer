@@ -48,8 +48,8 @@ func TestStateStoreCreatesOnlyMinimalSchema(t *testing.T) {
 
 	wantColumns := map[string][]string{
 		"accounts":       {"account_id", "id_token", "access_token", "refresh_token", "paused", "routing_mode", "last_refresh_ns", "last_used_at_ns", "reauth"},
-		"api_keys":       {"name", "secret", "created_at_ns", "revoked_at_ns", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"},
-		"response_usage": {"id", "at_ns", "model", "service_tier", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"},
+		"api_keys":       {"name", "secret", "created_at_ns", "revoked_at_ns"},
+		"response_usage": {"id", "api_key_name", "at_ns", "model", "service_tier", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens"},
 		"routes":         {"key", "account_id", "updated_at_ns"},
 	}
 	for table, want := range wantColumns {
@@ -149,7 +149,7 @@ func TestStateStorePersistsLatestRoutesAndLastUsed(t *testing.T) {
 	}
 }
 
-func TestStateStoreTracksCumulativeUsageOnAPIKey(t *testing.T) {
+func TestStateStoreDerivesCumulativeUsageFromResponseRows(t *testing.T) {
 	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -183,12 +183,22 @@ func TestStateStoreTracksCumulativeUsageOnAPIKey(t *testing.T) {
 	if usage["legacy"] != want {
 		t.Fatalf("usage = %+v, want %+v", usage["legacy"], want)
 	}
-	var serviceTier string
-	if err := store.db.QueryRow(`SELECT service_tier FROM response_usage ORDER BY id LIMIT 1`).Scan(&serviceTier); err != nil {
+	var apiKeyName, serviceTier string
+	if err := store.db.QueryRow(`SELECT api_key_name, service_tier FROM response_usage ORDER BY id LIMIT 1`).Scan(&apiKeyName, &serviceTier); err != nil {
 		t.Fatal(err)
 	}
-	if serviceTier != "default" {
-		t.Fatalf("default service tier stored as %q", serviceTier)
+	if apiKeyName != "legacy" || serviceTier != "default" {
+		t.Fatalf("usage identity/tier = %q/%q, want legacy/default", apiKeyName, serviceTier)
+	}
+	events, err := store.usageEventsSince(created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].APIKeyName != "legacy" || events[1].APIKeyName != "legacy" {
+		t.Fatalf("usage events = %+v, want two attributed to legacy", events)
+	}
+	if err := store.recordUsage(storedUsage{At: time.Now(), APIKeyName: "missing", Model: "gpt-5.4", Usage: second}); err == nil {
+		t.Fatal("usage for missing API key succeeded")
 	}
 
 	revokedAt := time.Now()
@@ -208,7 +218,7 @@ func TestStateStoreTracksCumulativeUsageOnAPIKey(t *testing.T) {
 	}
 }
 
-func TestPersistentStatsRestoresOnlyCurrentMonthUsage(t *testing.T) {
+func TestPersistentStatsRestoresCurrentMonthWithoutPruningHistory(t *testing.T) {
 	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -239,12 +249,15 @@ func TestPersistentStatsRestoresOnlyCurrentMonthUsage(t *testing.T) {
 	if snapshot.APICostNanoDollars != wantCost {
 		t.Fatalf("monthly cost = %d, want %d", snapshot.APICostNanoDollars, wantCost)
 	}
+	if err := stats.reprice(prices); err != nil {
+		t.Fatal(err)
+	}
 	var rows int
 	if err := store.db.QueryRow(`SELECT count(*) FROM response_usage`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 1 {
-		t.Fatalf("retained usage rows = %d, want 1", rows)
+	if rows != 2 {
+		t.Fatalf("retained usage rows = %d, want 2", rows)
 	}
 }
 

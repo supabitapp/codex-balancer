@@ -40,7 +40,6 @@ type Stats struct {
 	ttfbN              int64
 	wsOpen             int64
 	usageMonth         int
-	usageStoreMonth    int
 	monthlyUsage       responseUsage
 	apiCostNanoDollars int64
 	unpricedResponses  int64
@@ -100,13 +99,12 @@ type Event struct {
 func newStatsWithPrices(prices priceSnapshot) *Stats {
 	now := time.Now()
 	return &Stats{
-		started:         now,
-		usageMonth:      calendarMonth(now),
-		usageStoreMonth: calendarMonth(now),
-		prices:          prices,
-		accounts:        map[string]*accountStats{},
-		threads:         map[string]*threadStats{},
-		liveThreads:     map[string]int{},
+		started:     now,
+		usageMonth:  calendarMonth(now),
+		prices:      prices,
+		accounts:    map[string]*accountStats{},
+		threads:     map[string]*threadStats{},
+		liveThreads: map[string]int{},
 	}
 }
 
@@ -115,9 +113,6 @@ func newPersistentStats(store *StateStore, prices priceSnapshot, persistFailed f
 	stats.store = store
 	stats.persistFailed = persistFailed
 	monthStart := calendarMonthStart(time.Now())
-	if err := store.pruneUsageBefore(monthStart); err != nil {
-		return nil, err
-	}
 	events, err := store.usageEventsSince(monthStart)
 	if err != nil {
 		return nil, err
@@ -319,7 +314,6 @@ func (s *Stats) recordAPIKeyUsage(apiKeyName, thread, account, model, effort, se
 	s.pricingMu.Lock()
 	defer s.pricingMu.Unlock()
 	now := time.Now()
-	s.pruneUsageForMonth(now)
 	s.persistUsage(storedUsage{At: now, APIKeyName: apiKeyName, Model: model, ServiceTier: serviceTier, Usage: usage})
 	s.applyUsageAt(now, thread, account, model, effort, serviceTier, usage)
 }
@@ -369,10 +363,6 @@ func (s *Stats) reprice(prices priceSnapshot) error {
 	defer s.pricingMu.Unlock()
 	now := time.Now()
 	monthStart := calendarMonthStart(now)
-	if err := s.store.pruneUsageBefore(monthStart); err != nil {
-		return err
-	}
-	s.usageStoreMonth = calendarMonth(now)
 	events, err := s.store.usageEventsSince(monthStart)
 	if err != nil {
 		return err
@@ -421,20 +411,6 @@ func (s *Stats) persistUsage(event storedUsage) {
 	if err := s.store.recordUsage(event); err != nil && s.persistFailed != nil {
 		s.persistFailed(err)
 	}
-}
-
-func (s *Stats) pruneUsageForMonth(now time.Time) {
-	month := calendarMonth(now)
-	if s.store == nil || s.usageStoreMonth == month {
-		return
-	}
-	if err := s.store.pruneUsageBefore(calendarMonthStart(now)); err != nil {
-		if s.persistFailed != nil {
-			s.persistFailed(err)
-		}
-		return
-	}
-	s.usageStoreMonth = month
 }
 
 type Snapshot struct {

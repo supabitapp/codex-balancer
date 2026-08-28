@@ -186,10 +186,6 @@ func (s *StateStore) usageEventsSince(start time.Time) ([]storedUsage, error) {
 	return storedUsageEvents(events), err
 }
 
-func (s *StateStore) pruneUsageBefore(cutoff time.Time) error {
-	return s.raw.PruneUsageBefore(cutoff)
-}
-
 func (s *StateStore) apiKeyUsage() (map[string]responseUsage, error) {
 	records, err := s.raw.APIKeyUsage()
 	if err != nil {

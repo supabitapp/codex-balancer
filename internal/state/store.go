@@ -32,12 +32,7 @@ CREATE TABLE api_keys (
 	name TEXT PRIMARY KEY CHECK (length(name) > 0),
 	secret TEXT NOT NULL UNIQUE CHECK (length(secret) > 0),
 	created_at_ns INTEGER NOT NULL CHECK (created_at_ns > 0),
-	revoked_at_ns INTEGER CHECK (revoked_at_ns IS NULL OR revoked_at_ns > 0),
-	input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
-	cached_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cached_tokens >= 0),
-	cache_write_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0),
-	output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
-	reasoning_tokens INTEGER NOT NULL DEFAULT 0 CHECK (reasoning_tokens >= 0)
+	revoked_at_ns INTEGER CHECK (revoked_at_ns IS NULL OR revoked_at_ns > 0)
 ) STRICT;
 CREATE TABLE routes (
 	key TEXT PRIMARY KEY CHECK (length(key) > 0),
@@ -47,6 +42,7 @@ CREATE TABLE routes (
 CREATE INDEX routes_account ON routes (account_id);
 CREATE TABLE response_usage (
 	id INTEGER PRIMARY KEY,
+	api_key_name TEXT REFERENCES api_keys(name),
 	at_ns INTEGER NOT NULL CHECK (at_ns > 0),
 	model TEXT NOT NULL,
 	service_tier TEXT NOT NULL,
@@ -56,7 +52,8 @@ CREATE TABLE response_usage (
 	output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
 	reasoning_tokens INTEGER NOT NULL CHECK (reasoning_tokens >= 0)
 ) STRICT;
-CREATE INDEX response_usage_at ON response_usage (at_ns);`
+CREATE INDEX response_usage_at ON response_usage (at_ns);
+CREATE INDEX response_usage_api_key ON response_usage (api_key_name);`
 
 type Store struct {
 	db   *sql.DB
@@ -88,7 +85,6 @@ type APIKey struct {
 	Secret    string
 	CreatedAt time.Time
 	RevokedAt time.Time
-	Usage     Usage
 }
 
 type Route struct {
@@ -209,8 +205,7 @@ func (s *Store) initialize() error {
 }
 
 func (s *Store) ReadAPIKeys() ([]APIKey, error) {
-	rows, err := s.db.Query(`SELECT name, secret, created_at_ns, revoked_at_ns, input_tokens, cached_tokens,
-		cache_write_tokens, output_tokens, reasoning_tokens FROM api_keys ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name, secret, created_at_ns, revoked_at_ns FROM api_keys ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -220,9 +215,7 @@ func (s *Store) ReadAPIKeys() ([]APIKey, error) {
 		var key APIKey
 		var createdAt int64
 		var revokedAt sql.NullInt64
-		if err := rows.Scan(&key.Name, &key.Secret, &createdAt, &revokedAt, &key.Usage.InputTokens,
-			&key.Usage.CachedTokens, &key.Usage.CacheWriteTokens, &key.Usage.OutputTokens,
-			&key.Usage.ReasoningTokens); err != nil {
+		if err := rows.Scan(&key.Name, &key.Secret, &createdAt, &revokedAt); err != nil {
 			return nil, err
 		}
 		key.CreatedAt = decodeTime(createdAt)
@@ -412,37 +405,21 @@ func (s *Store) RecordUsage(event UsageEvent) error {
 	if serviceTier == "" {
 		serviceTier = "default"
 	}
-	return s.immediate(func(conn *sql.Conn) error {
-		if event.APIKeyName != "" {
-			result, err := conn.ExecContext(context.Background(), `UPDATE api_keys SET
-				input_tokens = input_tokens + ?, cached_tokens = cached_tokens + ?,
-				cache_write_tokens = cache_write_tokens + ?, output_tokens = output_tokens + ?,
-				reasoning_tokens = reasoning_tokens + ? WHERE name = ?`, event.Usage.InputTokens,
-				event.Usage.CachedTokens, event.Usage.CacheWriteTokens, event.Usage.OutputTokens,
-				event.Usage.ReasoningTokens, event.APIKeyName)
-			if err != nil {
-				return err
-			}
-			changed, err := result.RowsAffected()
-			if err != nil {
-				return err
-			}
-			if changed == 0 {
-				return fmt.Errorf("API key %q does not exist", event.APIKeyName)
-			}
-		}
-		_, err := conn.ExecContext(context.Background(), `INSERT INTO response_usage (
-			at_ns, model, service_tier, input_tokens, cached_tokens, cache_write_tokens,
-			output_tokens, reasoning_tokens
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, encodeTime(event.At), event.Model,
-			serviceTier, event.Usage.InputTokens, event.Usage.CachedTokens, event.Usage.CacheWriteTokens,
-			event.Usage.OutputTokens, event.Usage.ReasoningTokens)
-		return err
-	})
+	var apiKeyName any
+	if event.APIKeyName != "" {
+		apiKeyName = event.APIKeyName
+	}
+	_, err := s.db.Exec(`INSERT INTO response_usage (
+		api_key_name, at_ns, model, service_tier, input_tokens, cached_tokens, cache_write_tokens,
+		output_tokens, reasoning_tokens
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, apiKeyName, encodeTime(event.At), event.Model,
+		serviceTier, event.Usage.InputTokens, event.Usage.CachedTokens, event.Usage.CacheWriteTokens,
+		event.Usage.OutputTokens, event.Usage.ReasoningTokens)
+	return err
 }
 
 func (s *Store) UsageEventsSince(start time.Time) ([]UsageEvent, error) {
-	rows, err := s.db.Query(`SELECT at_ns, model, service_tier, input_tokens, cached_tokens,
+	rows, err := s.db.Query(`SELECT api_key_name, at_ns, model, service_tier, input_tokens, cached_tokens,
 		cache_write_tokens, output_tokens, reasoning_tokens FROM response_usage WHERE at_ns >= ? ORDER BY id`, encodeTime(start))
 	if err != nil {
 		return nil, err
@@ -451,11 +428,15 @@ func (s *Store) UsageEventsSince(start time.Time) ([]UsageEvent, error) {
 	var events []UsageEvent
 	for rows.Next() {
 		var event UsageEvent
+		var apiKeyName sql.NullString
 		var at int64
-		if err := rows.Scan(&at, &event.Model, &event.ServiceTier, &event.Usage.InputTokens,
+		if err := rows.Scan(&apiKeyName, &at, &event.Model, &event.ServiceTier, &event.Usage.InputTokens,
 			&event.Usage.CachedTokens, &event.Usage.CacheWriteTokens, &event.Usage.OutputTokens,
 			&event.Usage.ReasoningTokens); err != nil {
 			return nil, err
+		}
+		if apiKeyName.Valid {
+			event.APIKeyName = apiKeyName.String
 		}
 		event.At = decodeTime(at)
 		events = append(events, event)
@@ -463,21 +444,28 @@ func (s *Store) UsageEventsSince(start time.Time) ([]UsageEvent, error) {
 	return events, rows.Err()
 }
 
-func (s *Store) PruneUsageBefore(cutoff time.Time) error {
-	_, err := s.db.Exec(`DELETE FROM response_usage WHERE at_ns < ?`, encodeTime(cutoff))
-	return err
-}
-
 func (s *Store) APIKeyUsage() (map[string]Usage, error) {
-	keys, err := s.ReadAPIKeys()
+	rows, err := s.db.Query(`SELECT k.name,
+		coalesce(sum(r.input_tokens), 0), coalesce(sum(r.cached_tokens), 0),
+		coalesce(sum(r.cache_write_tokens), 0), coalesce(sum(r.output_tokens), 0),
+		coalesce(sum(r.reasoning_tokens), 0)
+		FROM api_keys AS k LEFT JOIN response_usage AS r ON r.api_key_name = k.name
+		GROUP BY k.name ORDER BY k.name`)
 	if err != nil {
 		return nil, err
 	}
-	usage := make(map[string]Usage, len(keys))
-	for _, key := range keys {
-		usage[key.Name] = key.Usage
+	defer rows.Close()
+	usage := make(map[string]Usage)
+	for rows.Next() {
+		var name string
+		var value Usage
+		if err := rows.Scan(&name, &value.InputTokens, &value.CachedTokens, &value.CacheWriteTokens,
+			&value.OutputTokens, &value.ReasoningTokens); err != nil {
+			return nil, err
+		}
+		usage[name] = value
 	}
-	return usage, nil
+	return usage, rows.Err()
 }
 
 func (s *Store) immediate(run func(*sql.Conn) error) error {
