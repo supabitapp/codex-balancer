@@ -37,7 +37,7 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	want := []string{"account_snapshots", "accounts", "api_keys", "attempts", "client_identity", "events", "price_catalog"}
+	want := []string{"account_snapshots", "accounts", "api_keys", "attempts", "client_identity", "events", "price_catalog", "response_usage"}
 	if !slices.Equal(tables, want) {
 		t.Fatalf("tables = %v, want %v", tables, want)
 	}
@@ -63,6 +63,57 @@ func TestStateStoreCreatesCurrentSchema(t *testing.T) {
 	}
 	if clientIP != 1 || clientID != 0 || sessionKey != 1 || warmup != 1 {
 		t.Fatalf("attempt columns: client_ip = %d, client_id = %d, session_key = %d, warmup = %d", clientIP, clientID, sessionKey, warmup)
+	}
+}
+
+func TestStateStoreMovesLegacyUsageEventsIntoDedicatedTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.addAPIKey(storedAPIKey{Name: "client", Secret: "secret", CreatedAt: time.Unix(0, 1)}); err != nil {
+		t.Fatal(err)
+	}
+	removeUsageMigration(t, store)
+	if _, err := store.db.Exec(`INSERT INTO events (
+		at_ns, kind, account_id, thread_key, detail, duration_ns, model, reasoning_effort, service_tier,
+		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
+	) VALUES (100, 'response usage', 'account', 'thread', '', 0, 'model', 'high', 'priority', 10, 8, 2, 4, 14, 3);
+	PRAGMA user_version = ` + fmt.Sprint(stateSchemaVersion-1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var key, model, effort, tier string
+	var input, cached, cacheWrite, output, total, reasoning int64
+	if err := reopened.db.QueryRow(`SELECT api_key_name, model, reasoning_effort, service_tier, input_tokens,
+		cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens FROM response_usage`).Scan(
+		&key, &model, &effort, &tier, &input, &cached, &cacheWrite, &output, &total, &reasoning); err != nil {
+		t.Fatal(err)
+	}
+	if key != "client" || model != "model" || effort != "high" || tier != "priority" || input != 10 || cached != 8 || cacheWrite != 2 || output != 4 || total != 14 || reasoning != 3 {
+		t.Fatalf("migrated usage = key %q, model %q, effort %q, tier %q, tokens %d/%d/%d/%d/%d/%d", key, model, effort, tier, input, cached, cacheWrite, output, total, reasoning)
+	}
+	var legacyEvents, legacyColumns, accountIndex int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM events WHERE kind = 'response usage'`).Scan(&legacyEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM pragma_table_info('events') WHERE name IN ('model', 'input_tokens', 'output_tokens')`).Scan(&legacyColumns); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'events_account_at'`).Scan(&accountIndex); err != nil {
+		t.Fatal(err)
+	}
+	if legacyEvents != 0 || legacyColumns != 0 || accountIndex != 0 {
+		t.Fatalf("legacy storage remains: events = %d, columns = %d, account index = %d", legacyEvents, legacyColumns, accountIndex)
 	}
 }
 
@@ -102,14 +153,14 @@ func TestStateStorePersistsAndRevokesMultipleAPIKeys(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if valid, err := store.validAPIKey("secret-a"); err != nil || !valid {
-		t.Fatalf("first key valid = %t, error = %v", valid, err)
+	if name, valid, err := store.apiKeyName("secret-a"); err != nil || !valid || name != "alice" {
+		t.Fatalf("first key = %q, valid = %t, error = %v", name, valid, err)
 	}
-	if valid, err := store.validAPIKey("secret-b"); err != nil || !valid {
-		t.Fatalf("second key valid = %t, error = %v", valid, err)
+	if name, valid, err := store.apiKeyName("secret-b"); err != nil || !valid || name != "bob" {
+		t.Fatalf("second key = %q, valid = %t, error = %v", name, valid, err)
 	}
-	if valid, err := store.validAPIKey("wrong"); err != nil || valid {
-		t.Fatalf("wrong key valid = %t, error = %v", valid, err)
+	if name, valid, err := store.apiKeyName("wrong"); err != nil || valid || name != "" {
+		t.Fatalf("wrong key = %q, valid = %t, error = %v", name, valid, err)
 	}
 	revokedAt := createdAt.Add(2 * time.Second)
 	revoked, err := store.revokeAPIKey("alice", revokedAt)
@@ -353,7 +404,7 @@ func TestStateStoreRemovesLegacyDrainingMode(t *testing.T) {
 		UPDATE accounts SET legacy_routing_mode = 'draining';
 		ALTER TABLE accounts DROP COLUMN routing_mode;
 		ALTER TABLE accounts RENAME COLUMN legacy_routing_mode TO routing_mode;
-		PRAGMA user_version = %d;`, stateSchemaVersion-4)); err != nil {
+		PRAGMA user_version = %d;`, stateSchemaVersion-5)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -498,7 +549,7 @@ func TestStateStoreRemovesLegacyAffinityAndRotationData(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", stateSchemaVersion-5)); err != nil {
+	if _, err := store.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", stateSchemaVersion-6)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -594,12 +645,32 @@ func TestStateStoreDoesNotTreatLegacyClientIDsAsIPs(t *testing.T) {
 
 func removeRouteFactMigration(t *testing.T, store *StateStore) {
 	t.Helper()
+	removeUsageMigration(t, store)
 	if _, err := store.db.Exec(`DROP TABLE api_keys;
 		DROP TABLE account_snapshots;
 		ALTER TABLE accounts DROP COLUMN reauth;
 		DROP INDEX attempts_session_at;
 		ALTER TABLE attempts DROP COLUMN session_key;
 		ALTER TABLE attempts DROP COLUMN warmup;`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func removeUsageMigration(t *testing.T, store *StateStore) {
+	t.Helper()
+	if _, err := store.db.Exec(`DROP TABLE response_usage;
+		ALTER TABLE events ADD COLUMN model TEXT NOT NULL DEFAULT '';
+		ALTER TABLE events ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT '';
+		ALTER TABLE events ADD COLUMN service_tier TEXT NOT NULL DEFAULT '';
+		ALTER TABLE events ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE events ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE events ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE events ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE events ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE events ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0;
+		CREATE INDEX events_account_at ON events (account_id, at_ns);
+		DROP INDEX attempts_session_at;
+		CREATE INDEX attempts_session_at ON attempts (session_key, at_ns);`); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -661,7 +732,7 @@ func TestStatsRestoreFromRawFacts(t *testing.T) {
 	usage.OutputDetails.ReasoningTokens = 5
 	stats.recordUsage(statsThread, "account-a", "gpt-5.6-sol", "xhigh", serviceTierFast, usage)
 	var effort string
-	if err := store.db.QueryRow(`SELECT reasoning_effort FROM events WHERE kind = ? ORDER BY id DESC LIMIT 1`, eventResponseUsage).Scan(&effort); err != nil {
+	if err := store.db.QueryRow(`SELECT reasoning_effort FROM response_usage ORDER BY id DESC LIMIT 1`).Scan(&effort); err != nil {
 		t.Fatal(err)
 	}
 	if effort != "xhigh" {
@@ -769,10 +840,10 @@ func TestStatsRestoreUsesCurrentMonthUsage(t *testing.T) {
 	currentUsage := responseUsage{InputTokens: 2_000, OutputTokens: 1_000}
 	currentUsage.InputDetails.CachedTokens = 1_500
 	for _, event := range []storedEvent{
-		{At: month.Add(-time.Second), Kind: eventResponseUsage, Model: "gpt-5.6-sol", Usage: previousUsage},
-		{At: month.Add(time.Second), Kind: eventResponseUsage, Model: "gpt-5.6-sol", Usage: currentUsage},
+		{At: month.Add(-time.Second), Model: "gpt-5.6-sol", Usage: previousUsage},
+		{At: month.Add(time.Second), Model: "gpt-5.6-sol", Usage: currentUsage},
 	} {
-		if err := store.recordEvent(event); err != nil {
+		if err := store.recordUsage(event); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -45,9 +45,16 @@ codex-balancer keys list
 codex-balancer keys rm my-laptop
 ```
 
+`keys list` includes the input, cached, output, and total tokens attributed to
+each key. During upgrade, historical usage is assigned automatically when the
+database contains exactly one key; otherwise it remains unattributed.
+
 State lives in `~/.codex-balancer/state.db`.
 
-SQLite stores client API keys, account credentials, routed turns, and events. The server fetches current limits, reset credits, current-cycle credit burn, auth state, and model lists. It derives status, totals, activity, response time, and current-month cost from those facts.
+SQLite stores client API keys, account credentials, routed turns, events, and
+response token usage. The server fetches current limits, reset credits,
+current-cycle credit burn, auth state, and model lists. It derives status,
+totals, activity, response time, and current-month cost from those facts.
 
 ## Point Codex at it
 

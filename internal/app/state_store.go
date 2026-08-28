@@ -26,6 +26,7 @@ type storedAPIKey = statepkg.APIKey
 
 type storedEvent struct {
 	At          time.Time
+	APIKeyName  string
 	Kind        string
 	Account     string
 	Thread      string
@@ -70,17 +71,27 @@ func (s *StateStore) revokeAPIKey(name string, at time.Time) (bool, error) {
 }
 
 func (s *StateStore) validAPIKey(presented string) (bool, error) {
+	_, valid, err := s.apiKeyName(presented)
+	return valid, err
+}
+
+func (s *StateStore) apiKeyName(presented string) (string, bool, error) {
 	keys, err := s.readAPIKeys()
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	valid := 0
+	name := ""
 	for _, key := range keys {
 		if key.RevokedAt.IsZero() {
-			valid |= subtle.ConstantTimeCompare([]byte(presented), []byte(key.Secret))
+			matched := subtle.ConstantTimeCompare([]byte(presented), []byte(key.Secret))
+			valid |= matched
+			if matched == 1 {
+				name = key.Name
+			}
 		}
 	}
-	return valid == 1, nil
+	return name, valid == 1, nil
 }
 
 func (s *StateStore) activeAPIKeyCount() (int, error) {
@@ -206,24 +217,49 @@ func (s *StateStore) recordEvent(event storedEvent) error {
 	return s.raw.RecordEvent(stateEvent(event))
 }
 
+func (s *StateStore) recordUsage(event storedEvent) error {
+	return s.raw.RecordUsage(stateUsageEvent(event))
+}
+
 func (s *StateStore) usageEventsSince(start time.Time) ([]storedEvent, error) {
-	events, err := s.raw.UsageEventsSince(eventResponseUsage, start)
-	return storedEvents(events), err
+	events, err := s.raw.UsageEventsSince(start)
+	return storedUsageEvents(events), err
 }
 
 func (s *StateStore) threadUsageEventsSince(start time.Time) ([]storedEvent, error) {
-	events, err := s.raw.ThreadUsageEventsSince(eventResponseUsage, start)
-	return storedEvents(events), err
+	events, err := s.raw.ThreadUsageEventsSince(start)
+	return storedUsageEvents(events), err
+}
+
+func (s *StateStore) apiKeyUsage() (map[string]responseUsage, error) {
+	records, err := s.raw.APIKeyUsage()
+	if err != nil {
+		return nil, err
+	}
+	usage := make(map[string]responseUsage, len(records))
+	for name, record := range records {
+		usage[name] = responseUsageFromState(record)
+	}
+	return usage, nil
 }
 
 func stateEvent(event storedEvent) statepkg.Event {
 	return statepkg.Event{
+		At:       event.At,
+		Kind:     event.Kind,
+		Account:  event.Account,
+		Thread:   event.Thread,
+		Detail:   event.Detail,
+		Duration: event.Duration,
+	}
+}
+
+func stateUsageEvent(event storedEvent) statepkg.UsageEvent {
+	return statepkg.UsageEvent{
 		At:          event.At,
-		Kind:        event.Kind,
+		APIKeyName:  event.APIKeyName,
 		Account:     event.Account,
 		Thread:      event.Thread,
-		Detail:      event.Detail,
-		Duration:    event.Duration,
 		Model:       event.Model,
 		Effort:      event.Effort,
 		ServiceTier: event.ServiceTier,
@@ -241,32 +277,45 @@ func stateEvent(event storedEvent) statepkg.Event {
 func storedEvents(events []statepkg.Event) []storedEvent {
 	stored := make([]storedEvent, 0, len(events))
 	for _, event := range events {
-		usage := responseUsage{
-			InputTokens:  event.Usage.InputTokens,
-			OutputTokens: event.Usage.OutputTokens,
-			TotalTokens:  event.Usage.TotalTokens,
-		}
-		usage.InputDetails.CachedTokens = event.Usage.CachedTokens
-		usage.InputDetails.CacheWriteTokens = event.Usage.CacheWriteTokens
-		usage.OutputDetails.ReasoningTokens = event.Usage.ReasoningTokens
 		stored = append(stored, storedEvent{
-			At:          event.At,
-			Kind:        event.Kind,
-			Account:     event.Account,
-			Thread:      event.Thread,
-			Detail:      event.Detail,
-			Duration:    event.Duration,
-			Model:       event.Model,
-			Effort:      event.Effort,
-			ServiceTier: event.ServiceTier,
-			Usage:       usage,
+			At:       event.At,
+			Kind:     event.Kind,
+			Account:  event.Account,
+			Thread:   event.Thread,
+			Detail:   event.Detail,
+			Duration: event.Duration,
 		})
 	}
 	return stored
 }
 
+func storedUsageEvents(events []statepkg.UsageEvent) []storedEvent {
+	stored := make([]storedEvent, 0, len(events))
+	for _, event := range events {
+		stored = append(stored, storedEvent{
+			At:          event.At,
+			APIKeyName:  event.APIKeyName,
+			Account:     event.Account,
+			Thread:      event.Thread,
+			Model:       event.Model,
+			Effort:      event.Effort,
+			ServiceTier: event.ServiceTier,
+			Usage:       responseUsageFromState(event.Usage),
+		})
+	}
+	return stored
+}
+
+func responseUsageFromState(usage statepkg.Usage) responseUsage {
+	value := responseUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, TotalTokens: usage.TotalTokens}
+	value.InputDetails.CachedTokens = usage.CachedTokens
+	value.InputDetails.CacheWriteTokens = usage.CacheWriteTokens
+	value.OutputDetails.ReasoningTokens = usage.ReasoningTokens
+	return value
+}
+
 func (s *StateStore) restoreStats(stats *Stats) error {
-	attempts, events, err := s.raw.Restore()
+	attempts, events, usageEvents, err := s.raw.Restore()
 	if err != nil {
 		return err
 	}
@@ -285,15 +334,15 @@ func (s *StateStore) restoreStats(stats *Stats) error {
 		case eventResponseCompleted:
 			stats.applyCompleted(event.At, event.Thread, event.Account, event.Detail, event.Duration)
 			continue
-		case eventResponseUsage:
-			stats.applyUsageAt(event.At, event.Thread, event.Account, event.Model, event.Effort, event.ServiceTier, event.Usage)
-			continue
 		case eventRateLimited:
 			stats.applyRateLimited(event.At, event.Account)
 		case eventFailover:
 			stats.failures++
 		}
 		stats.appendEvent(Event{At: event.At, Kind: event.Kind, Account: event.Account, Detail: event.Detail})
+	}
+	for _, event := range storedUsageEvents(usageEvents) {
+		stats.applyUsageAt(event.At, event.Thread, event.Account, event.Model, event.Effort, event.ServiceTier, event.Usage)
 	}
 	return nil
 }

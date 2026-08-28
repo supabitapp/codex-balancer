@@ -110,6 +110,45 @@ var stateMigrations = []string{
 		created_at_ns INTEGER NOT NULL CHECK (created_at_ns > 0),
 		revoked_at_ns INTEGER
 	) STRICT;`,
+	`CREATE TABLE response_usage (
+		id INTEGER PRIMARY KEY,
+		at_ns INTEGER NOT NULL,
+		api_key_name TEXT NOT NULL,
+		account_id TEXT NOT NULL,
+		thread_key TEXT NOT NULL,
+		model TEXT NOT NULL,
+		reasoning_effort TEXT NOT NULL,
+		service_tier TEXT NOT NULL,
+		input_tokens INTEGER NOT NULL,
+		cached_tokens INTEGER NOT NULL,
+		cache_write_tokens INTEGER NOT NULL,
+		output_tokens INTEGER NOT NULL,
+		total_tokens INTEGER NOT NULL,
+		reasoning_tokens INTEGER NOT NULL
+	) STRICT;
+	INSERT INTO response_usage (
+		id, at_ns, api_key_name, account_id, thread_key, model, reasoning_effort, service_tier,
+		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
+	)
+	SELECT id, at_ns,
+		CASE WHEN (SELECT COUNT(*) FROM api_keys) = 1 THEN (SELECT name FROM api_keys LIMIT 1) ELSE '' END,
+		account_id, thread_key, model, reasoning_effort, service_tier,
+		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
+	FROM events WHERE kind = 'response usage';
+	DELETE FROM events WHERE kind = 'response usage';
+	DROP INDEX events_account_at;
+	ALTER TABLE events DROP COLUMN model;
+	ALTER TABLE events DROP COLUMN reasoning_effort;
+	ALTER TABLE events DROP COLUMN service_tier;
+	ALTER TABLE events DROP COLUMN input_tokens;
+	ALTER TABLE events DROP COLUMN cached_tokens;
+	ALTER TABLE events DROP COLUMN cache_write_tokens;
+	ALTER TABLE events DROP COLUMN output_tokens;
+	ALTER TABLE events DROP COLUMN total_tokens;
+	ALTER TABLE events DROP COLUMN reasoning_tokens;
+	CREATE INDEX response_usage_at ON response_usage (at_ns);
+	DROP INDEX attempts_session_at;
+	CREATE INDEX attempts_session_at ON attempts (session_key, at_ns) WHERE session_key != '';`,
 }
 
 type Store struct {
@@ -150,12 +189,19 @@ type Usage struct {
 }
 
 type Event struct {
+	At       time.Time
+	Kind     string
+	Account  string
+	Thread   string
+	Detail   string
+	Duration time.Duration
+}
+
+type UsageEvent struct {
 	At          time.Time
-	Kind        string
+	APIKeyName  string
 	Account     string
 	Thread      string
-	Detail      string
-	Duration    time.Duration
 	Model       string
 	Effort      string
 	ServiceTier string
@@ -531,7 +577,7 @@ func (s *Store) RouteOwners(thread, session string) ([]string, error) {
 			continue
 		}
 		var account string
-		err := s.db.QueryRow(`SELECT account_id FROM attempts WHERE `+lookup.column+` = ? ORDER BY at_ns DESC, id DESC LIMIT 1`, lookup.value).Scan(&account)
+		err := s.db.QueryRow(`SELECT account_id FROM attempts WHERE `+lookup.column+` = ? AND `+lookup.column+` != '' ORDER BY at_ns DESC, id DESC LIMIT 1`, lookup.value).Scan(&account)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -547,25 +593,31 @@ func (s *Store) RouteOwners(thread, session string) ([]string, error) {
 
 func (s *Store) RecordEvent(event Event) error {
 	_, err := s.db.Exec(`INSERT INTO events (
-		at_ns, kind, account_id, thread_key, detail, duration_ns, model, reasoning_effort, service_tier,
-		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.At.UnixNano(), event.Kind, event.Account, event.Thread, event.Detail, event.Duration.Nanoseconds(), event.Model, event.Effort, event.ServiceTier,
-		event.Usage.InputTokens, event.Usage.CachedTokens, event.Usage.CacheWriteTokens, event.Usage.OutputTokens,
-		event.Usage.TotalTokens, event.Usage.ReasoningTokens)
+		at_ns, kind, account_id, thread_key, detail, duration_ns
+	) VALUES (?, ?, ?, ?, ?, ?)`, event.At.UnixNano(), event.Kind, event.Account, event.Thread, event.Detail, event.Duration.Nanoseconds())
 	return err
 }
 
-func (s *Store) UsageEventsSince(kind string, start time.Time) ([]Event, error) {
+func (s *Store) RecordUsage(event UsageEvent) error {
+	_, err := s.db.Exec(`INSERT INTO response_usage (
+		at_ns, api_key_name, account_id, thread_key, model, reasoning_effort, service_tier,
+		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, event.At.UnixNano(), event.APIKeyName, event.Account,
+		event.Thread, event.Model, event.Effort, event.ServiceTier, event.Usage.InputTokens, event.Usage.CachedTokens,
+		event.Usage.CacheWriteTokens, event.Usage.OutputTokens, event.Usage.TotalTokens, event.Usage.ReasoningTokens)
+	return err
+}
+
+func (s *Store) UsageEventsSince(start time.Time) ([]UsageEvent, error) {
 	rows, err := s.db.Query(`SELECT model, service_tier, input_tokens, cached_tokens, cache_write_tokens,
-		output_tokens, total_tokens, reasoning_tokens FROM events WHERE kind = ? AND at_ns >= ? ORDER BY id`, kind, start.UnixNano())
+		output_tokens, total_tokens, reasoning_tokens FROM response_usage WHERE at_ns >= ? ORDER BY id`, start.UnixNano())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var events []Event
+	var events []UsageEvent
 	for rows.Next() {
-		var event Event
+		var event UsageEvent
 		if err := rows.Scan(&event.Model, &event.ServiceTier, &event.Usage.InputTokens, &event.Usage.CachedTokens,
 			&event.Usage.CacheWriteTokens, &event.Usage.OutputTokens, &event.Usage.TotalTokens,
 			&event.Usage.ReasoningTokens); err != nil {
@@ -576,13 +628,38 @@ func (s *Store) UsageEventsSince(kind string, start time.Time) ([]Event, error) 
 	return events, rows.Err()
 }
 
-func (s *Store) Restore() ([]Attempt, []Event, error) {
+func (s *Store) APIKeyUsage() (map[string]Usage, error) {
+	rows, err := s.db.Query(`SELECT api_key_name, SUM(input_tokens), SUM(cached_tokens), SUM(cache_write_tokens),
+		SUM(output_tokens), SUM(CASE WHEN total_tokens > 0 THEN total_tokens ELSE input_tokens + output_tokens END),
+		SUM(reasoning_tokens) FROM response_usage GROUP BY api_key_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	usage := map[string]Usage{}
+	for rows.Next() {
+		var name string
+		var value Usage
+		if err := rows.Scan(&name, &value.InputTokens, &value.CachedTokens, &value.CacheWriteTokens,
+			&value.OutputTokens, &value.TotalTokens, &value.ReasoningTokens); err != nil {
+			return nil, err
+		}
+		usage[name] = value
+	}
+	return usage, rows.Err()
+}
+
+func (s *Store) Restore() ([]Attempt, []Event, []UsageEvent, error) {
 	attempts, err := s.readAttempts()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	events, err := s.readEvents()
-	return attempts, events, err
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	usage, err := s.readUsageEvents()
+	return attempts, events, usage, err
 }
 
 func (s *Store) readAttempts() ([]Attempt, error) {
@@ -605,8 +682,7 @@ func (s *Store) readAttempts() ([]Attempt, error) {
 }
 
 func (s *Store) readEvents() ([]Event, error) {
-	rows, err := s.db.Query(`SELECT at_ns, kind, account_id, thread_key, detail, duration_ns, model, reasoning_effort, service_tier,
-		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens FROM events ORDER BY id`)
+	rows, err := s.db.Query(`SELECT at_ns, kind, account_id, thread_key, detail, duration_ns FROM events ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -615,13 +691,33 @@ func (s *Store) readEvents() ([]Event, error) {
 	for rows.Next() {
 		var event Event
 		var at, duration int64
-		if err := rows.Scan(&at, &event.Kind, &event.Account, &event.Thread, &event.Detail, &duration, &event.Model, &event.Effort, &event.ServiceTier,
+		if err := rows.Scan(&at, &event.Kind, &event.Account, &event.Thread, &event.Detail, &duration); err != nil {
+			return nil, err
+		}
+		event.At = time.Unix(0, at)
+		event.Duration = time.Duration(duration)
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func (s *Store) readUsageEvents() ([]UsageEvent, error) {
+	rows, err := s.db.Query(`SELECT at_ns, api_key_name, account_id, thread_key, model, reasoning_effort, service_tier,
+		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens FROM response_usage ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []UsageEvent
+	for rows.Next() {
+		var event UsageEvent
+		var at int64
+		if err := rows.Scan(&at, &event.APIKeyName, &event.Account, &event.Thread, &event.Model, &event.Effort, &event.ServiceTier,
 			&event.Usage.InputTokens, &event.Usage.CachedTokens, &event.Usage.CacheWriteTokens, &event.Usage.OutputTokens,
 			&event.Usage.TotalTokens, &event.Usage.ReasoningTokens); err != nil {
 			return nil, err
 		}
 		event.At = time.Unix(0, at)
-		event.Duration = time.Duration(duration)
 		events = append(events, event)
 	}
 	return events, rows.Err()

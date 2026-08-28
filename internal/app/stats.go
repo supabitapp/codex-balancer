@@ -25,7 +25,6 @@ const (
 	eventFailover          = "failover"
 	eventResponseAnswered  = "response answered"
 	eventResponseCompleted = "response completed"
-	eventResponseUsage     = "response usage"
 )
 
 const serviceTierFast = "priority"
@@ -304,13 +303,17 @@ func (s *Stats) applyCompleted(at time.Time, thread, account, requestKind string
 }
 
 func (s *Stats) recordUsage(thread, account, model, effort, serviceTier string, usage responseUsage) {
+	s.recordAPIKeyUsage("", thread, account, model, effort, serviceTier, usage)
+}
+
+func (s *Stats) recordAPIKeyUsage(apiKeyName, thread, account, model, effort, serviceTier string, usage responseUsage) {
 	if usage.empty() {
 		return
 	}
 	s.pricingMu.Lock()
 	defer s.pricingMu.Unlock()
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventResponseUsage, Account: account, Thread: thread, Model: model, Effort: effort, ServiceTier: serviceTier, Usage: usage})
+	s.persistUsage(storedEvent{At: now, APIKeyName: apiKeyName, Account: account, Thread: thread, Model: model, Effort: effort, ServiceTier: serviceTier, Usage: usage})
 	s.applyUsageAt(now, thread, account, model, effort, serviceTier, usage)
 }
 
@@ -437,6 +440,15 @@ func (s *Stats) persistEvent(event storedEvent) {
 		return
 	}
 	if err := s.store.recordEvent(event); err != nil && s.persistFailed != nil {
+		s.persistFailed(err)
+	}
+}
+
+func (s *Stats) persistUsage(event storedEvent) {
+	if s.store == nil {
+		return
+	}
+	if err := s.store.recordUsage(event); err != nil && s.persistFailed != nil {
 		s.persistFailed(err)
 	}
 }

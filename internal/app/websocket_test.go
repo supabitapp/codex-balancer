@@ -1026,7 +1026,10 @@ func TestWebSocketTracksUsageHeadersAndMetadata(t *testing.T) {
 	defer upstream.Close()
 	a := testAccount("account-a", 96)
 	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a})
-	conn, _ := dialWebSocket(t, proxy.URL, nil)
+	server.lookupAPIKey = func(presented string) (string, bool, error) {
+		return "my-laptop", presented == "secret", nil
+	}
+	conn, _ := dialWebSocket(t, proxy.URL, http.Header{"Authorization": {"Bearer secret"}})
 	defer conn.CloseNow()
 	writeWebSocketEvent(t, conn, map[string]any{
 		"type":            "response.create",
@@ -1050,6 +1053,13 @@ func TestWebSocketTracksUsageHeadersAndMetadata(t *testing.T) {
 	snapshot := server.stats.snapshot()
 	if snapshot.MonthlyUsage.InputTokens != 10 || len(snapshot.Threads) != 1 || snapshot.Threads[0].Metadata.TurnID != "turn" || snapshot.Threads[0].Compactions != 1 {
 		t.Fatalf("stats = %+v", snapshot)
+	}
+	usage, err := server.stats.store.apiKeyUsage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage["my-laptop"].InputTokens != 10 || usage["my-laptop"].OutputTokens != 4 {
+		t.Fatalf("API key usage = %+v", usage)
 	}
 }
 

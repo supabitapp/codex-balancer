@@ -29,7 +29,7 @@ func TestServerAcceptsMultipleDatabaseAPIKeysAndSeesChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	server := &server{validateAPIKey: store.validAPIKey}
+	server := &server{lookupAPIKey: store.apiKeyName}
 	assertStatus := func(secret string, want int) {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)

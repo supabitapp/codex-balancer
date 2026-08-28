@@ -67,7 +67,7 @@ func serverCmd(args []string) error {
 		return err
 	}
 	defer store.Close()
-	var validateAPIKey func(string) (bool, error)
+	var lookupAPIKey func(string) (string, bool, error)
 	if !*insecure {
 		if err := importLegacyAPIKey(store, *legacyKey); err != nil {
 			return fmt.Errorf("import legacy API key: %w", err)
@@ -79,7 +79,7 @@ func serverCmd(args []string) error {
 		if count == 0 {
 			return errors.New("no active API keys; run \"codex-balancer keys add <name>\" or pass -no-auth")
 		}
-		validateAPIKey = store.validAPIKey
+		lookupAPIKey = store.apiKeyName
 	}
 	clientIDKey, err := store.clientIDKey()
 	if err != nil {
@@ -116,18 +116,18 @@ func serverCmd(args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	srv := &server{
-		ctx:            ctx,
-		pool:           pool,
-		catalog:        catalog,
-		prices:         prices,
-		stats:          stats,
-		upstream:       *upstream,
-		validateAPIKey: validateAPIKey,
-		clientIDKey:    clientIDKey,
-		client:         newProxyClient(),
-		log:            log,
-		admission:      newAdmissionGate(maxActiveProxyRequests),
-		resources:      newResourceMonitor(),
+		ctx:          ctx,
+		pool:         pool,
+		catalog:      catalog,
+		prices:       prices,
+		stats:        stats,
+		upstream:     *upstream,
+		lookupAPIKey: lookupAPIKey,
+		clientIDKey:  clientIDKey,
+		client:       newProxyClient(),
+		log:          log,
+		admission:    newAdmissionGate(maxActiveProxyRequests),
+		resources:    newResourceMonitor(),
 	}
 	pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)

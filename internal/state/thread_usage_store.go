@@ -2,17 +2,17 @@ package state
 
 import "time"
 
-func (s *Store) ThreadUsageEventsSince(kind string, start time.Time) ([]Event, error) {
+func (s *Store) ThreadUsageEventsSince(start time.Time) ([]UsageEvent, error) {
 	rows, err := s.db.Query(`SELECT at_ns, account_id, thread_key, model, service_tier, input_tokens, cached_tokens,
-		cache_write_tokens, output_tokens, total_tokens, reasoning_tokens FROM events
-		WHERE kind = ? AND at_ns >= ? ORDER BY id`, kind, start.UnixNano())
+		cache_write_tokens, output_tokens, total_tokens, reasoning_tokens FROM response_usage
+		WHERE at_ns >= ? ORDER BY id`, start.UnixNano())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var events []Event
+	var events []UsageEvent
 	for rows.Next() {
-		var event Event
+		var event UsageEvent
 		var at int64
 		if err := rows.Scan(&at, &event.Account, &event.Thread, &event.Model, &event.ServiceTier, &event.Usage.InputTokens,
 			&event.Usage.CachedTokens, &event.Usage.CacheWriteTokens, &event.Usage.OutputTokens,

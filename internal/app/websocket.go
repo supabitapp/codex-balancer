@@ -86,7 +86,8 @@ type websocketEnvelope struct {
 }
 
 func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
-	if !s.authorized(r) {
+	apiKeyName, authorized := s.authorizeAPIKey(r)
+	if !authorized {
 		writeError(w, http.StatusUnauthorized, "missing or invalid bearer key")
 		return
 	}
@@ -127,7 +128,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer downstream.CloseNow()
 	downstream.SetReadLimit(maxWebSocketMessage)
 	dial.conn.SetReadLimit(maxWebSocketMessage)
-	s.relayResponsesWebSocket(downstream, r, dial, route)
+	s.relayResponsesWebSocket(downstream, r, dial, route, apiKeyName)
 }
 
 func websocketHandshake(w http.ResponseWriter, r *http.Request) bool {
@@ -224,8 +225,8 @@ func ensureResponsesWebSocketBeta(headers http.Header) {
 	headers.Set("OpenAI-Beta", strings.Join(tokens, ", "))
 }
 
-func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Request, initial *websocketDial, route websocketRoute) {
-	newResponsesWebSocketRelay(s, downstream, r, initial, route).run()
+func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Request, initial *websocketDial, route websocketRoute, apiKeyName string) {
+	newResponsesWebSocketRelay(s, downstream, r, initial, route, apiKeyName).run()
 }
 
 type websocketRejectionKind string

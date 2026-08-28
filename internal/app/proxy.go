@@ -37,7 +37,7 @@ type server struct {
 	logins               accountLoginStore
 	upstream             string
 	authIssuer           string
-	validateAPIKey       func(string) (bool, error)
+	lookupAPIKey         func(string) (string, bool, error)
 	clientIDKey          []byte
 	client               *http.Client
 	log                  *slog.Logger
@@ -112,7 +112,7 @@ func (s *server) routes() http.Handler {
 }
 
 func (s *server) models(w http.ResponseWriter, r *http.Request) {
-	if !s.authorized(r) {
+	if _, authorized := s.authorizeAPIKey(r); !authorized {
 		writeError(w, http.StatusUnauthorized, "missing or invalid bearer key")
 		return
 	}
@@ -211,19 +211,19 @@ func copyWebSocketHeaders(dst, src http.Header) {
 	}
 }
 
-func (s *server) authorized(r *http.Request) bool {
-	if s.validateAPIKey == nil {
-		return true
+func (s *server) authorizeAPIKey(r *http.Request) (string, bool) {
+	if s.lookupAPIKey == nil {
+		return "", true
 	}
 	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	valid, err := s.validateAPIKey(presented)
+	name, valid, err := s.lookupAPIKey(presented)
 	if err != nil {
 		if s.log != nil {
 			s.log.Error("API key lookup failed", "error", err)
 		}
-		return false
+		return "", false
 	}
-	return valid
+	return name, valid
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

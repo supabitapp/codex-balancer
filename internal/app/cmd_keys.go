@@ -122,15 +122,20 @@ func listAPIKeys(store *StateStore, asJSON bool) error {
 	if err != nil {
 		return err
 	}
+	usage, err := store.apiKeyUsage()
+	if err != nil {
+		return err
+	}
 	if asJSON {
 		type keyView struct {
-			Name      string     `json:"name"`
-			CreatedAt time.Time  `json:"created_at"`
-			RevokedAt *time.Time `json:"revoked_at,omitempty"`
+			Name      string        `json:"name"`
+			CreatedAt time.Time     `json:"created_at"`
+			RevokedAt *time.Time    `json:"revoked_at,omitempty"`
+			Usage     responseUsage `json:"usage"`
 		}
 		out := make([]keyView, 0, len(keys))
 		for _, key := range keys {
-			view := keyView{Name: key.Name, CreatedAt: key.CreatedAt}
+			view := keyView{Name: key.Name, CreatedAt: key.CreatedAt, Usage: usage[key.Name]}
 			if !key.RevokedAt.IsZero() {
 				revokedAt := key.RevokedAt
 				view.RevokedAt = &revokedAt
@@ -146,13 +151,16 @@ func listAPIKeys(store *StateStore, asJSON bool) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATUS\tCREATED")
+	fmt.Fprintln(w, "NAME\tSTATUS\tINPUT\tCACHED\tOUTPUT\tTOTAL\tCREATED")
 	for _, key := range keys {
 		status := "active"
 		if !key.RevokedAt.IsZero() {
 			status = "revoked"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", key.Name, status, key.CreatedAt.Format(time.RFC3339))
+		keyUsage := usage[key.Name]
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", key.Name, status,
+			formatTokenCount(keyUsage.InputTokens), formatTokenCount(keyUsage.InputDetails.CachedTokens),
+			formatTokenCount(keyUsage.OutputTokens), formatTokenCount(keyUsage.TotalTokens), key.CreatedAt.Format(time.RFC3339))
 	}
 	return w.Flush()
 }
