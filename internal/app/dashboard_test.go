@@ -143,14 +143,14 @@ func TestDashboardWebSocketStreamsEscapedHTML(t *testing.T) {
 	}
 	body := string(payload)
 	for _, expected := range []string{
-		`id="overview" hx-swap-oob="morph:innerHTML"`,
-		`id="summary" hx-swap-oob="morph:innerHTML"`,
-		`id="accounts" hx-swap-oob="morph:innerHTML"`,
-		`id="workspace-summary" hx-swap-oob="morph:innerHTML"`,
-		`id="workspaces" hx-swap-oob="morph:innerHTML"`,
-		`id="routing-count" hx-swap-oob="morph:innerHTML"`,
-		`id="threads" hx-swap-oob="morph:innerHTML"`,
-		`id="events" hx-swap-oob="morph:innerHTML"`,
+		`id="overview" hx-swap-oob="morph:outerHTML"`,
+		`id="summary" hx-swap-oob="morph:outerHTML"`,
+		`id="accounts" hx-swap-oob="morph:outerHTML"`,
+		`id="workspace-summary" hx-swap-oob="morph:outerHTML"`,
+		`id="workspaces" hx-swap-oob="morph:outerHTML"`,
+		`id="routing-count" hx-swap-oob="morph:outerHTML"`,
+		`id="threads" hx-swap-oob="morph:outerHTML"`,
+		`id="events" hx-swap-oob="morph:outerHTML"`,
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
 		`019fe5c2`,

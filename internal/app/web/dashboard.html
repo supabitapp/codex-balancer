@@ -105,14 +105,14 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 
 {{define "dashboard-update"}}{{template "overview-update" .}}{{template "summary-update" .}}{{template "accounts-update" .}}{{template "workspace-summary-update" .}}{{template "workspaces-update" .}}{{template "routing-count-update" .}}{{template "threads-update" .}}{{template "events-update" .}}{{end}}
 
-{{define "overview-update"}}<dl id="overview" hx-swap-oob="morph:innerHTML">{{template "overview" .}}</dl>{{end}}
-{{define "summary-update"}}<span id="summary" hx-swap-oob="morph:innerHTML">{{template "summary" .}}</span>{{end}}
-{{define "accounts-update"}}<div id="accounts" hx-swap-oob="morph:innerHTML">{{template "accounts" .}}</div>{{end}}
-{{define "workspace-summary-update"}}<span id="workspace-summary" hx-swap-oob="morph:innerHTML">{{len .Workspaces}} not routed</span>{{end}}
-{{define "workspaces-update"}}<div id="workspaces" hx-swap-oob="morph:innerHTML">{{template "workspaces" .}}</div>{{end}}
-{{define "routing-count-update"}}<span id="routing-count" hx-swap-oob="morph:innerHTML">{{len .Threads}}</span>{{end}}
-{{define "threads-update"}}<div id="threads" hx-swap-oob="morph:innerHTML">{{template "threads" .}}</div>{{end}}
-{{define "events-update"}}<div id="events" hx-swap-oob="morph:innerHTML">{{template "events" .}}</div>{{end}}
+{{define "overview-update"}}<dl id="overview" hx-swap-oob="morph:outerHTML">{{template "overview" .}}</dl>{{end}}
+{{define "summary-update"}}<span id="summary" hx-swap-oob="morph:outerHTML">{{template "summary" .}}</span>{{end}}
+{{define "accounts-update"}}<div id="accounts" hx-swap-oob="morph:outerHTML">{{template "accounts" .}}</div>{{end}}
+{{define "workspace-summary-update"}}<span id="workspace-summary" hx-swap-oob="morph:outerHTML">{{len .Workspaces}} not routed</span>{{end}}
+{{define "workspaces-update"}}<div id="workspaces" hx-swap-oob="morph:outerHTML">{{template "workspaces" .}}</div>{{end}}
+{{define "routing-count-update"}}<span id="routing-count" hx-swap-oob="morph:outerHTML">{{len .Threads}}</span>{{end}}
+{{define "threads-update"}}<div id="threads" hx-swap-oob="morph:outerHTML">{{template "threads" .}}</div>{{end}}
+{{define "events-update"}}<div id="events" hx-swap-oob="morph:outerHTML">{{template "events" .}}</div>{{end}}
 
 {{define "overview"}}{{range .Overview}}<div id="{{.DOMID}}"><dt>{{.Name}}</dt><dd>{{if .Info}}<span id="{{.DOMID}}-tooltip" class="has-tooltip" data-tooltip="{{.Info}}"{{if .InfoStrong}} data-tooltip-strong="{{.InfoStrong}}"{{end}} aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}{{end}}
 
