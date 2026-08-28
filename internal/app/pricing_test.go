@@ -71,7 +71,7 @@ const testModelsDevCatalog = `{
 
 func testPriceSnapshot(t *testing.T) priceSnapshot {
 	t.Helper()
-	snapshot, _, err := parseModelsDevPriceCatalog([]byte(testModelsDevCatalog), time.Date(2026, time.August, 11, 15, 0, 0, 0, time.UTC))
+	snapshot, err := parseModelsDevPriceCatalog([]byte(testModelsDevCatalog), time.Date(2026, time.August, 11, 15, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestEstimateAPIPriceRejectsUnknownModels(t *testing.T) {
 }
 
 func TestParseModelsDevPriceCatalogRejectsInvalidRates(t *testing.T) {
-	_, _, err := parseModelsDevPriceCatalog([]byte(`{"openai":{"models":{"gpt":{"cost":{"input":-1,"output":1}}}}}`), time.Now())
+	_, err := parseModelsDevPriceCatalog([]byte(`{"openai":{"models":{"gpt":{"cost":{"input":-1,"output":1}}}}}`), time.Now())
 	if err == nil {
 		t.Fatal("invalid price catalog accepted")
 	}

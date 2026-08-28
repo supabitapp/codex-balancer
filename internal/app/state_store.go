@@ -20,20 +20,13 @@ type StateStore struct {
 	path string
 }
 
-type storedAttempt = statepkg.Attempt
-type storedAccountSnapshot = statepkg.AccountSnapshot
 type storedAPIKey = statepkg.APIKey
+type storedRoute = statepkg.Route
 
-type storedEvent struct {
+type storedUsage struct {
 	At          time.Time
 	APIKeyName  string
-	Kind        string
-	Account     string
-	Thread      string
-	Detail      string
-	Duration    time.Duration
 	Model       string
-	Effort      string
 	ServiceTier string
 	Usage       responseUsage
 }
@@ -108,22 +101,6 @@ func (s *StateStore) activeAPIKeyCount() (int, error) {
 	return count, nil
 }
 
-func (s *StateStore) loadPriceCatalog() (time.Time, []byte, error) {
-	return s.raw.LoadPriceCatalog()
-}
-
-func (s *StateStore) savePriceCatalog(fetchedAt time.Time, payload []byte) error {
-	return s.raw.SavePriceCatalog(fetchedAt, payload)
-}
-
-func (s *StateStore) readAccountSnapshots(kind string) ([]storedAccountSnapshot, error) {
-	return s.raw.ReadAccountSnapshots(kind)
-}
-
-func (s *StateStore) saveAccountSnapshot(snapshot storedAccountSnapshot) error {
-	return s.raw.SaveAccountSnapshot(snapshot)
-}
-
 func (s *StateStore) readAccounts() ([]*Account, error) {
 	records, err := s.raw.ReadAccounts()
 	if err != nil {
@@ -135,7 +112,7 @@ func (s *StateStore) readAccounts() ([]*Account, error) {
 func accountsFromRecords(records []statepkg.Account) []*Account {
 	accounts := make([]*Account, 0, len(records))
 	for _, record := range records {
-		accounts = append(accounts, accountFromState(accountState{
+		account := accountFromState(accountState{
 			IDToken:      record.IDToken,
 			AccessToken:  record.AccessToken,
 			RefreshToken: record.RefreshToken,
@@ -143,13 +120,18 @@ func accountsFromRecords(records []statepkg.Account) []*Account {
 			RoutingMode:  routingMode(record.RoutingMode).normalized(),
 			LastRefresh:  record.LastRefresh,
 			Reauth:       record.Reauth,
-		}))
+		})
+		account.lastUsed = record.LastUsed
+		accounts = append(accounts, account)
 	}
 	return accounts
 }
 
 func accountRecord(account *Account) (statepkg.Account, error) {
-	persisted := account.persisted()
+	account.mu.Lock()
+	persisted := account.accountState
+	lastUsed := account.lastUsed
+	account.mu.Unlock()
 	id := claimsFromToken(persisted.IDToken).Auth.AccountID
 	if id == "" {
 		return statepkg.Account{}, errors.New("credentials carry no chatgpt_account_id")
@@ -162,23 +144,9 @@ func accountRecord(account *Account) (statepkg.Account, error) {
 		Paused:       persisted.Paused,
 		RoutingMode:  string(persisted.RoutingMode.normalized()),
 		LastRefresh:  persisted.LastRefresh,
+		LastUsed:     lastUsed,
 		Reauth:       persisted.Reauth,
 	}, nil
-}
-
-func (s *StateStore) restoreLastUsed(accounts []*Account) error {
-	lastUsed, err := s.raw.LastUsed()
-	if err != nil {
-		return err
-	}
-	for _, account := range accounts {
-		if at, ok := lastUsed[account.id()]; ok {
-			account.mu.Lock()
-			account.lastUsed = at
-			account.mu.Unlock()
-		}
-	}
-	return nil
 }
 
 func (s *StateStore) mutateAccounts(change func([]*Account) ([]*Account, error)) ([]*Account, error) {
@@ -205,30 +173,25 @@ func (s *StateStore) mutateAccounts(change func([]*Account) ([]*Account, error))
 	return updated, nil
 }
 
-func (s *StateStore) recordAttempt(attempt storedAttempt) error {
-	return s.raw.RecordAttempt(attempt)
+func (s *StateStore) recordRoute(route storedRoute) error {
+	return s.raw.RecordRoute(route)
 }
 
 func (s *StateStore) routeOwners(thread, session string) ([]string, error) {
 	return s.raw.RouteOwners(thread, session)
 }
 
-func (s *StateStore) recordEvent(event storedEvent) error {
-	return s.raw.RecordEvent(stateEvent(event))
-}
-
-func (s *StateStore) recordUsage(event storedEvent) error {
+func (s *StateStore) recordUsage(event storedUsage) error {
 	return s.raw.RecordUsage(stateUsageEvent(event))
 }
 
-func (s *StateStore) usageEventsSince(start time.Time) ([]storedEvent, error) {
+func (s *StateStore) usageEventsSince(start time.Time) ([]storedUsage, error) {
 	events, err := s.raw.UsageEventsSince(start)
 	return storedUsageEvents(events), err
 }
 
-func (s *StateStore) threadUsageEventsSince(start time.Time) ([]storedEvent, error) {
-	events, err := s.raw.ThreadUsageEventsSince(start)
-	return storedUsageEvents(events), err
+func (s *StateStore) pruneUsageBefore(cutoff time.Time) error {
+	return s.raw.PruneUsageBefore(cutoff)
 }
 
 func (s *StateStore) apiKeyUsage() (map[string]responseUsage, error) {
@@ -243,62 +206,29 @@ func (s *StateStore) apiKeyUsage() (map[string]responseUsage, error) {
 	return usage, nil
 }
 
-func stateEvent(event storedEvent) statepkg.Event {
-	return statepkg.Event{
-		At:       event.At,
-		Kind:     event.Kind,
-		Account:  event.Account,
-		Thread:   event.Thread,
-		Detail:   event.Detail,
-		Duration: event.Duration,
-	}
-}
-
-func stateUsageEvent(event storedEvent) statepkg.UsageEvent {
+func stateUsageEvent(event storedUsage) statepkg.UsageEvent {
 	return statepkg.UsageEvent{
 		At:          event.At,
 		APIKeyName:  event.APIKeyName,
-		Account:     event.Account,
-		Thread:      event.Thread,
 		Model:       event.Model,
-		Effort:      event.Effort,
 		ServiceTier: event.ServiceTier,
 		Usage: statepkg.Usage{
 			InputTokens:      event.Usage.InputTokens,
 			CachedTokens:     event.Usage.InputDetails.CachedTokens,
 			CacheWriteTokens: event.Usage.InputDetails.CacheWriteTokens,
 			OutputTokens:     event.Usage.OutputTokens,
-			TotalTokens:      event.Usage.TotalTokens,
 			ReasoningTokens:  event.Usage.OutputDetails.ReasoningTokens,
 		},
 	}
 }
 
-func storedEvents(events []statepkg.Event) []storedEvent {
-	stored := make([]storedEvent, 0, len(events))
+func storedUsageEvents(events []statepkg.UsageEvent) []storedUsage {
+	stored := make([]storedUsage, 0, len(events))
 	for _, event := range events {
-		stored = append(stored, storedEvent{
-			At:       event.At,
-			Kind:     event.Kind,
-			Account:  event.Account,
-			Thread:   event.Thread,
-			Detail:   event.Detail,
-			Duration: event.Duration,
-		})
-	}
-	return stored
-}
-
-func storedUsageEvents(events []statepkg.UsageEvent) []storedEvent {
-	stored := make([]storedEvent, 0, len(events))
-	for _, event := range events {
-		stored = append(stored, storedEvent{
+		stored = append(stored, storedUsage{
 			At:          event.At,
 			APIKeyName:  event.APIKeyName,
-			Account:     event.Account,
-			Thread:      event.Thread,
 			Model:       event.Model,
-			Effort:      event.Effort,
 			ServiceTier: event.ServiceTier,
 			Usage:       responseUsageFromState(event.Usage),
 		})
@@ -307,42 +237,13 @@ func storedUsageEvents(events []statepkg.UsageEvent) []storedEvent {
 }
 
 func responseUsageFromState(usage statepkg.Usage) responseUsage {
-	value := responseUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, TotalTokens: usage.TotalTokens}
+	value := responseUsage{
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  usage.InputTokens + usage.OutputTokens,
+	}
 	value.InputDetails.CachedTokens = usage.CachedTokens
 	value.InputDetails.CacheWriteTokens = usage.CacheWriteTokens
 	value.OutputDetails.ReasoningTokens = usage.ReasoningTokens
 	return value
-}
-
-func (s *StateStore) restoreStats(stats *Stats) error {
-	attempts, events, usageEvents, err := s.raw.Restore()
-	if err != nil {
-		return err
-	}
-	for _, attempt := range attempts {
-		if attempt.Warmup {
-			continue
-		}
-		metadata := decodeTurnMetadata(attempt.Metadata)
-		stats.applyRouted(attempt.At, statsThreadKey(attempt.Thread, metadata), attempt.ClientIP, attempt.Account, "", attempt.Effort, attempt.ServiceTier, metadata)
-	}
-	for _, event := range storedEvents(events) {
-		switch event.Kind {
-		case eventResponseAnswered:
-			stats.applyAnswered(event.At, event.Thread, event.Account, event.Duration)
-			continue
-		case eventResponseCompleted:
-			stats.applyCompleted(event.At, event.Thread, event.Account, event.Detail, event.Duration)
-			continue
-		case eventRateLimited:
-			stats.applyRateLimited(event.At, event.Account)
-		case eventFailover:
-			stats.failures++
-		}
-		stats.appendEvent(Event{At: event.At, Kind: event.Kind, Account: event.Account, Detail: event.Detail})
-	}
-	for _, event := range storedUsageEvents(usageEvents) {
-		stats.applyUsageAt(event.At, event.Thread, event.Account, event.Model, event.Effort, event.ServiceTier, event.Usage)
-	}
-	return nil
 }

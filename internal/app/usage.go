@@ -13,9 +13,6 @@ import (
 var accountAPIBaseURL = "https://chatgpt.com/backend-api/wham"
 
 const (
-	usageSnapshotKind            = "usage"
-	resetCreditsSnapshotKind     = "reset_credits"
-	creditBurnSnapshotKind       = "credit_burn"
 	urgentUsageRefreshInterval   = 2 * time.Minute
 	accountDetailRefreshInterval = time.Hour
 )
@@ -157,9 +154,6 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 		return err
 	}
 	fetchedAt := time.Now()
-	if err := s.saveAccountSnapshot(account.id(), usageSnapshotKind, fetchedAt, payload); err != nil {
-		return err
-	}
 	account.adopt(
 		fetchedAt,
 		payload.PlanType,
@@ -198,9 +192,6 @@ func (s *server) pollResetCredits(ctx context.Context, account *Account) error {
 		return err
 	}
 	fetchedAt := time.Now()
-	if err := s.saveAccountSnapshot(account.id(), resetCreditsSnapshotKind, fetchedAt, payload); err != nil {
-		return err
-	}
 	account.adoptResetCredits(fetchedAt, payload.AvailableCount, payload.Credits)
 	return nil
 }
@@ -229,9 +220,6 @@ func (s *server) pollCreditBurn(ctx context.Context, account *Account, now time.
 	}
 	var payload creditBurnPayload
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return err
-	}
-	if err := s.saveAccountSnapshot(account.id(), creditBurnSnapshotKind, now, payload); err != nil {
 		return err
 	}
 	account.adoptCreditBurn(now, payload.total())
@@ -312,9 +300,6 @@ func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Accoun
 		return consumeResetCreditResponse{}, "", err
 	}
 	fetchedAt := time.Now()
-	if err := s.saveAccountSnapshot(account.id(), resetCreditsSnapshotKind, fetchedAt, payload); err != nil {
-		return consumeResetCreditResponse{}, "", err
-	}
 	account.adoptResetCredits(fetchedAt, payload.AvailableCount, payload.Credits)
 	credit, ok := expiringResetCredit(payload.Credits, now)
 	if !ok {
@@ -439,72 +424,6 @@ func (a *Account) pollsDue(now time.Time, every time.Duration) (usage, creditBur
 	creditBurn = cycleKnown && (a.creditBurn.fetchedAt.IsZero() || now.Sub(a.creditBurn.fetchedAt) >= accountDetailRefreshInterval)
 	resetCredits = a.resetCredits.fetchedAt.IsZero() || now.Sub(a.resetCredits.fetchedAt) >= accountDetailRefreshInterval
 	return usage, creditBurn, resetCredits
-}
-
-func (s *server) saveAccountSnapshot(account, kind string, fetchedAt time.Time, payload any) error {
-	if s.pool == nil || s.pool.store == nil {
-		return nil
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	return s.pool.store.saveAccountSnapshot(storedAccountSnapshot{
-		Account:   account,
-		Kind:      kind,
-		FetchedAt: fetchedAt,
-		Payload:   data,
-	})
-}
-
-func restoreUsageSnapshots(store *StateStore, accounts []*Account) error {
-	byID := make(map[string]*Account, len(accounts))
-	for _, account := range accounts {
-		byID[account.id()] = account
-	}
-	for _, kind := range []string{usageSnapshotKind, resetCreditsSnapshotKind, creditBurnSnapshotKind} {
-		snapshots, err := store.readAccountSnapshots(kind)
-		if err != nil {
-			return err
-		}
-		for _, snapshot := range snapshots {
-			account := byID[snapshot.Account]
-			if account == nil {
-				continue
-			}
-			switch kind {
-			case usageSnapshotKind:
-				var payload usagePayload
-				if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
-					return fmt.Errorf("restore usage for %s: %w", snapshot.Account, err)
-				}
-				account.adopt(
-					snapshot.FetchedAt,
-					payload.PlanType,
-					payload.RateLimit.PrimaryWindow.window(snapshot.FetchedAt),
-					payload.RateLimit.SecondaryWindow.window(snapshot.FetchedAt),
-					payload.bankedResets(),
-					payload.SpendControl,
-				)
-				if payload.RateLimit.LimitReached != nil && *payload.RateLimit.LimitReached {
-					account.markSpent()
-				}
-			case resetCreditsSnapshotKind:
-				var payload resetCreditsPayload
-				if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
-					return fmt.Errorf("restore reset credits for %s: %w", snapshot.Account, err)
-				}
-				account.adoptResetCredits(snapshot.FetchedAt, payload.AvailableCount, payload.Credits)
-			case creditBurnSnapshotKind:
-				var payload creditBurnPayload
-				if err := json.Unmarshal(snapshot.Payload, &payload); err != nil {
-					return fmt.Errorf("restore credit burn for %s: %w", snapshot.Account, err)
-				}
-				account.adoptCreditBurn(snapshot.FetchedAt, payload.total())
-			}
-		}
-	}
-	return nil
 }
 
 func (s *server) pollAllUsage(ctx context.Context) {

@@ -12,144 +12,58 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const ApplicationID = 0x43425853
+const (
+	ApplicationID = 0x43425853
+	schemaVersion = 1
+)
 
-var stateMigrations = []string{
-	`CREATE TABLE accounts (
-		account_id TEXT PRIMARY KEY,
-		id_token TEXT NOT NULL,
-		access_token TEXT NOT NULL,
-		refresh_token TEXT NOT NULL,
-		paused INTEGER NOT NULL CHECK (paused IN (0, 1)),
-		last_refresh_ns INTEGER NOT NULL
-	) STRICT;
-	CREATE TABLE bindings (
-		id INTEGER PRIMARY KEY,
-		kind TEXT NOT NULL,
-		value TEXT NOT NULL,
-		account_id TEXT NOT NULL,
-		created_at_ns INTEGER NOT NULL,
-		UNIQUE (kind, value)
-	) STRICT;
-	CREATE TABLE attempts (
-		id INTEGER PRIMARY KEY,
-		at_ns INTEGER NOT NULL,
-		thread_key TEXT NOT NULL,
-		account_id TEXT NOT NULL,
-		service_tier TEXT NOT NULL,
-		transport TEXT NOT NULL
-	) STRICT;
-	CREATE INDEX attempts_account_at ON attempts (account_id, at_ns);
-	CREATE INDEX attempts_thread_at ON attempts (thread_key, at_ns);
-	CREATE TABLE events (
-		id INTEGER PRIMARY KEY,
-		at_ns INTEGER NOT NULL,
-		kind TEXT NOT NULL,
-		account_id TEXT NOT NULL,
-		detail TEXT NOT NULL,
-		duration_ns INTEGER NOT NULL,
-		model TEXT NOT NULL,
-		service_tier TEXT NOT NULL,
-		input_tokens INTEGER NOT NULL,
-		cached_tokens INTEGER NOT NULL,
-		cache_write_tokens INTEGER NOT NULL,
-		output_tokens INTEGER NOT NULL
-	) STRICT;
-	CREATE INDEX events_kind_at ON events (kind, at_ns);
-	CREATE INDEX events_account_at ON events (account_id, at_ns);`,
-	`ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';`,
-	`ALTER TABLE attempts DROP COLUMN client_ip;
-	ALTER TABLE attempts ADD COLUMN client_id TEXT NOT NULL DEFAULT '';`,
-	`CREATE TABLE client_identity (
-		id INTEGER PRIMARY KEY CHECK (id = 1),
-		key BLOB NOT NULL CHECK (length(key) = 32)
-	) STRICT;
-	INSERT INTO client_identity (id, key) VALUES (1, randomblob(32));`,
-	`UPDATE attempts SET client_id = '';`,
-	`ALTER TABLE bindings ADD COLUMN last_used_at_ns INTEGER NOT NULL DEFAULT 0;
-	UPDATE bindings SET last_used_at_ns = created_at_ns;
-	ALTER TABLE bindings ADD COLUMN abandoned_at_ns INTEGER;`,
-	`ALTER TABLE events ADD COLUMN thread_key TEXT NOT NULL DEFAULT '';`,
-	`ALTER TABLE attempts ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT '';`,
-	`ALTER TABLE attempts ADD COLUMN turn_metadata TEXT NOT NULL DEFAULT '';
-	ALTER TABLE events ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0;
-	ALTER TABLE events ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0;`,
-	`SELECT 1;`,
-	`DROP TABLE IF EXISTS settings;`,
-	`ALTER TABLE attempts DROP COLUMN client_id;
-	ALTER TABLE attempts ADD COLUMN client_ip TEXT NOT NULL DEFAULT '';`,
-	`CREATE TABLE price_catalog (
-		id INTEGER PRIMARY KEY CHECK (id = 1),
-		fetched_at_ns INTEGER NOT NULL CHECK (fetched_at_ns > 0),
-		payload BLOB NOT NULL CHECK (length(payload) > 0)
-	) STRICT;`,
-	`ALTER TABLE accounts ADD COLUMN routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (routing_mode IN ('normal', 'priority', 'draining'));`,
-	`ALTER TABLE events ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT '';`,
-	`ALTER TABLE attempts DROP COLUMN transport;`,
-	`DROP TABLE IF EXISTS bindings;
-	DELETE FROM events WHERE kind IN ('compaction switch', 'rotation reconnect', 'rotated');`,
-	`ALTER TABLE accounts ADD COLUMN next_routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (next_routing_mode IN ('normal', 'priority'));
-	UPDATE accounts SET next_routing_mode = CASE routing_mode WHEN 'priority' THEN 'priority' ELSE 'normal' END;
-	ALTER TABLE accounts DROP COLUMN routing_mode;
-	ALTER TABLE accounts RENAME COLUMN next_routing_mode TO routing_mode;`,
-	`ALTER TABLE attempts ADD COLUMN session_key TEXT NOT NULL DEFAULT '';
-	ALTER TABLE attempts ADD COLUMN warmup INTEGER NOT NULL DEFAULT 0 CHECK (warmup IN (0, 1));
-	CREATE INDEX attempts_session_at ON attempts (session_key, at_ns);`,
-	`ALTER TABLE accounts ADD COLUMN reauth TEXT NOT NULL DEFAULT '';
-	CREATE TABLE account_snapshots (
-		account_id TEXT NOT NULL,
-		kind TEXT NOT NULL,
-		fetched_at_ns INTEGER NOT NULL CHECK (fetched_at_ns > 0),
-		version TEXT NOT NULL,
-		payload BLOB NOT NULL CHECK (length(payload) > 0),
-		PRIMARY KEY (account_id, kind)
-	) STRICT;`,
-	`CREATE TABLE api_keys (
-		name TEXT PRIMARY KEY CHECK (length(name) > 0),
-		secret TEXT NOT NULL UNIQUE CHECK (length(secret) > 0),
-		created_at_ns INTEGER NOT NULL CHECK (created_at_ns > 0),
-		revoked_at_ns INTEGER
-	) STRICT;`,
-	`CREATE TABLE response_usage (
-		id INTEGER PRIMARY KEY,
-		at_ns INTEGER NOT NULL,
-		api_key_name TEXT NOT NULL,
-		account_id TEXT NOT NULL,
-		thread_key TEXT NOT NULL,
-		model TEXT NOT NULL,
-		reasoning_effort TEXT NOT NULL,
-		service_tier TEXT NOT NULL,
-		input_tokens INTEGER NOT NULL,
-		cached_tokens INTEGER NOT NULL,
-		cache_write_tokens INTEGER NOT NULL,
-		output_tokens INTEGER NOT NULL,
-		total_tokens INTEGER NOT NULL,
-		reasoning_tokens INTEGER NOT NULL
-	) STRICT;
-	INSERT INTO response_usage (
-		id, at_ns, api_key_name, account_id, thread_key, model, reasoning_effort, service_tier,
-		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
-	)
-	SELECT id, at_ns,
-		CASE WHEN (SELECT COUNT(*) FROM api_keys) = 1 THEN (SELECT name FROM api_keys LIMIT 1) ELSE '' END,
-		account_id, thread_key, model, reasoning_effort, service_tier,
-		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
-	FROM events WHERE kind = 'response usage';
-	DELETE FROM events WHERE kind = 'response usage';
-	DROP INDEX events_account_at;
-	ALTER TABLE events DROP COLUMN model;
-	ALTER TABLE events DROP COLUMN reasoning_effort;
-	ALTER TABLE events DROP COLUMN service_tier;
-	ALTER TABLE events DROP COLUMN input_tokens;
-	ALTER TABLE events DROP COLUMN cached_tokens;
-	ALTER TABLE events DROP COLUMN cache_write_tokens;
-	ALTER TABLE events DROP COLUMN output_tokens;
-	ALTER TABLE events DROP COLUMN total_tokens;
-	ALTER TABLE events DROP COLUMN reasoning_tokens;
-	CREATE INDEX response_usage_at ON response_usage (at_ns);
-	DROP INDEX attempts_session_at;
-	CREATE INDEX attempts_session_at ON attempts (session_key, at_ns) WHERE session_key != '';`,
-}
+const currentSchema = `CREATE TABLE accounts (
+	account_id TEXT PRIMARY KEY,
+	id_token TEXT NOT NULL,
+	access_token TEXT NOT NULL,
+	refresh_token TEXT NOT NULL,
+	paused INTEGER NOT NULL CHECK (paused IN (0, 1)),
+	routing_mode TEXT NOT NULL CHECK (routing_mode IN ('normal', 'priority')),
+	last_refresh_ns INTEGER NOT NULL,
+	last_used_at_ns INTEGER NOT NULL,
+	reauth TEXT NOT NULL
+) STRICT;
+CREATE TABLE api_keys (
+	name TEXT PRIMARY KEY CHECK (length(name) > 0),
+	secret TEXT NOT NULL UNIQUE CHECK (length(secret) > 0),
+	created_at_ns INTEGER NOT NULL CHECK (created_at_ns > 0),
+	revoked_at_ns INTEGER CHECK (revoked_at_ns IS NULL OR revoked_at_ns > 0),
+	input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+	cached_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cached_tokens >= 0),
+	cache_write_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0),
+	output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+	reasoning_tokens INTEGER NOT NULL DEFAULT 0 CHECK (reasoning_tokens >= 0)
+) STRICT;
+CREATE TABLE routes (
+	kind TEXT NOT NULL CHECK (kind IN ('thread', 'session')),
+	key TEXT NOT NULL CHECK (length(key) > 0),
+	account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+	updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns > 0),
+	PRIMARY KEY (kind, key)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX routes_account ON routes (account_id);
+CREATE TABLE response_usage (
+	id INTEGER PRIMARY KEY,
+	at_ns INTEGER NOT NULL CHECK (at_ns > 0),
+	model TEXT NOT NULL,
+	service_tier TEXT NOT NULL,
+	input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+	cached_tokens INTEGER NOT NULL CHECK (cached_tokens >= 0),
+	cache_write_tokens INTEGER NOT NULL CHECK (cache_write_tokens >= 0),
+	output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+	reasoning_tokens INTEGER NOT NULL CHECK (reasoning_tokens >= 0)
+) STRICT;
+CREATE INDEX response_usage_at ON response_usage (at_ns);
+CREATE TABLE client_identity (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	key BLOB NOT NULL CHECK (length(key) = 32)
+) STRICT;
+INSERT INTO client_identity (id, key) VALUES (1, randomblob(32));`
 
 type Store struct {
 	db   *sql.DB
@@ -164,19 +78,8 @@ type Account struct {
 	Paused       bool
 	RoutingMode  string
 	LastRefresh  time.Time
+	LastUsed     time.Time
 	Reauth       string
-}
-
-type Attempt struct {
-	At          time.Time
-	Session     string
-	Thread      string
-	ClientIP    string
-	Account     string
-	Effort      string
-	ServiceTier string
-	Metadata    string
-	Warmup      bool
 }
 
 type Usage struct {
@@ -184,36 +87,7 @@ type Usage struct {
 	CachedTokens     int64
 	CacheWriteTokens int64
 	OutputTokens     int64
-	TotalTokens      int64
 	ReasoningTokens  int64
-}
-
-type Event struct {
-	At       time.Time
-	Kind     string
-	Account  string
-	Thread   string
-	Detail   string
-	Duration time.Duration
-}
-
-type UsageEvent struct {
-	At          time.Time
-	APIKeyName  string
-	Account     string
-	Thread      string
-	Model       string
-	Effort      string
-	ServiceTier string
-	Usage       Usage
-}
-
-type AccountSnapshot struct {
-	Account   string
-	Kind      string
-	FetchedAt time.Time
-	Version   string
-	Payload   []byte
 }
 
 type APIKey struct {
@@ -221,9 +95,25 @@ type APIKey struct {
 	Secret    string
 	CreatedAt time.Time
 	RevokedAt time.Time
+	Usage     Usage
 }
 
-func SchemaVersion() int { return len(stateMigrations) }
+type Route struct {
+	At      time.Time
+	Session string
+	Thread  string
+	Account string
+}
+
+type UsageEvent struct {
+	At          time.Time
+	APIKeyName  string
+	Model       string
+	ServiceTier string
+	Usage       Usage
+}
+
+func SchemaVersion() int { return schemaVersion }
 
 func Open(path string) (*Store, error) {
 	dir := filepath.Dir(path)
@@ -261,7 +151,7 @@ func Open(path string) (*Store, error) {
 	if err := store.configure(); err != nil {
 		return nil, err
 	}
-	if err := store.migrate(); err != nil {
+	if err := store.initialize(); err != nil {
 		return nil, err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
@@ -289,49 +179,38 @@ func (s *Store) configure() error {
 	return s.db.Ping()
 }
 
-func (s *Store) migrate() error {
+func (s *Store) initialize() error {
 	var applicationID, version int
 	if err := s.db.QueryRow("PRAGMA application_id").Scan(&applicationID); err != nil {
 		return err
 	}
-	if applicationID != 0 && applicationID != ApplicationID {
-		return fmt.Errorf("%s is not a codex-balancer state database", s.path)
-	}
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	currentVersion := SchemaVersion()
-	if version > currentVersion {
-		return fmt.Errorf("state schema %d is newer than supported schema %d", version, currentVersion)
-	}
-	for version < currentVersion {
+	if applicationID == 0 && version == 0 {
 		tx, err := s.db.Begin()
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(stateMigrations[version]); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migrate state to version %d: %w", version+1, err)
-		}
-		if applicationID == 0 {
-			if _, err := tx.Exec(fmt.Sprintf("PRAGMA application_id = %d", ApplicationID)); err != nil {
-				tx.Rollback()
-				return err
-			}
-		}
-		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version+1)); err != nil {
+		if _, err := tx.Exec(currentSchema); err != nil {
 			tx.Rollback()
 			return err
 		}
-		if err := tx.Commit(); err != nil {
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA application_id = %d", ApplicationID)); err != nil {
+			tx.Rollback()
 			return err
 		}
-		applicationID = ApplicationID
-		version++
+		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		return tx.Commit()
 	}
-	if applicationID == 0 {
-		_, err := s.db.Exec(fmt.Sprintf("PRAGMA application_id = %d", ApplicationID))
-		return err
+	if applicationID != ApplicationID {
+		return fmt.Errorf("%s is not a codex-balancer state database", s.path)
+	}
+	if version != schemaVersion {
+		return fmt.Errorf("state schema %d is unsupported; expected %d", version, schemaVersion)
 	}
 	return nil
 }
@@ -345,7 +224,8 @@ func (s *Store) ClientIDKey() ([]byte, error) {
 }
 
 func (s *Store) ReadAPIKeys() ([]APIKey, error) {
-	rows, err := s.db.Query(`SELECT name, secret, created_at_ns, revoked_at_ns FROM api_keys ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name, secret, created_at_ns, revoked_at_ns, input_tokens, cached_tokens,
+		cache_write_tokens, output_tokens, reasoning_tokens FROM api_keys ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +235,9 @@ func (s *Store) ReadAPIKeys() ([]APIKey, error) {
 		var key APIKey
 		var createdAt int64
 		var revokedAt sql.NullInt64
-		if err := rows.Scan(&key.Name, &key.Secret, &createdAt, &revokedAt); err != nil {
+		if err := rows.Scan(&key.Name, &key.Secret, &createdAt, &revokedAt, &key.Usage.InputTokens,
+			&key.Usage.CachedTokens, &key.Usage.CacheWriteTokens, &key.Usage.OutputTokens,
+			&key.Usage.ReasoningTokens); err != nil {
 			return nil, err
 		}
 		key.CreatedAt = decodeTime(createdAt)
@@ -402,52 +284,9 @@ func (s *Store) RevokeAPIKey(name string, at time.Time) (bool, error) {
 	return changed != 0, err
 }
 
-func (s *Store) LoadPriceCatalog() (time.Time, []byte, error) {
-	var fetchedAt int64
-	var payload []byte
-	if err := s.db.QueryRow(`SELECT fetched_at_ns, payload FROM price_catalog WHERE id = 1`).Scan(&fetchedAt, &payload); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return time.Time{}, nil, nil
-		}
-		return time.Time{}, nil, err
-	}
-	return time.Unix(0, fetchedAt), payload, nil
-}
-
-func (s *Store) SavePriceCatalog(fetchedAt time.Time, payload []byte) error {
-	_, err := s.db.Exec(`INSERT INTO price_catalog (id, fetched_at_ns, payload) VALUES (1, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET fetched_at_ns = excluded.fetched_at_ns, payload = excluded.payload`, fetchedAt.UnixNano(), payload)
-	return err
-}
-
-func (s *Store) ReadAccountSnapshots(kind string) ([]AccountSnapshot, error) {
-	rows, err := s.db.Query(`SELECT account_id, kind, fetched_at_ns, version, payload FROM account_snapshots WHERE kind = ? ORDER BY account_id`, kind)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var snapshots []AccountSnapshot
-	for rows.Next() {
-		var snapshot AccountSnapshot
-		var fetchedAt int64
-		if err := rows.Scan(&snapshot.Account, &snapshot.Kind, &fetchedAt, &snapshot.Version, &snapshot.Payload); err != nil {
-			return nil, err
-		}
-		snapshot.FetchedAt = decodeTime(fetchedAt)
-		snapshots = append(snapshots, snapshot)
-	}
-	return snapshots, rows.Err()
-}
-
-func (s *Store) SaveAccountSnapshot(snapshot AccountSnapshot) error {
-	_, err := s.db.Exec(`INSERT INTO account_snapshots (account_id, kind, fetched_at_ns, version, payload) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (account_id, kind) DO UPDATE SET fetched_at_ns = excluded.fetched_at_ns, version = excluded.version, payload = excluded.payload`,
-		snapshot.Account, snapshot.Kind, encodeTime(snapshot.FetchedAt), snapshot.Version, snapshot.Payload)
-	return err
-}
-
 func (s *Store) ReadAccounts() ([]Account, error) {
-	rows, err := s.db.Query(`SELECT account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, reauth FROM accounts ORDER BY account_id`)
+	rows, err := s.db.Query(`SELECT account_id, id_token, access_token, refresh_token, paused, routing_mode,
+		last_refresh_ns, last_used_at_ns, reauth FROM accounts ORDER BY account_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -459,61 +298,202 @@ func scanAccounts(rows *sql.Rows) ([]Account, error) {
 	var accounts []Account
 	for rows.Next() {
 		var account Account
-		var lastRefresh int64
-		if err := rows.Scan(&account.ID, &account.IDToken, &account.AccessToken, &account.RefreshToken, &account.Paused, &account.RoutingMode, &lastRefresh, &account.Reauth); err != nil {
+		var lastRefresh, lastUsed int64
+		if err := rows.Scan(&account.ID, &account.IDToken, &account.AccessToken, &account.RefreshToken,
+			&account.Paused, &account.RoutingMode, &lastRefresh, &lastUsed, &account.Reauth); err != nil {
 			return nil, err
 		}
 		account.LastRefresh = decodeTime(lastRefresh)
+		account.LastUsed = decodeTime(lastUsed)
 		accounts = append(accounts, account)
 	}
 	return accounts, rows.Err()
 }
 
-func (s *Store) LastUsed() (map[string]time.Time, error) {
-	rows, err := s.db.Query(`SELECT account_id, MAX(at_ns) FROM attempts GROUP BY account_id`)
+func (s *Store) MutateAccounts(change func([]Account) ([]Account, error)) ([]Account, error) {
+	var accounts []Account
+	err := s.immediate(func(conn *sql.Conn) error {
+		rows, err := conn.QueryContext(context.Background(), `SELECT account_id, id_token, access_token, refresh_token,
+			paused, routing_mode, last_refresh_ns, last_used_at_ns, reauth FROM accounts ORDER BY account_id`)
+		if err != nil {
+			return err
+		}
+		current, err := scanAccounts(rows)
+		if err != nil {
+			return err
+		}
+		accounts, err = change(current)
+		if err != nil {
+			return err
+		}
+		next := make(map[string]bool, len(accounts))
+		for _, account := range accounts {
+			if err := upsertAccount(conn, account); err != nil {
+				return err
+			}
+			next[account.ID] = true
+		}
+		for _, account := range current {
+			if next[account.ID] {
+				continue
+			}
+			if _, err := conn.ExecContext(context.Background(), `DELETE FROM accounts WHERE account_id = ?`, account.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return accounts, err
+}
+
+func upsertAccount(exec sqlExecer, account Account) error {
+	if account.ID == "" {
+		return errors.New("account record has no ID")
+	}
+	_, err := exec.ExecContext(context.Background(), `INSERT INTO accounts (
+		account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, last_used_at_ns, reauth
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT (account_id) DO UPDATE SET id_token = excluded.id_token, access_token = excluded.access_token,
+		refresh_token = excluded.refresh_token, paused = excluded.paused, routing_mode = excluded.routing_mode,
+		last_refresh_ns = excluded.last_refresh_ns, last_used_at_ns = excluded.last_used_at_ns, reauth = excluded.reauth`,
+		account.ID, account.IDToken, account.AccessToken, account.RefreshToken, account.Paused, account.RoutingMode,
+		encodeTime(account.LastRefresh), encodeTime(account.LastUsed), account.Reauth)
+	return err
+}
+
+func (s *Store) RecordRoute(route Route) error {
+	if route.At.IsZero() || route.Account == "" {
+		return errors.New("route has no time or account")
+	}
+	return s.immediate(func(conn *sql.Conn) error {
+		result, err := conn.ExecContext(context.Background(), `UPDATE accounts SET last_used_at_ns = max(last_used_at_ns, ?)
+			WHERE account_id = ?`, encodeTime(route.At), route.Account)
+		if err != nil {
+			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed == 0 {
+			return fmt.Errorf("route account %q does not exist", route.Account)
+		}
+		for _, item := range []struct {
+			kind string
+			key  string
+		}{{"thread", route.Thread}, {"session", route.Session}} {
+			if item.key == "" {
+				continue
+			}
+			if _, err := conn.ExecContext(context.Background(), `INSERT INTO routes (kind, key, account_id, updated_at_ns)
+				VALUES (?, ?, ?, ?) ON CONFLICT (kind, key) DO UPDATE SET account_id = excluded.account_id,
+				updated_at_ns = excluded.updated_at_ns WHERE excluded.updated_at_ns >= routes.updated_at_ns`,
+				item.kind, item.key, route.Account, encodeTime(route.At)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) RouteOwners(thread, session string) ([]string, error) {
+	owners := make([]string, 0, 2)
+	for _, item := range []struct {
+		kind string
+		key  string
+	}{{"thread", thread}, {"session", session}} {
+		if item.key == "" {
+			continue
+		}
+		var account string
+		err := s.db.QueryRow(`SELECT account_id FROM routes WHERE kind = ? AND key = ?`, item.kind, item.key).Scan(&account)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(owners) == 0 || owners[0] != account {
+			owners = append(owners, account)
+		}
+	}
+	return owners, nil
+}
+
+func (s *Store) RecordUsage(event UsageEvent) error {
+	if event.At.IsZero() {
+		return errors.New("usage has no time")
+	}
+	serviceTier := event.ServiceTier
+	if serviceTier == "" {
+		serviceTier = "default"
+	}
+	return s.immediate(func(conn *sql.Conn) error {
+		if event.APIKeyName != "" {
+			result, err := conn.ExecContext(context.Background(), `UPDATE api_keys SET
+				input_tokens = input_tokens + ?, cached_tokens = cached_tokens + ?,
+				cache_write_tokens = cache_write_tokens + ?, output_tokens = output_tokens + ?,
+				reasoning_tokens = reasoning_tokens + ? WHERE name = ?`, event.Usage.InputTokens,
+				event.Usage.CachedTokens, event.Usage.CacheWriteTokens, event.Usage.OutputTokens,
+				event.Usage.ReasoningTokens, event.APIKeyName)
+			if err != nil {
+				return err
+			}
+			changed, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if changed == 0 {
+				return fmt.Errorf("API key %q does not exist", event.APIKeyName)
+			}
+		}
+		_, err := conn.ExecContext(context.Background(), `INSERT INTO response_usage (
+			at_ns, model, service_tier, input_tokens, cached_tokens, cache_write_tokens,
+			output_tokens, reasoning_tokens
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, encodeTime(event.At), event.Model,
+			serviceTier, event.Usage.InputTokens, event.Usage.CachedTokens, event.Usage.CacheWriteTokens,
+			event.Usage.OutputTokens, event.Usage.ReasoningTokens)
+		return err
+	})
+}
+
+func (s *Store) UsageEventsSince(start time.Time) ([]UsageEvent, error) {
+	rows, err := s.db.Query(`SELECT at_ns, model, service_tier, input_tokens, cached_tokens,
+		cache_write_tokens, output_tokens, reasoning_tokens FROM response_usage WHERE at_ns >= ? ORDER BY id`, encodeTime(start))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	lastUsed := map[string]time.Time{}
+	var events []UsageEvent
 	for rows.Next() {
-		var id string
+		var event UsageEvent
 		var at int64
-		if err := rows.Scan(&id, &at); err != nil {
+		if err := rows.Scan(&at, &event.Model, &event.ServiceTier, &event.Usage.InputTokens,
+			&event.Usage.CachedTokens, &event.Usage.CacheWriteTokens, &event.Usage.OutputTokens,
+			&event.Usage.ReasoningTokens); err != nil {
 			return nil, err
 		}
-		lastUsed[id] = time.Unix(0, at)
+		event.At = decodeTime(at)
+		events = append(events, event)
 	}
-	return lastUsed, rows.Err()
+	return events, rows.Err()
 }
 
-func (s *Store) MutateAccounts(change func([]Account) ([]Account, error)) ([]Account, error) {
-	var accounts []Account
-	err := s.immediate(func(conn *sql.Conn) error {
-		rows, err := conn.QueryContext(context.Background(), `SELECT account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, reauth FROM accounts ORDER BY account_id`)
-		if err != nil {
-			return err
-		}
-		accounts, err = scanAccounts(rows)
-		if err != nil {
-			return err
-		}
-		accounts, err = change(accounts)
-		if err != nil {
-			return err
-		}
-		if _, err := conn.ExecContext(context.Background(), "DELETE FROM accounts"); err != nil {
-			return err
-		}
-		for _, account := range accounts {
-			if err := insertAccount(conn, account); err != nil {
-				return err
-			}
-		}
-		_, err = conn.ExecContext(context.Background(), `DELETE FROM account_snapshots WHERE account_id NOT IN (SELECT account_id FROM accounts)`)
-		return err
-	})
-	return accounts, err
+func (s *Store) PruneUsageBefore(cutoff time.Time) error {
+	_, err := s.db.Exec(`DELETE FROM response_usage WHERE at_ns < ?`, encodeTime(cutoff))
+	return err
+}
+
+func (s *Store) APIKeyUsage() (map[string]Usage, error) {
+	keys, err := s.ReadAPIKeys()
+	if err != nil {
+		return nil, err
+	}
+	usage := make(map[string]Usage, len(keys))
+	for _, key := range keys {
+		usage[key.Name] = key.Usage
+	}
+	return usage, nil
 }
 
 func (s *Store) immediate(run func(*sql.Conn) error) error {
@@ -544,183 +524,6 @@ func (s *Store) immediate(run func(*sql.Conn) error) error {
 
 type sqlExecer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
-}
-
-func insertAccount(exec sqlExecer, account Account) error {
-	if account.ID == "" {
-		return errors.New("account record has no ID")
-	}
-	_, err := exec.ExecContext(context.Background(), `INSERT INTO accounts (
-		account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, reauth
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, account.ID, account.IDToken, account.AccessToken, account.RefreshToken,
-		account.Paused, account.RoutingMode, encodeTime(account.LastRefresh), account.Reauth)
-	return err
-}
-
-func (s *Store) RecordAttempt(attempt Attempt) error {
-	_, err := s.db.Exec(`INSERT INTO attempts (at_ns, session_key, thread_key, client_ip, account_id, reasoning_effort, service_tier, turn_metadata, warmup) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		attempt.At.UnixNano(), attempt.Session, attempt.Thread, attempt.ClientIP, attempt.Account, attempt.Effort, attempt.ServiceTier, attempt.Metadata, attempt.Warmup)
-	return err
-}
-
-func (s *Store) RouteOwners(thread, session string) ([]string, error) {
-	lookups := []struct {
-		column string
-		value  string
-	}{
-		{column: "thread_key", value: thread},
-		{column: "session_key", value: session},
-	}
-	owners := make([]string, 0, len(lookups))
-	for _, lookup := range lookups {
-		if lookup.value == "" {
-			continue
-		}
-		var account string
-		err := s.db.QueryRow(`SELECT account_id FROM attempts WHERE `+lookup.column+` = ? AND `+lookup.column+` != '' ORDER BY at_ns DESC, id DESC LIMIT 1`, lookup.value).Scan(&account)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if len(owners) == 0 || owners[0] != account {
-			owners = append(owners, account)
-		}
-	}
-	return owners, nil
-}
-
-func (s *Store) RecordEvent(event Event) error {
-	_, err := s.db.Exec(`INSERT INTO events (
-		at_ns, kind, account_id, thread_key, detail, duration_ns
-	) VALUES (?, ?, ?, ?, ?, ?)`, event.At.UnixNano(), event.Kind, event.Account, event.Thread, event.Detail, event.Duration.Nanoseconds())
-	return err
-}
-
-func (s *Store) RecordUsage(event UsageEvent) error {
-	_, err := s.db.Exec(`INSERT INTO response_usage (
-		at_ns, api_key_name, account_id, thread_key, model, reasoning_effort, service_tier,
-		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, event.At.UnixNano(), event.APIKeyName, event.Account,
-		event.Thread, event.Model, event.Effort, event.ServiceTier, event.Usage.InputTokens, event.Usage.CachedTokens,
-		event.Usage.CacheWriteTokens, event.Usage.OutputTokens, event.Usage.TotalTokens, event.Usage.ReasoningTokens)
-	return err
-}
-
-func (s *Store) UsageEventsSince(start time.Time) ([]UsageEvent, error) {
-	rows, err := s.db.Query(`SELECT model, service_tier, input_tokens, cached_tokens, cache_write_tokens,
-		output_tokens, total_tokens, reasoning_tokens FROM response_usage WHERE at_ns >= ? ORDER BY id`, start.UnixNano())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var events []UsageEvent
-	for rows.Next() {
-		var event UsageEvent
-		if err := rows.Scan(&event.Model, &event.ServiceTier, &event.Usage.InputTokens, &event.Usage.CachedTokens,
-			&event.Usage.CacheWriteTokens, &event.Usage.OutputTokens, &event.Usage.TotalTokens,
-			&event.Usage.ReasoningTokens); err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-	return events, rows.Err()
-}
-
-func (s *Store) APIKeyUsage() (map[string]Usage, error) {
-	rows, err := s.db.Query(`SELECT api_key_name, SUM(input_tokens), SUM(cached_tokens), SUM(cache_write_tokens),
-		SUM(output_tokens), SUM(CASE WHEN total_tokens > 0 THEN total_tokens ELSE input_tokens + output_tokens END),
-		SUM(reasoning_tokens) FROM response_usage GROUP BY api_key_name`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	usage := map[string]Usage{}
-	for rows.Next() {
-		var name string
-		var value Usage
-		if err := rows.Scan(&name, &value.InputTokens, &value.CachedTokens, &value.CacheWriteTokens,
-			&value.OutputTokens, &value.TotalTokens, &value.ReasoningTokens); err != nil {
-			return nil, err
-		}
-		usage[name] = value
-	}
-	return usage, rows.Err()
-}
-
-func (s *Store) Restore() ([]Attempt, []Event, []UsageEvent, error) {
-	attempts, err := s.readAttempts()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	events, err := s.readEvents()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	usage, err := s.readUsageEvents()
-	return attempts, events, usage, err
-}
-
-func (s *Store) readAttempts() ([]Attempt, error) {
-	rows, err := s.db.Query(`SELECT at_ns, session_key, thread_key, client_ip, account_id, reasoning_effort, service_tier, turn_metadata, warmup FROM attempts ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var attempts []Attempt
-	for rows.Next() {
-		var attempt Attempt
-		var at int64
-		if err := rows.Scan(&at, &attempt.Session, &attempt.Thread, &attempt.ClientIP, &attempt.Account, &attempt.Effort, &attempt.ServiceTier, &attempt.Metadata, &attempt.Warmup); err != nil {
-			return nil, err
-		}
-		attempt.At = time.Unix(0, at)
-		attempts = append(attempts, attempt)
-	}
-	return attempts, rows.Err()
-}
-
-func (s *Store) readEvents() ([]Event, error) {
-	rows, err := s.db.Query(`SELECT at_ns, kind, account_id, thread_key, detail, duration_ns FROM events ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var events []Event
-	for rows.Next() {
-		var event Event
-		var at, duration int64
-		if err := rows.Scan(&at, &event.Kind, &event.Account, &event.Thread, &event.Detail, &duration); err != nil {
-			return nil, err
-		}
-		event.At = time.Unix(0, at)
-		event.Duration = time.Duration(duration)
-		events = append(events, event)
-	}
-	return events, rows.Err()
-}
-
-func (s *Store) readUsageEvents() ([]UsageEvent, error) {
-	rows, err := s.db.Query(`SELECT at_ns, api_key_name, account_id, thread_key, model, reasoning_effort, service_tier,
-		input_tokens, cached_tokens, cache_write_tokens, output_tokens, total_tokens, reasoning_tokens FROM response_usage ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var events []UsageEvent
-	for rows.Next() {
-		var event UsageEvent
-		var at int64
-		if err := rows.Scan(&at, &event.APIKeyName, &event.Account, &event.Thread, &event.Model, &event.Effort, &event.ServiceTier,
-			&event.Usage.InputTokens, &event.Usage.CachedTokens, &event.Usage.CacheWriteTokens, &event.Usage.OutputTokens,
-			&event.Usage.TotalTokens, &event.Usage.ReasoningTokens); err != nil {
-			return nil, err
-		}
-		event.At = time.Unix(0, at)
-		events = append(events, event)
-	}
-	return events, rows.Err()
 }
 
 func encodeTime(value time.Time) int64 {

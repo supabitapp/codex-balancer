@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,6 @@ const (
 	modelRetryInterval   = 5 * time.Minute
 	modelFetchTimeout    = 15 * time.Second
 	maxModelCatalogBody  = 16 << 20
-	modelSnapshotKind    = "models"
 )
 
 type modelEntry map[string]any
@@ -39,10 +37,6 @@ func newModelCatalog() *modelCatalog {
 }
 
 func (c *modelCatalog) replace(active []string, fresh map[string][]modelEntry, clientVersion string) {
-	c.replaceAt(active, fresh, clientVersion, time.Now())
-}
-
-func (c *modelCatalog) replaceAt(active []string, fresh map[string][]modelEntry, clientVersion string, refreshedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -71,9 +65,10 @@ func (c *modelCatalog) replaceAt(active []string, fresh map[string][]modelEntry,
 	c.accounts = nextAccounts
 	c.active = activeIDs
 	c.clientVersion = clientVersion
-	c.nextRefresh = refreshedAt.Add(modelRefreshInterval)
+	now := time.Now()
+	c.nextRefresh = now.Add(modelRefreshInterval)
 	if len(fresh) != len(active) {
-		c.nextRefresh = refreshedAt.Add(modelRetryInterval)
+		c.nextRefresh = now.Add(modelRetryInterval)
 	}
 }
 
@@ -251,15 +246,6 @@ func (c *modelCatalog) invalidate() {
 	c.nextRefresh = time.Time{}
 }
 
-func (c *modelCatalog) retryAt(now time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	next := now.Add(modelRetryInterval)
-	if c.nextRefresh.IsZero() || next.Before(c.nextRefresh) {
-		c.nextRefresh = next
-	}
-}
-
 func (s *server) refreshModels(ctx context.Context, clientVersion string) error {
 	if s.catalog == nil || clientVersion == "" {
 		return nil
@@ -316,7 +302,6 @@ func (s *server) refreshModels(ctx context.Context, clientVersion string) error 
 	}
 	fresh := make(map[string][]modelEntry, len(active))
 	errs := make([]error, 0, len(active))
-	writeFailed := false
 	for range active {
 		result := <-results
 		if result.err != nil {
@@ -331,16 +316,8 @@ func (s *server) refreshModels(ctx context.Context, clientVersion string) error 
 			continue
 		}
 		fresh[result.id] = result.models
-		if err := s.saveModelSnapshot(result.id, clientVersion, result.models); err != nil {
-			writeFailed = true
-			errs = append(errs, fmt.Errorf("store %s: %w", result.id, err))
-			s.log.Warn("model catalog write failed", "account", result.id, "error", err)
-		}
 	}
 	s.catalog.replace(activeIDs, fresh, clientVersion)
-	if writeFailed {
-		s.catalog.retryAt(time.Now())
-	}
 	s.log.Debug("model catalog refreshed",
 		"accounts", len(activeIDs),
 		"client_version", clientVersion,
@@ -403,86 +380,17 @@ func (s *server) fetchAccountModels(ctx context.Context, account *Account, clien
 	return models, nil
 }
 
-func (s *server) saveModelSnapshot(account, version string, models []modelEntry) error {
-	if s.pool == nil || s.pool.store == nil {
-		return nil
-	}
-	payload, err := json.Marshal(models)
-	if err != nil {
-		return err
-	}
-	return s.pool.store.saveAccountSnapshot(storedAccountSnapshot{
-		Account:   account,
-		Kind:      modelSnapshotKind,
-		FetchedAt: time.Now(),
-		Version:   version,
-		Payload:   payload,
-	})
-}
-
-func restoreModelCatalog(store *StateStore, catalog *modelCatalog, accounts []*Account) error {
-	active := make([]string, 0, len(accounts))
-	activeSet := make(map[string]bool, len(accounts))
-	for _, account := range accounts {
-		candidate := account.routingCandidate()
-		if candidate.id == "" || candidate.paused || candidate.reauth != "" {
-			continue
-		}
-		active = append(active, candidate.id)
-		activeSet[candidate.id] = true
-	}
-	snapshots, err := store.readAccountSnapshots(modelSnapshotKind)
-	if err != nil {
-		return err
-	}
-	fresh := make(map[string][]modelEntry, len(snapshots))
-	var version string
-	var refreshedAt time.Time
-	var newest time.Time
-	consistent := true
-	for _, snapshot := range snapshots {
-		if !activeSet[snapshot.Account] {
-			continue
-		}
-		var models []modelEntry
-		decoder := json.NewDecoder(bytes.NewReader(snapshot.Payload))
-		decoder.UseNumber()
-		if err := decoder.Decode(&models); err != nil {
-			return fmt.Errorf("restore models for %s: %w", snapshot.Account, err)
-		}
-		fresh[snapshot.Account] = models
-		if version != "" && version != snapshot.Version {
-			consistent = false
-		}
-		if refreshedAt.IsZero() || snapshot.FetchedAt.Before(refreshedAt) {
-			refreshedAt = snapshot.FetchedAt
-		}
-		if newest.IsZero() || snapshot.FetchedAt.After(newest) {
-			version = snapshot.Version
-			newest = snapshot.FetchedAt
-		}
-	}
-	if len(fresh) == 0 {
-		return nil
-	}
-	catalog.replaceAt(active, fresh, version, refreshedAt)
-	if !consistent || len(fresh) != len(active) {
-		catalog.invalidate()
-	}
-	return nil
-}
-
 func (s *server) watchModels(ctx context.Context) {
 	ticker := time.NewTicker(modelRetryInterval)
 	defer ticker.Stop()
 	for {
+		if err := s.refreshModels(ctx, s.catalog.version()); err != nil && s.log != nil {
+			s.log.Warn("model refresh failed", "error", err)
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.refreshModels(ctx, s.catalog.version()); err != nil && s.log != nil {
-				s.log.Warn("model refresh failed", "error", err)
-			}
 		}
 	}
 }

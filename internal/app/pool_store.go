@@ -20,12 +20,6 @@ func loadPool(store *StateStore) (*Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := store.restoreLastUsed(accounts); err != nil {
-		return nil, err
-	}
-	if err := restoreUsageSnapshots(store, accounts); err != nil {
-		return nil, err
-	}
 	return &Pool{store: store, accounts: accounts}, nil
 }
 
@@ -45,9 +39,6 @@ func (p *Pool) reload() (poolChange, error) {
 	defer p.storageMu.Unlock()
 	accounts, err := p.store.readAccounts()
 	if err != nil {
-		return poolChange{}, err
-	}
-	if err := p.store.restoreLastUsed(accounts); err != nil {
 		return poolChange{}, err
 	}
 	return p.reconcile(accounts), nil

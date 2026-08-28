@@ -250,7 +250,7 @@ func TestThreadCostPricesEachResponse(t *testing.T) {
 	}
 }
 
-func TestThreadCostRepricesAfterCatalogRefresh(t *testing.T) {
+func TestCatalogRefreshRepricesMonthlyUsageWithoutPersistingThreadHistory(t *testing.T) {
 	store, err := openStateStore(t.TempDir() + "/state.db")
 	if err != nil {
 		t.Fatal(err)
@@ -275,8 +275,12 @@ func TestThreadCostRepricesAfterCatalogRefresh(t *testing.T) {
 	}
 	want, _ := prices.estimate("gpt-5.4", "default", usage)
 	after := stats.snapshot().Threads[0]
-	if after.apiCostNanoDollars != want || after.unpricedResponses != 0 {
-		t.Fatalf("thread cost after refresh = %d with %d unpriced, want %d with none", after.apiCostNanoDollars, after.unpricedResponses, want)
+	if after.apiCostNanoDollars != 0 || after.unpricedResponses != 1 {
+		t.Fatalf("thread cost after refresh = %d with %d unpriced, want live value unchanged", after.apiCostNanoDollars, after.unpricedResponses)
+	}
+	monthly := stats.snapshot()
+	if monthly.APICostNanoDollars != want || monthly.UnpricedResponses != 0 {
+		t.Fatalf("monthly cost after refresh = %d with %d unpriced, want %d with none", monthly.APICostNanoDollars, monthly.UnpricedResponses, want)
 	}
 }
 

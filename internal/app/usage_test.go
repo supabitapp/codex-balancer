@@ -376,7 +376,7 @@ func TestPollAllUsageSkipsAccountsNeedingReauth(t *testing.T) {
 	}
 }
 
-func TestUsageSnapshotsSurviveRestartAndSuppressFreshPolls(t *testing.T) {
+func TestUsageIsFetchedAgainAfterRestart(t *testing.T) {
 	now := time.Now().UTC()
 	requests := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -439,13 +439,13 @@ func TestUsageSnapshotsSurviveRestartAndSuppressFreshPolls(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := reloaded.find("account-a")
-	if restored == nil || restored.plan() != "prolite" {
+	if restored == nil || restored.plan() != "pro" {
 		t.Fatalf("restored account = %v", restored)
 	}
-	if count, _, known := restored.bankedResets(); !known || count != 2 {
+	if count, _, known := restored.bankedResets(); known || count != 0 {
 		t.Fatalf("reset credits = %d, %v", count, known)
 	}
-	if credits, _, known := restored.creditBurnSinceReset(time.Now()); !known || credits != 12.5 {
+	if credits, _, known := restored.creditBurnSinceReset(time.Now()); known || credits != 0 {
 		t.Fatalf("credit burn = %v, %v", credits, known)
 	}
 	restarted := &server{
@@ -455,12 +455,12 @@ func TestUsageSnapshotsSurviveRestartAndSuppressFreshPolls(t *testing.T) {
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	restarted.pollDueUsage(context.Background(), 10*time.Minute)
-	if requests != 3 {
-		t.Fatalf("restart requests = %d, want 3", requests)
+	if requests != 6 {
+		t.Fatalf("restart requests = %d, want 6", requests)
 	}
 }
 
-func TestManagedWorkspaceSpendControlSurvivesRestart(t *testing.T) {
+func TestManagedWorkspaceSpendControlIsFetchedAgainAfterRestart(t *testing.T) {
 	resetAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
@@ -496,12 +496,12 @@ func TestManagedWorkspaceSpendControlSurvivesRestart(t *testing.T) {
 	if err := pool.add(account); err != nil {
 		t.Fatal(err)
 	}
-	server := &server{
+	srv := &server{
 		pool:   pool,
 		client: upstream.Client(),
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	if err := server.pollUsage(context.Background(), account); err != nil {
+	if err := srv.pollUsage(context.Background(), account); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -518,8 +518,20 @@ func TestManagedWorkspaceSpendControlSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate := reloaded.find("account-a").routingCandidate()
+	if candidate.spendControl != nil {
+		t.Fatalf("candidate restored computed usage state = %+v", candidate)
+	}
+	restarted := &server{
+		pool:   reloaded,
+		client: upstream.Client(),
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := restarted.pollUsage(context.Background(), reloaded.find("account-a")); err != nil {
+		t.Fatal(err)
+	}
+	candidate = reloaded.find("account-a").routingCandidate()
 	if candidate.status(time.Now()) != accountNotRouted || candidate.spendControl == nil || !candidate.spendControl.Reached {
-		t.Fatalf("restored candidate = %+v", candidate)
+		t.Fatalf("refreshed candidate = %+v", candidate)
 	}
 	limit := candidate.spendControl.IndividualLimit
 	if limit == nil || limit.Limit != "250000" || limit.Used != "250000" || limit.Remaining != "0" || limit.ResetAt != resetAt.Unix() {

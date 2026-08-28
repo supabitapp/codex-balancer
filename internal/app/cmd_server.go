@@ -97,10 +97,7 @@ func serverCmd(args []string) error {
 	if logFile != nil {
 		defer logFile.Close()
 	}
-	prices, err := newPriceCatalog(store)
-	if err != nil {
-		return fmt.Errorf("load price catalog: %w", err)
-	}
+	prices := newPriceCatalog()
 	stats, err := newPersistentStats(store, prices.current(), func(err error) {
 		log.Error("state write failed", "error", err)
 	})
@@ -108,9 +105,6 @@ func serverCmd(args []string) error {
 		return fmt.Errorf("load dashboard state: %w", err)
 	}
 	catalog := newModelCatalog()
-	if err := restoreModelCatalog(store, catalog, pool.all()); err != nil {
-		return fmt.Errorf("load model catalog: %w", err)
-	}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithCancel(context.Background())

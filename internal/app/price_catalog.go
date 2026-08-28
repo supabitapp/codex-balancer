@@ -59,36 +59,18 @@ type modelsDevProvider struct {
 
 type priceCatalog struct {
 	mu       sync.RWMutex
-	store    *StateStore
 	client   *http.Client
 	endpoint string
 	now      func() time.Time
 	snapshot priceSnapshot
 }
 
-func newPriceCatalog(store *StateStore) (*priceCatalog, error) {
-	catalog := &priceCatalog{
-		store:    store,
+func newPriceCatalog() *priceCatalog {
+	return &priceCatalog{
 		client:   &http.Client{Timeout: priceRefreshTimeout},
 		endpoint: modelsDevPriceURL,
 		now:      time.Now,
 	}
-	if store == nil {
-		return catalog, nil
-	}
-	fetchedAt, payload, err := store.loadPriceCatalog()
-	if err != nil {
-		return nil, err
-	}
-	if len(payload) == 0 {
-		return catalog, nil
-	}
-	snapshot, err := parseOpenAIPriceCatalog(payload, fetchedAt)
-	if err != nil {
-		return nil, fmt.Errorf("load price catalog: %w", err)
-	}
-	catalog.snapshot = snapshot
-	return catalog, nil
 }
 
 func (c *priceCatalog) current() priceSnapshot {
@@ -133,14 +115,9 @@ func (c *priceCatalog) refresh(ctx context.Context) (priceSnapshot, error) {
 		return priceSnapshot{}, fmt.Errorf("models.dev response exceeds %d bytes", maxPriceCatalogResponse)
 	}
 	fetchedAt := c.now()
-	snapshot, openAI, err := parseModelsDevPriceCatalog(payload, fetchedAt)
+	snapshot, err := parseModelsDevPriceCatalog(payload, fetchedAt)
 	if err != nil {
 		return priceSnapshot{}, err
-	}
-	if c.store != nil {
-		if err := c.store.savePriceCatalog(fetchedAt, openAI); err != nil {
-			return priceSnapshot{}, err
-		}
 	}
 	return snapshot, nil
 }
@@ -180,20 +157,20 @@ func (s *server) watchPriceCatalog(ctx context.Context) {
 	}
 }
 
-func parseModelsDevPriceCatalog(payload []byte, fetchedAt time.Time) (priceSnapshot, []byte, error) {
+func parseModelsDevPriceCatalog(payload []byte, fetchedAt time.Time) (priceSnapshot, error) {
 	var providers map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &providers); err != nil {
-		return priceSnapshot{}, nil, fmt.Errorf("decode models.dev catalog: %w", err)
+		return priceSnapshot{}, fmt.Errorf("decode models.dev catalog: %w", err)
 	}
 	openAI := providers["openai"]
 	if len(openAI) == 0 {
-		return priceSnapshot{}, nil, fmt.Errorf("models.dev catalog has no OpenAI provider")
+		return priceSnapshot{}, fmt.Errorf("models.dev catalog has no OpenAI provider")
 	}
 	snapshot, err := parseOpenAIPriceCatalog(openAI, fetchedAt)
 	if err != nil {
-		return priceSnapshot{}, nil, err
+		return priceSnapshot{}, err
 	}
-	return snapshot, append([]byte(nil), openAI...), nil
+	return snapshot, nil
 }
 
 func parseOpenAIPriceCatalog(payload []byte, fetchedAt time.Time) (priceSnapshot, error) {

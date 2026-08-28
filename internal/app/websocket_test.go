@@ -1026,6 +1026,9 @@ func TestWebSocketTracksUsageHeadersAndMetadata(t *testing.T) {
 	defer upstream.Close()
 	a := testAccount("account-a", 96)
 	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a})
+	if err := server.stats.store.addAPIKey(storedAPIKey{Name: "my-laptop", Secret: "secret", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	server.lookupAPIKey = func(presented string) (string, bool, error) {
 		return "my-laptop", presented == "secret", nil
 	}

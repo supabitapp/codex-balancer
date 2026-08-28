@@ -43,6 +43,7 @@ type Stats struct {
 	ttfbN              int64
 	wsOpen             int64
 	usageMonth         int
+	usageStoreMonth    int
 	monthlyUsage       responseUsage
 	apiCostNanoDollars int64
 	unpricedResponses  int64
@@ -101,12 +102,13 @@ type Event struct {
 func newStatsWithPrices(prices priceSnapshot) *Stats {
 	now := time.Now()
 	return &Stats{
-		started:     now,
-		usageMonth:  calendarMonth(now),
-		prices:      prices,
-		accounts:    map[string]*accountStats{},
-		threads:     map[string]*threadStats{},
-		liveThreads: map[string]int{},
+		started:         now,
+		usageMonth:      calendarMonth(now),
+		usageStoreMonth: calendarMonth(now),
+		prices:          prices,
+		accounts:        map[string]*accountStats{},
+		threads:         map[string]*threadStats{},
+		liveThreads:     map[string]int{},
 	}
 }
 
@@ -114,8 +116,16 @@ func newPersistentStats(store *StateStore, prices priceSnapshot, persistFailed f
 	stats := newStatsWithPrices(prices)
 	stats.store = store
 	stats.persistFailed = persistFailed
-	if err := store.restoreStats(stats); err != nil {
+	monthStart := calendarMonthStart(time.Now())
+	if err := store.pruneUsageBefore(monthStart); err != nil {
 		return nil, err
+	}
+	events, err := store.usageEventsSince(monthStart)
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range events {
+		stats.applyUsageAt(event.At, "", "", event.Model, "", event.ServiceTier, event.Usage)
 	}
 	return stats, nil
 }
@@ -131,7 +141,6 @@ func (s *Stats) account(id string) *accountStats {
 
 func (s *Stats) note(kind, account, detail string) {
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: kind, Account: account, Detail: detail})
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.appendEvent(Event{At: now, Kind: kind, Account: account, Detail: detail})
@@ -146,7 +155,6 @@ func eventAccountName(names map[string]string, account string) string {
 
 func (s *Stats) rateLimited(account string) {
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventRateLimited, Account: account})
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.applyRateLimited(now, account)
@@ -160,7 +168,6 @@ func (s *Stats) applyRateLimited(now time.Time, account string) {
 
 func (s *Stats) failedOver(account, reason string) {
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventFailover, Account: account, Detail: reason})
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failures++
@@ -169,7 +176,7 @@ func (s *Stats) failedOver(account, reason string) {
 
 func (s *Stats) accepted(session, routeThread, statsThread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata, counted bool) {
 	now := time.Now()
-	s.persistAttempt(storedAttempt{At: now, Session: session, Thread: routeThread, ClientIP: clientIP, Account: account, Effort: effort, ServiceTier: serviceTier, Metadata: encodeTurnMetadata(metadata), Warmup: !counted})
+	s.persistRoute(storedRoute{At: now, Session: session, Thread: routeThread, Account: account})
 	if !counted {
 		return
 	}
@@ -268,7 +275,6 @@ func (s *Stats) websocketClosed(account string) {
 
 func (s *Stats) answered(thread, account string, ttfb time.Duration) {
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventResponseAnswered, Account: account, Thread: thread, Duration: ttfb})
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.applyAnswered(now, thread, account, ttfb)
@@ -284,7 +290,6 @@ func (s *Stats) applyAnswered(at time.Time, thread, account string, ttfb time.Du
 
 func (s *Stats) completed(thread, account string, metadata turnMetadata, latency time.Duration) {
 	now := time.Now()
-	s.persistEvent(storedEvent{At: now, Kind: eventResponseCompleted, Account: account, Thread: thread, Detail: metadata.RequestKind, Duration: latency})
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.applyCompleted(now, thread, account, metadata.RequestKind, latency)
@@ -313,7 +318,8 @@ func (s *Stats) recordAPIKeyUsage(apiKeyName, thread, account, model, effort, se
 	s.pricingMu.Lock()
 	defer s.pricingMu.Unlock()
 	now := time.Now()
-	s.persistUsage(storedEvent{At: now, APIKeyName: apiKeyName, Account: account, Thread: thread, Model: model, Effort: effort, ServiceTier: serviceTier, Usage: usage})
+	s.pruneUsageForMonth(now)
+	s.persistUsage(storedUsage{At: now, APIKeyName: apiKeyName, Model: model, ServiceTier: serviceTier, Usage: usage})
 	s.applyUsageAt(now, thread, account, model, effort, serviceTier, usage)
 }
 
@@ -362,25 +368,13 @@ func (s *Stats) reprice(prices priceSnapshot) error {
 	defer s.pricingMu.Unlock()
 	now := time.Now()
 	monthStart := calendarMonthStart(now)
+	if err := s.store.pruneUsageBefore(monthStart); err != nil {
+		return err
+	}
+	s.usageStoreMonth = calendarMonth(now)
 	events, err := s.store.usageEventsSince(monthStart)
 	if err != nil {
 		return err
-	}
-	s.mu.Lock()
-	threadStart := now
-	threads := len(s.threads)
-	for _, thread := range s.threads {
-		if thread.segmentStartedAt.Before(threadStart) {
-			threadStart = thread.segmentStartedAt
-		}
-	}
-	s.mu.Unlock()
-	var threadEvents []storedEvent
-	if threads > 0 {
-		threadEvents, err = s.store.threadUsageEventsSince(threadStart)
-		if err != nil {
-			return err
-		}
 	}
 	var usage responseUsage
 	var cost, unpriced int64
@@ -400,22 +394,6 @@ func (s *Stats) reprice(prices priceSnapshot) error {
 	s.apiCostNanoDollars = cost
 	s.unpricedResponses = unpriced
 	s.prices = prices
-	for _, thread := range s.threads {
-		thread.apiCostNanoDollars = 0
-		thread.unpricedResponses = 0
-	}
-	for _, event := range threadEvents {
-		thread := s.threads[event.Thread]
-		if thread == nil || thread.account != event.Account || event.At.Before(thread.segmentStartedAt) {
-			continue
-		}
-		price, known := prices.estimate(event.Model, event.ServiceTier, event.Usage)
-		if known {
-			thread.apiCostNanoDollars += price
-		} else {
-			thread.unpricedResponses++
-		}
-	}
 	return nil
 }
 
@@ -426,31 +404,36 @@ func (s *Stats) appendEvent(event Event) {
 	}
 }
 
-func (s *Stats) persistAttempt(attempt storedAttempt) {
+func (s *Stats) persistRoute(route storedRoute) {
 	if s.store == nil {
 		return
 	}
-	if err := s.store.recordAttempt(attempt); err != nil && s.persistFailed != nil {
+	if err := s.store.recordRoute(route); err != nil && s.persistFailed != nil {
 		s.persistFailed(err)
 	}
 }
 
-func (s *Stats) persistEvent(event storedEvent) {
-	if s.store == nil {
-		return
-	}
-	if err := s.store.recordEvent(event); err != nil && s.persistFailed != nil {
-		s.persistFailed(err)
-	}
-}
-
-func (s *Stats) persistUsage(event storedEvent) {
+func (s *Stats) persistUsage(event storedUsage) {
 	if s.store == nil {
 		return
 	}
 	if err := s.store.recordUsage(event); err != nil && s.persistFailed != nil {
 		s.persistFailed(err)
 	}
+}
+
+func (s *Stats) pruneUsageForMonth(now time.Time) {
+	month := calendarMonth(now)
+	if s.store == nil || s.usageStoreMonth == month {
+		return
+	}
+	if err := s.store.pruneUsageBefore(calendarMonthStart(now)); err != nil {
+		if s.persistFailed != nil {
+			s.persistFailed(err)
+		}
+		return
+	}
+	s.usageStoreMonth = month
 }
 
 type Snapshot struct {
