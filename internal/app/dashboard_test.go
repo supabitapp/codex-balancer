@@ -172,7 +172,7 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 		`id="events" class="scroll" hx-swap-oob="morph"`,
 		`a***e@***.com`,
 		`<td class="dim">pro</td>`,
-		`019fe5c2`,
+		`2private`,
 		`🇺🇸 ret`,
 		`<td>☀️ high</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
@@ -715,6 +715,14 @@ func TestFormatModelCosts(t *testing.T) {
 	}
 }
 
+func TestDashboardThreadKeysUseSuffix(t *testing.T) {
+	first := shortKeySuffix("01a04dfe-34e1-7912-89fb-c9c86b6ebf04")
+	second := shortKeySuffix("01a04dfe-34e1-7912-89fb-c9c80f23e94c")
+	if first != "6b6ebf04" || second != "0f23e94c" {
+		t.Fatalf("thread keys = %q and %q", first, second)
+	}
+}
+
 func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	now := time.Now()
 	stats := newStatsWithPrices(testPriceSnapshot(t))
@@ -747,7 +755,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	if thread.Client != "🇺🇸 ret" || thread.Model != "☀️ xhigh" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextUsed != "0% (1)" || thread.Latency != "2s" || thread.Requests != "1" || thread.Cost != "$0.012" {
 		t.Fatalf("routing row = %+v", thread)
 	}
-	if thread.Info != "Request: compaction\nCodex thread: 019fe5c2\nTurn: 019fe730\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Context window: 258.4K") || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Tokens used: 2.3K") || !strings.Contains(thread.ContextInfo, "Context used: 0%") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
+	if thread.Info != "Request: compaction\nCodex thread: 2private\nTurn: 0private\nAgent: compact" || !strings.Contains(thread.ContextInfo, "Context window: 258.4K") || !strings.Contains(thread.ContextInfo, "Auto compact at: 244.8K") || !strings.Contains(thread.ContextInfo, "Tokens used: 2.3K") || !strings.Contains(thread.ContextInfo, "Context used: 0%") || !strings.Contains(thread.ContextInfo, "Compactions: 1") || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
 		t.Fatalf("routing details = %+v", thread)
 	}
 	payload, err := renderDashboard("dashboard", view)
@@ -755,7 +763,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<td class=\"dim\">🇺🇸 ret</td>", "<th>Model (thinking mode)</th>", "<td>☀️ xhigh</td>", "<th>Cache %</th>", "<th>Context used<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 019fe5c2", "Auto compact at: 244.8K", "Compactions: 1"} {
+	for _, expected := range []string{"<td class=\"dim\">🇺🇸 ret</td>", "<th>Model (thinking mode)</th>", "<td>☀️ xhigh</td>", "<th>Cache %</th>", "<th>Context used<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 2private", "Auto compact at: 244.8K", "Compactions: 1"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}

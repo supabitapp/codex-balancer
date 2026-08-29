@@ -488,7 +488,7 @@ func (d dashboard) threads(width, height int) string {
 		value func(routingThreadView) string
 	}
 	columns := []routingColumn{
-		{"Thread", 8, styles.text, func(view routingThreadView) string { return view.KeyPrefix }},
+		{"Thread", 8, styles.text, func(view routingThreadView) string { return view.Key }},
 		{"Client", clientWidth, styles.dim, func(view routingThreadView) string { return view.Client }},
 		{"IP", ipWidth, styles.dim, func(view routingThreadView) string { return view.clientIP }},
 		{"Account", accountWidth, styles.spark, func(view routingThreadView) string { return view.Account }},

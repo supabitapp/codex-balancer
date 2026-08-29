@@ -108,7 +108,7 @@ type dashboardMetric struct {
 
 type dashboardThreadView struct {
 	DOMID         string
-	KeyPrefix     string
+	Key           string
 	Info          string
 	Client        string
 	Account       string
@@ -585,7 +585,7 @@ func newDashboardThreadView(thread ThreadSnapshot, account, clientName string, l
 	model, modelInfo := dashboardThreadModel(thread)
 	return dashboardThreadView{
 		DOMID:         dashboardDOMID("thread", thread.Key),
-		KeyPrefix:     shortKey(thread.Key),
+		Key:           shortKeySuffix(thread.Key),
 		Info:          dashboardThreadInfo(thread.Metadata),
 		Client:        clientName,
 		Account:       account,
@@ -646,19 +646,26 @@ func dashboardThreadInfo(metadata turnMetadata) string {
 		value string
 	}{
 		{"Request", metadata.RequestKind},
-		{"Codex thread", shortKey(metadata.ThreadID)},
-		{"Turn", shortKey(metadata.TurnID)},
-		{"Window", shortKey(metadata.WindowID)},
+		{"Codex thread", shortKeySuffix(metadata.ThreadID)},
+		{"Turn", shortKeySuffix(metadata.TurnID)},
+		{"Window", shortKeySuffix(metadata.WindowID)},
 		{"Agent", metadata.SubagentKind},
-		{"Parent thread", shortKey(metadata.ParentThreadID)},
-		{"Parent turn", shortKey(metadata.ParentTurnID)},
-		{"Forked from", shortKey(metadata.ForkedFromThreadID)},
+		{"Parent thread", shortKeySuffix(metadata.ParentThreadID)},
+		{"Parent turn", shortKeySuffix(metadata.ParentTurnID)},
+		{"Forked from", shortKeySuffix(metadata.ForkedFromThreadID)},
 	} {
 		if item.value != "" {
 			lines = append(lines, item.label+": "+item.value)
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func shortKeySuffix(value string) string {
+	if len(value) > 8 {
+		return value[len(value)-8:]
+	}
+	return value
 }
 
 func dashboardCacheRate(usage responseUsage) string {
