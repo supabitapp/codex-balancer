@@ -15,8 +15,9 @@ type accountLogin struct {
 }
 
 type accountLoginStore struct {
-	mu     sync.Mutex
-	active *accountLogin
+	mu        sync.Mutex
+	active    *accountLogin
+	completed bool
 }
 
 func (s *accountLoginStore) getOrCreate(create func() (deviceAuthorization, error)) (accountLogin, bool, error) {
@@ -34,6 +35,7 @@ func (s *accountLoginStore) getOrCreate(create func() (deviceAuthorization, erro
 		expiresAt: time.Now().Add(deviceAuthTimeout),
 	}
 	s.active = &login
+	s.completed = false
 	return login, true, nil
 }
 
@@ -45,10 +47,24 @@ func (s *accountLoginStore) release(authID string) {
 	}
 }
 
+func (s *accountLoginStore) finish(authID string, completed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active != nil && s.active.device.authID == authID {
+		s.active = nil
+		s.completed = completed
+	}
+}
+
+func (s *accountLoginStore) status() (bool, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active != nil, s.completed
+}
+
 type accountLoginPageData struct {
 	VerificationURL string
 	UserCode        string
-	ExpiresIn       int
 }
 
 var accountLoginPage = template.Must(webTemplate("accounts.html").ParseFS(dashboardFiles, "web/accounts.html"))
@@ -70,7 +86,6 @@ func (s *server) accountsPage(w http.ResponseWriter, r *http.Request) {
 	if err := accountLoginPage.Execute(&page, accountLoginPageData{
 		VerificationURL: deviceVerificationURL(issuer),
 		UserCode:        login.device.userCode,
-		ExpiresIn:       minutesUntil(time.Now(), login.expiresAt),
 	}); err != nil {
 		if created {
 			s.logins.release(login.device.authID)
@@ -87,11 +102,24 @@ func (s *server) accountsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src "+waterCSSURL+"; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' "+waterCSSURL+"; script-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Write(page.Bytes())
+}
+
+func (s *server) accountLoginStatus(w http.ResponseWriter, _ *http.Request) {
+	active, completed := s.logins.status()
+	if completed {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if active {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Error(w, "account sign-in failed", http.StatusGone)
 }
 
 func minutesUntil(now, deadline time.Time) int {
@@ -103,15 +131,16 @@ func minutesUntil(now, deadline time.Time) int {
 }
 
 func (s *server) completeAccountLogin(ctx context.Context, issuer string, device deviceAuthorization) {
-	defer s.logins.release(device.authID)
 	account, err := completeDeviceAuthorization(ctx, s.client, issuer, device)
 	if err == nil {
 		err = s.pool.add(account)
 	}
 	if err != nil {
+		s.logins.finish(device.authID, false)
 		s.stats.note("account login failed", "", err.Error())
 		return
 	}
+	s.logins.finish(device.authID, true)
 	s.stats.note("account added", account.id(), "")
 }
 

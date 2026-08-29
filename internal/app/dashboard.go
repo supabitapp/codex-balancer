@@ -24,12 +24,13 @@ const (
 	waterCSSURL              = "https://cdn.jsdelivr.net/npm/water.css@2/out/water.css"
 )
 
-//go:embed web/accounts.html web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/idiomorph-0.7.4.min.js web/sse-2.2.4.min.js
+//go:embed web/accounts.css web/accounts.html web/accounts.js web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/idiomorph-0.7.4.min.js web/sse-2.2.4.min.js
 var dashboardFiles embed.FS
 
 func webTemplate(name string) *template.Template {
 	return template.New(name).Funcs(template.FuncMap{
-		"waterCSSURL": func() string { return waterCSSURL },
+		"dashboardAssetURL": dashboardAssetURL,
+		"waterCSSURL":       func() string { return waterCSSURL },
 	})
 }
 

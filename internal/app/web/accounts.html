@@ -6,14 +6,18 @@
 <title>Add account</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="{{waterCSSURL}}">
+<link rel="stylesheet" href="{{dashboardAssetURL "accounts.css"}}">
 </head>
 <body>
 <main>
 <h1>Add an account</h1>
-<p>Open the sign-in page and enter this one-time code.</p>
-<pre><code>{{.UserCode}}</code></pre>
-<p><a href="{{.VerificationURL}}" target="_blank" rel="noreferrer">Open sign-in</a></p>
-<p>The code expires in {{.ExpiresIn}} minutes. The account will appear in <a href="/stats">stats</a> after sign-in.</p>
+<p class="lead">Copy this code, then open sign-in and paste it.</p>
+<button class="code" type="button" data-copy-code="{{.UserCode}}">
+<span>{{.UserCode}}</span>
+<small>Click to copy</small>
+</button>
+<a class="sign-in" href="{{.VerificationURL}}" target="_blank" rel="noreferrer">Open sign-in</a>
 </main>
+<script src="{{dashboardAssetURL "accounts.js"}}"></script>
 </body>
 </html>
