@@ -64,20 +64,20 @@ type dashboardCount struct {
 }
 
 type dashboardAccountView struct {
-	DOMID             string
-	Name              string
-	Plan              string
-	Status            accountStatus
-	StatusInfo        string
-	Weekly            string
-	Banked            string
-	BankedInfo        string
-	ResetIn           string
-	RoutedCredits     string
-	RoutedCreditsInfo string
-	OpenWebSockets    string
-	Traffic           string
-	Activity          string
+	DOMID           string
+	Name            string
+	Plan            string
+	Status          accountStatus
+	StatusInfo      string
+	Weekly          string
+	Banked          string
+	BankedInfo      string
+	ResetIn         string
+	RoutedValue     string
+	RoutedValueInfo string
+	OpenWebSockets  string
+	Traffic         string
+	Activity        string
 }
 
 type dashboardWorkspaceView struct {
@@ -396,27 +396,27 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		if account.ResetAt != nil {
 			resetIn = short(account.ResetAt.Sub(now))
 		}
-		routedCredits := "--"
-		routedCreditsInfo := "No routed credit data is available for this reset window yet."
+		routedValue := "--"
+		routedValueInfo := "No routed usage data is available for this reset window yet."
 		if account.RoutedCredits != nil && account.RoutedCreditsSince != nil {
-			routedCredits = formatDecimal(*account.RoutedCredits)
-			routedCreditsInfo = "Calculated from traffic routed through this balancer since " + account.RoutedCreditsSince.In(now.Location()).Format("2 January 2006, 15:04 MST") + ". Usage elsewhere is not included. OpenAI credit rates checked " + creditRatesCheckedAt + "."
+			routedValue = formatCreditValue(*account.RoutedCredits)
+			routedValueInfo = fmt.Sprintf("Estimated at $%.2f per Codex credit from traffic routed through this balancer since %s. Usage elsewhere is not included. OpenAI credit rates checked %s.", usdPerCodexCredit, account.RoutedCreditsSince.In(now.Location()).Format("2 January 2006, 15:04 MST"), creditRatesCheckedAt)
 		}
 		accounts = append(accounts, dashboardAccountView{
-			DOMID:             dashboardDOMID("account", account.ID),
-			Name:              name,
-			Plan:              account.Plan,
-			Status:            account.Status,
-			StatusInfo:        dashboardAccountStatusInfo(now, account),
-			Weekly:            weekly,
-			Banked:            banked,
-			BankedInfo:        bankedInfo,
-			ResetIn:           resetIn,
-			RoutedCredits:     routedCredits,
-			RoutedCreditsInfo: routedCreditsInfo,
-			OpenWebSockets:    dashboardNumber(account.OpenWebSockets),
-			Traffic:           dashboardNumber(traffic[i]),
-			Activity:          sparkline(account.Activity),
+			DOMID:           dashboardDOMID("account", account.ID),
+			Name:            name,
+			Plan:            account.Plan,
+			Status:          account.Status,
+			StatusInfo:      dashboardAccountStatusInfo(now, account),
+			Weekly:          weekly,
+			Banked:          banked,
+			BankedInfo:      bankedInfo,
+			ResetIn:         resetIn,
+			RoutedValue:     routedValue,
+			RoutedValueInfo: routedValueInfo,
+			OpenWebSockets:  dashboardNumber(account.OpenWebSockets),
+			Traffic:         dashboardNumber(traffic[i]),
+			Activity:        sparkline(account.Activity),
 		})
 	}
 
@@ -486,6 +486,10 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		Threads:    threadViews,
 		Events:     events,
 	}
+}
+
+func formatCreditValue(credits float64) string {
+	return fmt.Sprintf("$%.2f", credits*usdPerCodexCredit)
 }
 
 func newDashboardWorkspaceView(now time.Time, name string, account accountStatsResponse) dashboardWorkspaceView {

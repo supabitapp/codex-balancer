@@ -274,12 +274,12 @@ func (d dashboard) accounts(limit int) string {
 	weeklyW := 6
 	bankedW := 6
 	resetW := 8
-	creditsW := 15
+	routedValueW := 15
 	wsW := 2
 	trafficW := 7
 	limitsW := 6
 
-	fixedCols := planW + statusW + weeklyW + bankedW + resetW + creditsW + wsW + trafficW + limitsW + 10*gap + 2
+	fixedCols := planW + statusW + weeklyW + bankedW + resetW + routedValueW + wsW + trafficW + limitsW + 10*gap + 2
 	nameW = min(nameW, max(9, d.width-fixedCols-8))
 	activityW := d.width - fixedCols - nameW
 
@@ -292,7 +292,7 @@ func (d dashboard) accounts(limit int) string {
 		styles.section.Render(fit("Weekly", weeklyW)),
 		styles.section.Render(fit("Banked", bankedW)),
 		styles.section.Render(fit("Reset in", resetW)),
-		styles.section.Render(fit("Routed credits≈", creditsW)),
+		styles.section.Render(fit("Routed value≈", routedValueW)),
 		styles.section.Render(fit("WS", wsW)),
 		styles.section.Render(fit("Traffic", trafficW)),
 		styles.section.Render(fit("Limits", limitsW)),
@@ -331,12 +331,12 @@ func (d dashboard) accounts(limit int) string {
 			status = styles.warn.Render(fit("◆ priority", statusW))
 		}
 
-		credits := "--"
-		creditStyle := styles.dim
+		routedValue := "--"
+		routedValueStyle := styles.dim
 		if start, known := creditCycleStart(now, primary, secondary); known {
 			if routed, _, known := d.stats.routedCreditsSince(a.id(), start); known {
-				credits = formatDecimal(routed)
-				creditStyle = styles.num
+				routedValue = formatCreditValue(routed)
+				routedValueStyle = styles.num
 			}
 		}
 		websockets := ""
@@ -389,7 +389,7 @@ func (d dashboard) accounts(limit int) string {
 			weeklyCell,
 			banked,
 			reset,
-			creditStyle.Render(fit(credits, creditsW)),
+			routedValueStyle.Render(fit(routedValue, routedValueW)),
 			styles.good.Render(fit(websockets, wsW)),
 			styles.dim.Render(fit(traffic, trafficW)),
 			styles.bad.Render(fit(limits, limitsW)),

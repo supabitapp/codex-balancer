@@ -129,7 +129,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Weekly %</th>
 <th>Banked</th>
 <th>Reset in</th>
-<th>Routed credits ≈</th>
+<th>Routed value ≈</th>
 <th>WS</th>
 <th>Traffic 24h %</th>
 <th>Activity 24h</th>
@@ -141,7 +141,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span id="{{.DOMID}}-banked" class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>
-<td>{{if .RoutedCreditsInfo}}<span id="{{.DOMID}}-routed-credits" class="has-tooltip" data-tooltip="{{.RoutedCreditsInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.RoutedCredits}}</span>{{else}}{{.RoutedCredits}}{{end}}</td>
+<td>{{if .RoutedValueInfo}}<span id="{{.DOMID}}-routed-value" class="has-tooltip" data-tooltip="{{.RoutedValueInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.RoutedValue}}</span>{{else}}{{.RoutedValue}}{{end}}</td>
 <td>{{.OpenWebSockets}}</td>
 <td class="dim">{{.Traffic}}</td>
 <td class="spark">{{.Activity}}</td>

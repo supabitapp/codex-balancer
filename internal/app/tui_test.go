@@ -73,7 +73,7 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 	}
 }
 
-func TestAccountTableShowsRoutedCredits(t *testing.T) {
+func TestAccountTableShowsRoutedValue(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
 	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: now.Add(3 * 24 * time.Hour), seenAt: now}
@@ -86,7 +86,7 @@ func TestAccountTableShowsRoutedCredits(t *testing.T) {
 	}
 
 	rendered := dashboard.accounts(1)
-	for _, expected := range []string{"Routed credits≈", "1234.56"} {
+	for _, expected := range []string{"Routed value≈", "$49.38"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("account table missing %q:\n%s", expected, rendered)
 		}
