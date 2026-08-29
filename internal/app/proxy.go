@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -42,6 +43,7 @@ type server struct {
 	countries        countryResolver
 	dashboardStreams atomic.Int64
 	dashboardUpdates dashboardBroadcaster
+	routeOwnership   sync.Mutex
 	routeClaims      routeClaimRegistry
 	activeWebSockets activeWebSocketRegistry
 }
@@ -178,6 +180,8 @@ func (s *server) refreshed(account *Account, id string) bool {
 }
 
 func (s *server) invalidateAccount(account string, reason routingReason) {
+	s.routeOwnership.Lock()
+	defer s.routeOwnership.Unlock()
 	invalidatedAt := time.Now()
 	claims := s.routeClaims.invalidateAccount(account)
 	sockets := s.activeWebSockets.closeAccount(account, string(reason))

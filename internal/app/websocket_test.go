@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -265,6 +266,37 @@ func TestWebSocketResponseCreatedCommitsTheProvisionalClaim(t *testing.T) {
 	server.routeClaims.mu.Unlock()
 	if after != 0 {
 		t.Fatalf("claims after response.created = %d, want the durable route to replace the claim", after)
+	}
+}
+
+func TestWebSocketRouteAcceptanceRejectsAnInvalidatedClaim(t *testing.T) {
+	account := testAccount("account-a", 10)
+	server := newTestServer(t, []*Account{account})
+	route := websocketRoute{session: "session", thread: "thread"}
+	selection := server.routeClaims.selectAccount(route, durableRouteOwners{}, func([]string) routingDecision {
+		return routingDecision{account: account}
+	})
+	dial := &websocketDial{account: account, claim: selection.claim}
+
+	account.mu.Lock()
+	account.Paused = true
+	account.mu.Unlock()
+	server.invalidateAccount(account.id(), routingReasonOwnerPaused)
+	accepted := server.acceptWebSocketRoute(dial, storedRoute{
+		At:      time.Now(),
+		Session: route.session,
+		Thread:  route.thread,
+		Account: account.id(),
+	})
+	if accepted.allowed || accepted.persisted {
+		t.Fatalf("acceptance = %+v, want an invalidated claim rejected", accepted)
+	}
+	owners, err := server.pool.store.routeOwners(route.thread, route.session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(owners) != "[account-a]" {
+		t.Fatalf("owners = %v, want the invalidation barrier", owners)
 	}
 }
 
@@ -659,6 +691,35 @@ func TestWebSocketPortableReplayMovesFromAnIncompatibleOwnerAndRebinds(t *testin
 	}
 }
 
+func TestWebSocketRequestPortableRecognizesAccountBoundState(t *testing.T) {
+	tests := []struct {
+		name    string
+		request map[string]any
+		want    bool
+	}{
+		{name: "ordinary full replay", request: map[string]any{"input": []any{map[string]any{"type": "message", "content": "hello"}}}, want: true},
+		{name: "previous response", request: map[string]any{"previous_response_id": "response"}},
+		{name: "turn state", request: map[string]any{"client_metadata": map[string]string{codexTurnStateKey: "state"}}},
+		{name: "encrypted reasoning", request: map[string]any{"input": []any{map[string]any{"type": "reasoning", "encrypted_content": "ciphertext"}}}},
+		{name: "empty encrypted field", request: map[string]any{"input": []any{map[string]any{"type": "reasoning", "encrypted_content": ""}}}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := json.Marshal(test.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var event websocketEnvelope
+			if err := json.Unmarshal(data, &event); err != nil {
+				t.Fatal(err)
+			}
+			if got := websocketRequestPortable(event); got != test.want {
+				t.Fatalf("portable = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestWebSocketAccountBoundFrameDoesNotMoveForModelCompatibility(t *testing.T) {
 	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
@@ -693,6 +754,102 @@ func TestWebSocketAccountBoundFrameDoesNotMoveForModelCompatibility(t *testing.T
 	readCloseStatus(t, second, websocket.StatusTryAgainLater)
 	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner]" {
 		t.Fatalf("request accounts = %s, want account-bound state rejected before a model-driven switch", got)
+	}
+}
+
+func TestWebSocketEncryptedReasoningDoesNotMoveFromAnExhaustedOwner(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	first.CloseNow()
+	owner.markSpent()
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	writeWebSocketEvent(t, second, map[string]any{
+		"type": "response.create",
+		"input": []any{
+			map[string]any{"type": "reasoning", "encrypted_content": "owner-bound-ciphertext"},
+		},
+	})
+	readCloseStatus(t, second, websocket.StatusTryAgainLater)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner]" {
+		t.Fatalf("request accounts = %s, want encrypted reasoning withheld from account-fresh", got)
+	}
+}
+
+func TestWebSocketFirstKeyedTurnTransfersItsProvisionalClaimForTheModel(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b})
+	server.catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-terra")},
+			b.id(): {testModelEntry("gpt-sol")},
+		},
+		"0.1.0",
+	)
+	conn, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "thread"))
+	defer conn.CloseNow()
+
+	completeWebSocketTurn(t, conn, map[string]any{"type": "response.create", "model": "gpt-sol", "input": []any{}})
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-b]" {
+		t.Fatalf("connection accounts = %s, want model preflight to switch to account-b", got)
+	}
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b]" {
+		t.Fatalf("request accounts = %s, want only account-b to receive the turn", got)
+	}
+	server.routeClaims.mu.Lock()
+	claims := len(server.routeClaims.byID)
+	server.routeClaims.mu.Unlock()
+	if claims != 0 {
+		t.Fatalf("claims after acceptance = %d, want the transferred claim committed", claims)
+	}
+}
+
+func TestWebSocketModelClaimTransferStopsAnOldAccountPeerBeforeItsTurn(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b})
+	server.catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-terra")},
+			b.id(): {testModelEntry("gpt-sol")},
+		},
+		"0.1.0",
+	)
+	headers := codexWebSocketHeaders("session", "thread")
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	peer, _ := dialWebSocket(t, proxy.URL, headers)
+	defer first.CloseNow()
+	defer peer.CloseNow()
+
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "model": "gpt-sol", "input": []any{}})
+	writeWebSocketEvent(t, peer, map[string]any{"type": "response.create", "model": "gpt-sol", "input": []any{}})
+	readCloseStatus(t, peer, websocket.StatusServiceRestart)
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b]" {
+		t.Fatalf("request accounts = %s, want the old account peer stopped before dispatch", got)
 	}
 }
 
@@ -1049,57 +1206,52 @@ func TestWebSocketConnectionLimitReconnectsSameAccountWithoutCooldown(t *testing
 	}
 }
 
-func TestWebSocketCredentialAndUsageRejectionsPassThroughBeforeRestart(t *testing.T) {
-	tests := []struct {
-		name    string
-		event   map[string]any
-		code    string
-		limited int64
-		spent   bool
-	}{
-		{
-			name:  "credential",
-			event: map[string]any{"type": "error", "status": http.StatusUnauthorized, "error": map[string]any{"code": "unauthorized"}},
-			code:  "unauthorized",
-		},
-		{
-			name:    "usage",
-			event:   map[string]any{"type": "error", "error": map[string]any{"code": "usage_limit_reached"}},
-			code:    "usage_limit_reached",
-			limited: 1,
-			spent:   true,
-		},
+func TestWebSocketInBandUnauthorizedRefreshesARejectedTokenOnceWithoutForwarding(t *testing.T) {
+	refreshCalls := useOAuthRefreshServer(t)
+	unauthorized := map[string]any{"type": "error", "status": http.StatusUnauthorized, "error": map[string]any{"code": "unauthorized"}}
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, unauthorized)
+	})
+	defer upstream.Close()
+	account := testAccount("account-a", 0)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{account})
+	first, _ := dialWebSocket(t, proxy.URL, nil)
+	second, _ := dialWebSocket(t, proxy.URL, nil)
+	defer first.CloseNow()
+	defer second.CloseNow()
+
+	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	writeWebSocketEvent(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	readCloseStatus(t, first, websocket.StatusServiceRestart)
+	readCloseStatus(t, second, websocket.StatusServiceRestart)
+	if calls := refreshCalls(); calls != 1 {
+		t.Fatalf("refresh calls = %d, want one refresh for the rejected token revision", calls)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			refreshCalls := func() int { return 0 }
-			if test.name == "credential" {
-				refreshCalls = useOAuthRefreshServer(t)
-			}
-			upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
-				writeWebSocketEvent(t, conn, test.event)
-			})
-			defer upstream.Close()
-			account := testAccount("account-a", 0)
-			server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{account})
-			conn, _ := dialWebSocket(t, proxy.URL, nil)
-			writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
-			if event := readWebSocketEvent(t, conn); event.Type != "error" || !websocketErrorIs(event, test.code) {
-				t.Fatalf("rejection event = %+v", event)
-			}
-			readCloseStatus(t, conn, websocket.StatusServiceRestart)
-			conn.CloseNow()
-			candidate := account.routingCandidate()
-			if candidate.spent != test.spent || server.stats.snapshot().Limited != test.limited {
-				t.Fatalf("candidate = %+v, limited = %d", candidate, server.stats.snapshot().Limited)
-			}
-			if test.name == "credential" && (!candidate.cooldown.IsZero() || refreshCalls() != 1) {
-				t.Fatalf("credential cooldown/refresh calls = %s/%d, want zero/1", candidate.cooldown, refreshCalls())
-			}
-			if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a]" {
-				t.Fatalf("request accounts = %s", got)
-			}
-		})
+	if account.persisted().AccessToken != "refreshed-token" {
+		t.Fatalf("access token = %q, want refreshed-token", account.persisted().AccessToken)
+	}
+}
+
+func TestWebSocketUsageRejectionPassesThroughBeforeRestart(t *testing.T) {
+	const code = "usage_limit_reached"
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "error", "error": map[string]any{"code": code}})
+	})
+	defer upstream.Close()
+	account := testAccount("account-a", 0)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{account})
+	conn, _ := dialWebSocket(t, proxy.URL, nil)
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	if event := readWebSocketEvent(t, conn); event.Type != "error" || !websocketErrorIs(event, code) {
+		t.Fatalf("rejection event = %+v", event)
+	}
+	readCloseStatus(t, conn, websocket.StatusServiceRestart)
+	conn.CloseNow()
+	if candidate := account.routingCandidate(); !candidate.spent || server.stats.snapshot().Limited != 1 {
+		t.Fatalf("candidate = %+v, limited = %d", candidate, server.stats.snapshot().Limited)
+	}
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a]" {
+		t.Fatalf("request accounts = %s", got)
 	}
 }
 

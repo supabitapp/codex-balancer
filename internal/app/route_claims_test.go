@@ -142,10 +142,13 @@ func TestRouteClaimCommitAndInvalidationRemoveEveryLinkedKey(t *testing.T) {
 			t.Fatal("joined claim did not deduplicate its accepted switch signal")
 		}
 		joined.claim.commit(routeClaimKeys(websocketRoute{session: "session", thread: "child"}))
-		if first.claim.active() || joined.claim.active() {
-			t.Fatal("claim remained active after response.created committed a joined connection")
+		if !first.claim.active() {
+			t.Fatal("response.created invalidated a safe same-account peer")
 		}
 		first.claim.release()
+		if first.claim.active() || joined.claim.active() {
+			t.Fatal("claim remained active after every joined connection finished")
+		}
 		if len(registry.byKey) != 0 || len(registry.byID) != 0 {
 			t.Fatalf("registry after commit = keys:%d ids:%d, want empty", len(registry.byKey), len(registry.byID))
 		}
@@ -185,4 +188,46 @@ func TestRouteClaimsDoNotClaimAnonymousSockets(t *testing.T) {
 	if selection.claim != nil || len(registry.byID) != 0 {
 		t.Fatalf("anonymous selection = %+v, want no affinity claim", selection)
 	}
+}
+
+func TestRouteClaimsTransferAProvisionalModelSwitchWithoutAReleaseGap(t *testing.T) {
+	a := testAccount("account-a", 10)
+	b := testAccount("account-b", 20)
+	registry := routeClaimRegistry{}
+	route := websocketRoute{session: "session", thread: "thread"}
+	first := registry.selectAccount(route, durableRouteOwners{}, func([]string) routingDecision {
+		return routingDecision{account: a}
+	})
+	joined := registry.selectAccount(route, durableRouteOwners{}, func([]string) routingDecision {
+		return routingDecision{account: a}
+	})
+
+	replacement := registry.selectReplacement(route, first.claim, durableRouteOwners{}, func(owners []string) routingDecision {
+		return routingDecision{
+			account:    b,
+			priorOwner: owners[0],
+			reason:     routingReasonOwnerModelIncompatible,
+		}
+	})
+	if replacement.account != b || replacement.claim != nil {
+		t.Fatalf("replacement = %+v, want an uncommitted account-b selection", replacement)
+	}
+	transferred := first.claim.transfer(b.id(), replacement.priorOwner, replacement.reason)
+	if transferred == nil || !transferred.active() {
+		t.Fatal("provisional claim did not transfer to account-b")
+	}
+	if first.claim.active() || joined.claim.active() {
+		t.Fatal("account-a handles remained active after the transfer")
+	}
+	joined.claim.release()
+	if !transferred.active() {
+		t.Fatal("a stale account-a release removed the transferred claim")
+	}
+	registry.mu.Lock()
+	owner := registry.byKey["thread"]
+	registry.mu.Unlock()
+	if owner == nil || owner.account != b.id() {
+		t.Fatalf("thread claim = %+v, want account-b", owner)
+	}
+	transferred.release()
 }

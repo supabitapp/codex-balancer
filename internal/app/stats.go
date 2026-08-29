@@ -183,16 +183,20 @@ func (s *Stats) failedOver(account, reason string) {
 func (s *Stats) accepted(session, routeThread, statsThread, clientIP, apiKeySuffix, account, model, effort, serviceTier string, metadata turnMetadata, counted bool) bool {
 	now := time.Now()
 	persisted := s.persistRoute(storedRoute{At: now, Session: session, Thread: routeThread, Account: account})
+	s.recordAccepted(now, statsThread, clientIP, apiKeySuffix, account, model, effort, serviceTier, metadata, counted)
+	return persisted
+}
+
+func (s *Stats) recordAccepted(at time.Time, statsThread, clientIP, apiKeySuffix, account, model, effort, serviceTier string, metadata turnMetadata, counted bool) {
 	if !counted {
-		return persisted
+		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applyRouted(now, statsThread, clientIP, account, model, effort, serviceTier, metadata)
+	s.applyRouted(at, statsThread, clientIP, account, model, effort, serviceTier, metadata)
 	if thread := s.threads[statsThread]; thread != nil {
 		thread.apiKeySuffix = apiKeySuffix
 	}
-	return persisted
 }
 
 func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata) {

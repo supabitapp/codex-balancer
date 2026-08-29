@@ -24,6 +24,7 @@ type routeClaim struct {
 	keys       []string
 	refs       int
 	accepted   bool
+	committed  bool
 }
 
 type routeClaimHandle struct {
@@ -155,6 +156,52 @@ func (r *routeClaimRegistry) selectAccount(
 	}
 }
 
+// selectReplacement chooses a model-compatible destination while keeping the
+// current provisional claim authoritative. The caller transfers that claim
+// only after the destination handshake succeeds.
+func (r *routeClaimRegistry) selectReplacement(
+	route websocketRoute,
+	current *routeClaimHandle,
+	durable durableRouteOwners,
+	pick func([]string) routingDecision,
+) claimedRoutingDecision {
+	if current == nil || current.registry != r {
+		blocked := ""
+		if current != nil {
+			blocked = current.account
+		}
+		return claimedRoutingDecision{routingDecision: routingDecision{blocked: blocked}}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	claim := r.byID[current.id]
+	if claim == nil || claim.account != current.account {
+		return claimedRoutingDecision{routingDecision: routingDecision{blocked: current.account}}
+	}
+
+	owners := make([]string, 0, 4)
+	if route.thread != "" {
+		owners = appendClaimOwner(owners, r.byKey[route.thread])
+		owners = appendUniqueOwner(owners, r.barriers[route.thread])
+	}
+	owners = appendUniqueOwner(owners, durable.thread)
+	if route.session != "" {
+		owners = appendClaimOwner(owners, r.byKey[route.session])
+		owners = appendUniqueOwner(owners, r.barriers[route.session])
+	}
+	owners = appendUniqueOwner(owners, durable.session)
+	decision := pick(owners)
+	if decision.account == nil {
+		return claimedRoutingDecision{routingDecision: decision}
+	}
+	if decision.account.id() == claim.account {
+		decision.account = nil
+		decision.blocked = claim.account
+		return claimedRoutingDecision{routingDecision: decision}
+	}
+	return claimedRoutingDecision{routingDecision: decision}
+}
+
 func appendClaimOwner(owners []string, claim *routeClaim) []string {
 	if claim == nil {
 		return owners
@@ -219,14 +266,25 @@ func (h *routeClaimHandle) release() {
 	if h == nil || h.registry == nil {
 		return
 	}
-	h.once.Do(func() { h.registry.release(h.id) })
+	h.once.Do(func() { h.registry.release(h.id, h.account) })
 }
 
 func (h *routeClaimHandle) commit(keys []string) {
 	if h == nil || h.registry == nil {
 		return
 	}
-	h.once.Do(func() { h.registry.commit(h.id, keys) })
+	h.once.Do(func() { h.registry.commit(h.id, h.account, keys) })
+}
+
+func (h *routeClaimHandle) transfer(account, priorOwner string, reason routingReason) *routeClaimHandle {
+	if h == nil || h.registry == nil || account == "" {
+		return nil
+	}
+	var transferred *routeClaimHandle
+	h.once.Do(func() {
+		transferred = h.registry.transfer(h.id, h.account, account, priorOwner, reason)
+	})
+	return transferred
 }
 
 func (h *routeClaimHandle) active() bool {
@@ -253,11 +311,11 @@ func (h *routeClaimHandle) acceptSwitch() bool {
 	return true
 }
 
-func (r *routeClaimRegistry) release(id uint64) {
+func (r *routeClaimRegistry) release(id uint64, account string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	claim := r.byID[id]
-	if claim == nil {
+	if claim == nil || claim.account != account {
 		return
 	}
 	claim.refs--
@@ -274,15 +332,38 @@ func (r *routeClaimRegistry) remove(id uint64) {
 	}
 }
 
-func (r *routeClaimRegistry) commit(id uint64, acceptedKeys []string) {
+func (r *routeClaimRegistry) commit(id uint64, account string, acceptedKeys []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	claim := r.byID[id]
+	if claim == nil || claim.account != account {
+		return
+	}
 	for _, key := range acceptedKeys {
 		delete(r.barriers, key)
 	}
-	if claim := r.byID[id]; claim != nil {
-		r.removeLocked(claim)
+	if !claim.committed {
+		claim.committed = true
+		r.detachKeysLocked(claim)
 	}
+	claim.refs--
+	if claim.refs == 0 {
+		delete(r.byID, claim.id)
+	}
+}
+
+func (r *routeClaimRegistry) transfer(id uint64, from, to, priorOwner string, reason routingReason) *routeClaimHandle {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	claim := r.byID[id]
+	if claim == nil || claim.account != from || claim.accepted || claim.committed {
+		return nil
+	}
+	claim.account = to
+	claim.priorOwner = priorOwner
+	claim.reason = reason
+	claim.refs = 1
+	return r.handle(claim)
 }
 
 func (r *routeClaimRegistry) clearBarriers(keys []string) {
@@ -333,8 +414,26 @@ func (s *server) claimAccount(
 	})
 }
 
+func (s *server) claimReplacement(
+	current *routeClaimHandle,
+	route websocketRoute,
+	durable durableRouteOwners,
+	model string,
+	serviceTier string,
+	skip map[string]bool,
+	attempt int,
+) claimedRoutingDecision {
+	return s.routeClaims.selectReplacement(route, current, durable, func(owners []string) routingDecision {
+		return s.pickAccount(route.key(), owners, model, serviceTier, skip, attempt)
+	})
+}
+
 func (r *routeClaimRegistry) removeLocked(claim *routeClaim) {
 	delete(r.byID, claim.id)
+	r.detachKeysLocked(claim)
+}
+
+func (r *routeClaimRegistry) detachKeysLocked(claim *routeClaim) {
 	for _, key := range claim.keys {
 		if r.byKey[key] == claim {
 			delete(r.byKey, key)

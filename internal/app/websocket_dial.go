@@ -19,16 +19,18 @@ type responsesWebSocketDialer struct {
 	thread       string
 	durable      durableRouteOwners
 	owners       []string
+	replacing    *routeClaimHandle
 	skip         map[string]bool
 	reauthed     map[string]bool
 	resetRetried map[string]bool
 }
 
 type upstreamWebSocketDial struct {
-	conn     *websocket.Conn
-	response *http.Response
-	err      error
-	sent     time.Time
+	conn        *websocket.Conn
+	response    *http.Response
+	err         error
+	sent        time.Time
+	accessToken authorizationRevision
 }
 
 func newResponsesWebSocketDialer(s *server, request *http.Request, route websocketRoute, model, serviceTier string) (*responsesWebSocketDialer, error) {
@@ -76,6 +78,9 @@ func newResponsesWebSocketDialer(s *server, request *http.Request, route websock
 func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error) {
 	for attempt := 0; ; attempt++ {
 		selection := d.server.claimAccount(d.route, d.durable, d.model, d.serviceTier, d.skip, attempt)
+		if d.replacing != nil {
+			selection = d.server.claimReplacement(d.replacing, d.route, d.durable, d.model, d.serviceTier, d.skip, attempt)
+		}
 		decision := selection.routingDecision
 		if decision.blocked != "" {
 			return nil, nil, errRouteOwnerUnavailable
@@ -95,6 +100,12 @@ func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error
 
 		result := d.open(account)
 		if result.err == nil {
+			if d.replacing != nil && !d.replacing.active() {
+				result.conn.CloseNow()
+				closeWebSocketResponse(result.response)
+				selection.claim.release()
+				return nil, nil, errRouteOwnerUnavailable
+			}
 			if !d.server.accountRoutable(account.id()) || !selection.claim.active() {
 				result.conn.CloseNow()
 				closeWebSocketResponse(result.response)
@@ -135,9 +146,11 @@ func (d *responsesWebSocketDialer) open(account *Account) upstreamWebSocketDial 
 	result := upstreamWebSocketDial{sent: time.Now()}
 	ctx, cancel := context.WithTimeout(d.request.Context(), upstreamWait)
 	defer cancel()
+	headers, digest := responsesWebSocketHeaders(d.request.Header, account)
+	result.accessToken = digest
 	result.conn, result.response, result.err = websocket.Dial(ctx, d.upstream, &websocket.DialOptions{
 		HTTPClient: d.server.client,
-		HTTPHeader: responsesWebSocketHeaders(d.request.Header, account),
+		HTTPHeader: headers,
 	})
 	return result
 }
@@ -177,6 +190,7 @@ func (d *responsesWebSocketDialer) routed(result upstreamWebSocketDial, selectio
 		conn:          result.conn,
 		resp:          result.response,
 		account:       account,
+		accessToken:   result.accessToken,
 		claim:         selection.claim,
 		priorOwner:    decision.priorOwner,
 		routingReason: decision.reason,

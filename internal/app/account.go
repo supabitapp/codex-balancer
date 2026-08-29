@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -35,10 +36,11 @@ type accountState struct {
 
 type Account struct {
 	accountState
-	mu          sync.Mutex
-	resetMu     sync.Mutex
-	inflight    chan struct{}
-	lastRefresh error
+	mu                  sync.Mutex
+	resetMu             sync.Mutex
+	inflight            chan struct{}
+	lastRefresh         error
+	rejectedAccessToken authorizationRevision
 
 	cooldown       time.Time
 	planType       string
@@ -50,6 +52,8 @@ type Account struct {
 	usageFetchedAt time.Time
 	lastUsed       time.Time
 }
+
+type authorizationRevision [sha256.Size]byte
 
 type resetCreditState struct {
 	fetchedAt time.Time
@@ -229,12 +233,16 @@ func (a *Account) applyPersisted(next accountState) bool {
 			a.AccessToken != next.AccessToken ||
 			a.RefreshToken != next.RefreshToken
 		a.IDToken = next.IDToken
+		accessTokenChanged := a.AccessToken != next.AccessToken
 		a.AccessToken = next.AccessToken
 		a.RefreshToken = next.RefreshToken
 		a.LastRefresh = next.LastRefresh
 		if credentialsChanged {
 			next.Reauth = ""
 			a.lastRefresh = nil
+		}
+		if accessTokenChanged {
+			a.rejectedAccessToken = authorizationRevision{}
 		}
 		a.Reauth = next.Reauth
 	}
@@ -290,6 +298,28 @@ func (a *Account) expires() time.Time {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return tokenExpiry(a.AccessToken)
+}
+
+func (a *Account) markRejectedAccessToken(token authorizationRevision) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if accessTokenDigest(a.AccessToken) != token || a.rejectedAccessToken == token {
+		return false
+	}
+	a.rejectedAccessToken = token
+	return true
+}
+
+func (a *Account) clearRejectedAccessToken(token authorizationRevision) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.rejectedAccessToken == token {
+		a.rejectedAccessToken = authorizationRevision{}
+	}
+}
+
+func accessTokenDigest(token string) authorizationRevision {
+	return authorizationRevision(sha256.Sum256([]byte(token)))
 }
 
 func (a *Account) id() string    { return a.claims().Auth.AccountID }
@@ -409,7 +439,11 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(acc
 		case err != nil && permanent:
 			a.Reauth = next.Reauth
 		case err == nil:
+			accessTokenChanged := a.AccessToken != next.AccessToken
 			a.accountState = next
+			if accessTokenChanged {
+				a.rejectedAccessToken = authorizationRevision{}
+			}
 		}
 	}
 	a.mu.Unlock()

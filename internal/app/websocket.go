@@ -28,10 +28,17 @@ type websocketDial struct {
 	conn          *websocket.Conn
 	resp          *http.Response
 	account       *Account
+	accessToken   authorizationRevision
 	claim         *routeClaimHandle
 	priorOwner    string
 	routingReason routingReason
 	moved         bool
+}
+
+type routeAcceptance struct {
+	allowed   bool
+	persisted bool
+	logSwitch bool
 }
 
 func (d *websocketDial) releaseClaim() {
@@ -53,6 +60,37 @@ func (d *websocketDial) acceptSwitch() bool {
 		return false
 	}
 	return d.claim.acceptSwitch()
+}
+
+func (s *server) acceptWebSocketRoute(dial *websocketDial, route storedRoute) routeAcceptance {
+	result := routeAcceptance{}
+	if dial == nil || dial.account == nil {
+		return result
+	}
+	s.routeOwnership.Lock()
+	defer s.routeOwnership.Unlock()
+	if !s.accountRoutable(dial.account.id()) || !dial.claim.active() {
+		return result
+	}
+	result.allowed = true
+	dial.account.accepted(route.At)
+	result.persisted = s.stats.persistRoute(route)
+	result.logSwitch = dial.acceptSwitch()
+	if result.persisted {
+		keys := routeClaimKeys(websocketRoute{session: route.Session, thread: route.Thread})
+		if dial.claim != nil {
+			dial.commitClaim(keys)
+		} else {
+			s.routeClaims.clearBarriers(keys)
+		}
+	}
+	return result
+}
+
+func (s *server) transferWebSocketClaim(current *routeClaimHandle, account, priorOwner string, reason routingReason) *routeClaimHandle {
+	s.routeOwnership.Lock()
+	defer s.routeOwnership.Unlock()
+	return current.transfer(account, priorOwner, reason)
 }
 
 type websocketRoute struct {
@@ -92,6 +130,7 @@ type websocketEnvelope struct {
 	Reasoning          responseReasoning          `json:"reasoning"`
 	ServiceTier        string                     `json:"service_tier"`
 	PreviousResponseID string                     `json:"previous_response_id"`
+	Input              []json.RawMessage          `json:"input"`
 	ClientMetadata     map[string]string          `json:"client_metadata"`
 	Status             int                        `json:"status"`
 	StatusCode         int                        `json:"status_code"`
@@ -198,6 +237,21 @@ func (s *server) dialResponsesWebSocket(
 	return dialer.dial()
 }
 
+func (s *server) dialResponsesWebSocketReplacing(
+	r *http.Request,
+	route websocketRoute,
+	model string,
+	serviceTier string,
+	current *routeClaimHandle,
+) (*websocketDial, *http.Response, error) {
+	dialer, err := newResponsesWebSocketDialer(s, r, route, model, serviceTier)
+	if err != nil {
+		return nil, nil, err
+	}
+	dialer.replacing = current
+	return dialer.dial()
+}
+
 func responsesWebSocketURL(upstream string) (string, error) {
 	u, err := url.Parse(upstream)
 	if err != nil {
@@ -216,18 +270,20 @@ func responsesWebSocketURL(upstream string) (string, error) {
 	return u.String(), nil
 }
 
-func responsesWebSocketHeaders(inbound http.Header, account *Account) http.Header {
+func responsesWebSocketHeaders(inbound http.Header, account *Account) (http.Header, authorizationRevision) {
 	headers := http.Header{}
 	copyWebSocketHeaders(headers, inbound)
 	headers.Del("Accept")
 	headers.Del("Content-Type")
 	account.mu.Lock()
 	token := account.AccessToken
+	digest := accessTokenDigest(token)
+	accountID := claimsFromToken(account.IDToken).Auth.AccountID
 	account.mu.Unlock()
 	headers.Set("Authorization", "Bearer "+token)
-	headers.Set("chatgpt-account-id", account.id())
+	headers.Set("chatgpt-account-id", accountID)
 	ensureResponsesWebSocketBeta(headers)
-	return headers
+	return headers, digest
 }
 
 func ensureResponsesWebSocketBeta(headers http.Header) {
@@ -338,7 +394,25 @@ func websocketErrorIs(event websocketEnvelope, code string) bool {
 }
 
 func websocketRequestPortable(event websocketEnvelope) bool {
-	return strings.TrimSpace(event.PreviousResponseID) == "" && strings.TrimSpace(event.ClientMetadata[codexTurnStateKey]) == ""
+	return strings.TrimSpace(event.PreviousResponseID) == "" &&
+		strings.TrimSpace(event.ClientMetadata[codexTurnStateKey]) == "" &&
+		!websocketInputHasEncryptedContent(event.Input)
+}
+
+func websocketInputHasEncryptedContent(input []json.RawMessage) bool {
+	for _, raw := range input {
+		var item struct {
+			EncryptedContent json.RawMessage `json:"encrypted_content"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			continue
+		}
+		value := bytes.TrimSpace(item.EncryptedContent)
+		if len(value) > 0 && !bytes.Equal(value, []byte("null")) && !bytes.Equal(value, []byte(`""`)) {
+			return true
+		}
+	}
+	return false
 }
 
 func websocketRouteFrom(headers http.Header) websocketRoute {
