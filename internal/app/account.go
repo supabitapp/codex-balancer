@@ -75,19 +75,6 @@ type accountStatus string
 
 type routingMode string
 
-type usagePace uint8
-
-type usagePaceEstimate struct {
-	shortfallPercent float64
-	runway           time.Duration
-	known            bool
-}
-
-type weightedWindow struct {
-	capacity float64
-	window   window
-}
-
 const (
 	accountLive        accountStatus = "live"
 	accountPriority    accountStatus = "priority"
@@ -99,11 +86,6 @@ const (
 
 	routingModeNormal   routingMode = "normal"
 	routingModePriority routingMode = "priority"
-
-	usagePaceUnknown usagePace = iota
-	usagePaceOnTrack
-	usagePaceClose
-	usagePaceOffTrack
 )
 
 func (m routingMode) normalized() routingMode {
@@ -154,66 +136,6 @@ func creditCycleStart(now time.Time, windows ...window) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return start, true
-}
-
-func (e usagePaceEstimate) pace() usagePace {
-	if !e.known {
-		return usagePaceUnknown
-	}
-	switch {
-	case e.shortfallPercent <= 0:
-		return usagePaceOnTrack
-	case e.shortfallPercent <= 5:
-		return usagePaceClose
-	default:
-		return usagePaceOffTrack
-	}
-}
-
-func usagePaceAt(now time.Time, windows ...weightedWindow) usagePaceEstimate {
-	var totalShortfall float64
-	var totalCapacity float64
-	var totalRemaining float64
-	var burnPerHour float64
-	for _, weighted := range windows {
-		w := weighted.window
-		remaining, ok := remainingPercent(w)
-		duration := time.Duration(w.minutes) * time.Minute
-		resetIn := w.resetsAt.Sub(now)
-		if !ok || weighted.capacity <= 0 || duration <= 0 || resetIn <= 0 || resetIn > duration {
-			continue
-		}
-		totalShortfall += (float64(resetIn)/float64(duration)*100 - remaining) * weighted.capacity
-		totalCapacity += weighted.capacity
-		totalRemaining += remaining * weighted.capacity
-		elapsed := duration - resetIn
-		if elapsed > 0 {
-			burnPerHour += (100 - remaining) * weighted.capacity / elapsed.Hours()
-		}
-	}
-	if totalCapacity == 0 {
-		return usagePaceEstimate{}
-	}
-	var runway time.Duration
-	if totalShortfall > 0 && burnPerHour > 0 {
-		runway = time.Duration(totalRemaining / burnPerHour * float64(time.Hour))
-	}
-	return usagePaceEstimate{shortfallPercent: totalShortfall / totalCapacity, runway: runway, known: true}
-}
-
-func weeklyPlanCapacity(plan string) float64 {
-	switch strings.ToLower(strings.TrimSpace(plan)) {
-	case "free", "go":
-		return 1_134
-	case "plus", "team", "business", "edu":
-		return 7_560
-	case "prolite":
-		return 37_800
-	case "pro", "enterprise":
-		return 50_400
-	default:
-		return 0
-	}
 }
 
 func managedWorkspacePlan(plan string) bool {

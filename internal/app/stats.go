@@ -646,7 +646,6 @@ type statsResponse struct {
 	RateLimits              int64                  `json:"rate_limits"`
 	AverageTTFBMilliseconds float64                `json:"average_ttfb_ms"`
 	Accounts                []accountStatsResponse `json:"accounts"`
-	weeklyPace              usagePaceEstimate
 }
 
 type accountStatsResponse struct {
@@ -708,7 +707,6 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		AverageTTFBMilliseconds: float64(snapshot.TTFB) / float64(time.Millisecond),
 		Accounts:                make([]accountStatsResponse, 0, s.pool.count()),
 	}
-	weeklyWindows := make([]weightedWindow, 0, s.pool.count())
 	for _, account := range s.pool.sorted() {
 		claims := account.claims()
 		plan := account.plan()
@@ -716,12 +714,6 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		primary, secondary := candidate.primary, candidate.secondary
 		traffic := snapshot.Accounts[claims.Auth.AccountID]
 		weekly := longestWindow(primary, secondary)
-		if !managedWorkspacePlan(plan) {
-			weeklyWindows = append(weeklyWindows, weightedWindow{
-				capacity: weeklyPlanCapacity(plan),
-				window:   weekly,
-			})
-		}
 		var weeklyRemaining *float64
 		if remaining, known := remainingPercent(weekly); known {
 			weeklyRemaining = &remaining
@@ -778,7 +770,6 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			Activity:               append([]int64{}, traffic.Activity...),
 		})
 	}
-	out.weeklyPace = usagePaceAt(now, weeklyWindows...)
 	return out
 }
 

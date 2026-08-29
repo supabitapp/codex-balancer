@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -548,117 +547,6 @@ func TestDashboardSeparatesManagedWorkspacesAndShowsSpendControl(t *testing.T) {
 	}
 }
 
-func TestDashboardEstimatesWhetherPoolCapacityWillLast(t *testing.T) {
-	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
-	tests := []struct {
-		name           string
-		used           []float64
-		wantMark       string
-		wantInfo       string
-		wantInfoStrong string
-	}{
-		{name: "yes", used: []float64{0, 20}, wantMark: "👍", wantInfo: "Lasts to reset.\nAt the average burn since reset. Expected capacity at reset: ", wantInfoStrong: "4.29%"},
-		{name: "close", used: []float64{0, 30}, wantMark: "👎", wantInfo: "Runs out in 5d16h.\nAt the average burn since reset. Expected to run out: ", wantInfoStrong: "20 August 2026, 04:00 UTC"},
-		{name: "no", used: []float64{20, 30}, wantMark: "👎", wantInfo: "Runs out in 3d0h.\nAt the average burn since reset. Expected to run out: ", wantInfoStrong: "17 August 2026, 12:00 UTC"},
-		{name: "empty", used: []float64{100, 100}, wantMark: "👎", wantInfo: "Empty.\nNothing left until reset."},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			accounts := make([]*Account, len(test.used))
-			for i, used := range test.used {
-				account := testAccount(fmt.Sprintf("account-%d", i), used)
-				account.secondary = window{
-					usedPercent: used,
-					minutes:     7 * 24 * 60,
-					resetsAt:    now.Add(6 * 24 * time.Hour),
-					seenAt:      now,
-				}
-				accounts[i] = account
-			}
-			server := &server{pool: &Pool{accounts: accounts}, stats: newStatsWithPrices(testPriceSnapshot(t))}
-
-			view := server.currentDashboard(now)
-			if view.Overview[0].Name != "Pace" || view.Overview[0].Value != test.wantMark || view.Overview[0].Info != test.wantInfo || view.Overview[0].InfoStrong != test.wantInfoStrong {
-				t.Fatalf("pace metric = %+v, want %q", view.Overview[0], test.wantMark)
-			}
-			payload, err := renderDashboard("dashboard", view)
-			if err != nil {
-				t.Fatal(err)
-			}
-			body := string(payload)
-			expected := `<dt>Pace</dt><dd><span id="metric-`
-			renderedInfoStrong := strings.ReplaceAll(test.wantInfoStrong, "+", "&#43;")
-			renderedWant := strings.ReplaceAll(test.wantMark, "+", "&#43;")
-			checks := []string{expected, `class="has-tooltip"`, `data-tooltip="` + test.wantInfo + `"`, ">" + renderedWant + "</span>"}
-			if test.wantInfoStrong != "" {
-				checks = append(checks, `data-tooltip-strong="`+renderedInfoStrong+`"`)
-			}
-			for _, check := range checks {
-				if !strings.Contains(body, check) {
-					t.Fatalf("dashboard missing %q:\n%s", check, body)
-				}
-			}
-			if strings.Contains(body, "<th>Pace</th>") {
-				t.Fatalf("dashboard has per-account pace column:\n%s", body)
-			}
-		})
-	}
-
-	monthly := testAccount("monthly", 10)
-	monthly.secondary = window{
-		usedPercent: 10,
-		minutes:     30 * 24 * 60,
-		resetsAt:    now.Add(26 * 24 * time.Hour),
-		seenAt:      now,
-	}
-	weekly := testAccount("weekly", 27)
-	weekly.secondary = window{
-		usedPercent: 27,
-		minutes:     7 * 24 * 60,
-		resetsAt:    now.Add(6 * 24 * time.Hour),
-		seenAt:      now,
-	}
-	poolServer := &server{pool: &Pool{accounts: []*Account{monthly, weekly}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
-	if got := poolServer.currentDashboard(now).Overview[0]; got.Value != "👎" || !strings.HasPrefix(got.Info, "Runs out in ") {
-		t.Fatalf("mixed limit windows on track = %+v, want close", got)
-	}
-
-	for _, test := range []struct {
-		name     string
-		proUsed  float64
-		goUsed   float64
-		wantMark string
-		wantInfo string
-	}{
-		{name: "pro surplus", proUsed: 0, goUsed: 100, wantMark: "👍", wantInfo: "Lasts to reset."},
-		{name: "pro shortfall", proUsed: 30, goUsed: 0, wantMark: "👎", wantInfo: "Runs out in "},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			pro := testAccountWithPlan("pro", test.proUsed, "pro")
-			pro.secondary = window{usedPercent: test.proUsed, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
-			goAccount := testAccountWithPlan("go", test.goUsed, "go")
-			goAccount.secondary = window{usedPercent: test.goUsed, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
-			server := &server{pool: &Pool{accounts: []*Account{pro, goAccount}}, stats: newStatsWithPrices(testPriceSnapshot(t))}
-			if got := server.currentDashboard(now).Overview[0]; got.Value != test.wantMark || !strings.HasPrefix(got.Info, test.wantInfo) {
-				t.Fatalf("plan-weighted on track = %+v, want %q", got, test.wantMark)
-			}
-		})
-	}
-}
-
-func TestWeeklyPlanCapacity(t *testing.T) {
-	for plan, want := range map[string]float64{
-		"go":      1_134,
-		"plus":    7_560,
-		"prolite": 37_800,
-		"pro":     50_400,
-	} {
-		if got := weeklyPlanCapacity(plan); got != want {
-			t.Fatalf("%s weekly capacity = %v, want %v", plan, got, want)
-		}
-	}
-}
-
 func TestTrafficPercentagesSumToOneHundred(t *testing.T) {
 	accounts := []accountStatsResponse{
 		{Activity: []int64{841}},
@@ -780,7 +668,6 @@ func TestDashboardOverview(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
 	wantValues := map[string]string{
-		"Pace":          "❔",
 		"active WS":     "3",
 		"CPU":           "--",
 		"RAM":           "--",
@@ -791,7 +678,7 @@ func TestDashboardOverview(t *testing.T) {
 		"output tokens": "400",
 		"uptime":        "28m",
 	}
-	wantNames := []string{"Pace", "active WS", "CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "API estimate"}
+	wantNames := []string{"active WS", "CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "API estimate"}
 	if len(view.Overview) != len(wantNames) {
 		t.Fatalf("overview metrics = %+v", view.Overview)
 	}
@@ -806,17 +693,12 @@ func TestDashboardOverview(t *testing.T) {
 			if metric.Value != wantValue {
 				t.Fatalf("%s overview metric = %+v, want value %q", metric.Name, metric, wantValue)
 			}
-			if metric.Name != "Pace" && metric.Name != "active WS" && metric.Name != "CPU" && metric.Name != "RAM" && metric.Name != "network in" && metric.Name != "network out" && metric.Name != "uptime" && metric.Info != wantInfo {
+			if metric.Name != "active WS" && metric.Name != "CPU" && metric.Name != "RAM" && metric.Name != "network in" && metric.Name != "network out" && metric.Name != "uptime" && metric.Info != wantInfo {
 				t.Fatalf("%s overview info = %q, want %q", metric.Name, metric.Info, wantInfo)
 			}
 			delete(wantValues, metric.Name)
 		}
 		switch metric.Name {
-		case "Pace":
-			want := "Unknown.\nNot enough limit data to estimate whether the pool will last."
-			if metric.Info != want {
-				t.Fatalf("Pace overview info = %q, want %q", metric.Info, want)
-			}
 		case "API estimate":
 			apiEstimateFound = true
 			if metric.Value != "$0.013" {

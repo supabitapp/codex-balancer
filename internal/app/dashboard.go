@@ -463,10 +463,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	if modelCosts := formatModelCosts(snapshot.ModelCosts); modelCosts != "" {
 		priceInfo = modelCosts + "\n" + priceInfo
 	}
-	overview := []dashboardMetric{
-		dashboardPaceMetric(now, stats.weeklyPace),
-		{Name: "active WS", Value: strconv.FormatInt(snapshot.WSOpen, 10)},
-	}
+	overview := []dashboardMetric{{Name: "active WS", Value: strconv.FormatInt(snapshot.WSOpen, 10)}}
 	overview = append(overview, dashboardResourceMetrics(s.resources.usage(now))...)
 	overview = append(overview,
 		dashboardMetric{Name: "uptime", Value: short(snapshot.Uptime)},
@@ -532,46 +529,6 @@ func dashboardSpendAmount(value string) string {
 
 func formatCreditValue(credits float64) string {
 	return fmt.Sprintf("$%.2f", credits*creditValueUSD)
-}
-
-func dashboardPaceMetric(now time.Time, estimate usagePaceEstimate) dashboardMetric {
-	if !estimate.known {
-		return dashboardMetric{
-			Name:  "Pace",
-			Value: "❔",
-			Info:  "Unknown.\nNot enough limit data to estimate whether the pool will last.",
-		}
-	}
-	pace := estimate.pace()
-	switch pace {
-	case usagePaceOnTrack:
-		return dashboardMetric{
-			Name:       "Pace",
-			Value:      "👍",
-			Info:       "Lasts to reset.\nAt the average burn since reset. Expected capacity at reset: ",
-			InfoStrong: formatPercent(-estimate.shortfallPercent),
-		}
-	case usagePaceClose:
-		return dashboardPaceShortfall(now, estimate)
-	default:
-		return dashboardPaceShortfall(now, estimate)
-	}
-}
-
-func dashboardPaceShortfall(now time.Time, estimate usagePaceEstimate) dashboardMetric {
-	if estimate.runway < time.Second {
-		return dashboardMetric{
-			Name:  "Pace",
-			Value: "👎",
-			Info:  "Empty.\nNothing left until reset.",
-		}
-	}
-	return dashboardMetric{
-		Name:       "Pace",
-		Value:      "👎",
-		Info:       "Runs out in " + short(estimate.runway) + ".\nAt the average burn since reset. Expected to run out: ",
-		InfoStrong: now.Add(estimate.runway).Format("2 January 2006, 15:04 MST"),
-	}
 }
 
 func trafficPercentages(accounts []accountStatsResponse) []int64 {
