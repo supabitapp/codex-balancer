@@ -157,7 +157,10 @@ func serverCmd(args []string) error {
 	}
 	defer listener.Close()
 
-	go srv.pollDueUsage(ctx, *poll)
+	log.Info("loading initial account quotas", "accounts", pool.count())
+	srv.pollAllUsage(ctx)
+	log.Info("initial account quota refresh complete", "accounts", pool.count())
+
 	go srv.watchUsage(ctx, *poll)
 	go srv.watchModels(ctx)
 	go srv.watchPriceCatalog(ctx)
