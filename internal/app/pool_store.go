@@ -6,9 +6,15 @@ import (
 )
 
 type poolChange struct {
-	added   int
-	removed int
-	updated int
+	added       int
+	removed     int
+	updated     int
+	unavailable []accountUnavailable
+}
+
+type accountUnavailable struct {
+	id     string
+	reason routingReason
 }
 
 func (c poolChange) changed() bool {
@@ -62,14 +68,36 @@ func (p *Pool) reconcile(accounts []*Account) poolChange {
 			continue
 		}
 		delete(current, id)
-		if existing != account && existing.applyPersisted(account.persisted()) {
-			change.updated++
+		if existing != account {
+			before := existing.routingCandidate()
+			if existing.applyPersisted(account.persisted()) {
+				change.updated++
+			}
+			if reason := accountBecameUnavailable(before, existing.routingCandidate()); reason != "" {
+				change.unavailable = append(change.unavailable, accountUnavailable{id: id, reason: reason})
+			}
 		}
 		next = append(next, existing)
 	}
 	change.removed = len(current)
+	for id := range current {
+		change.unavailable = append(change.unavailable, accountUnavailable{id: id, reason: routingReasonOwnerRemoved})
+	}
 	p.accounts = next
 	return change
+}
+
+func accountBecameUnavailable(before, after routingCandidate) routingReason {
+	switch {
+	case !before.paused && after.paused:
+		return routingReasonOwnerPaused
+	case before.reauth == "" && after.reauth != "":
+		return routingReasonOwnerSignedOut
+	case before.routingEnabled() && !after.routingEnabled():
+		return routingReasonOwnerNotRoutable
+	default:
+		return ""
+	}
 }
 
 func (p *Pool) watch(ctx context.Context, changed func(poolChange), failed func(error)) {

@@ -25,10 +25,34 @@ var (
 )
 
 type websocketDial struct {
-	conn    *websocket.Conn
-	resp    *http.Response
-	account *Account
-	moved   bool
+	conn          *websocket.Conn
+	resp          *http.Response
+	account       *Account
+	claim         *routeClaimHandle
+	priorOwner    string
+	routingReason routingReason
+	moved         bool
+}
+
+func (d *websocketDial) releaseClaim() {
+	if d != nil && d.claim != nil {
+		d.claim.release()
+		d.claim = nil
+	}
+}
+
+func (d *websocketDial) commitClaim() {
+	if d != nil && d.claim != nil {
+		d.claim.commit()
+		d.claim = nil
+	}
+}
+
+func (d *websocketDial) acceptSwitch() bool {
+	if d == nil || !d.moved {
+		return false
+	}
+	return d.claim.acceptSwitch()
 }
 
 type websocketRoute struct {
@@ -122,6 +146,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	downstream, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		dial.conn.CloseNow()
+		dial.releaseClaim()
 		s.log.Warn("websocket upgrade failed", "error", err)
 		return
 	}

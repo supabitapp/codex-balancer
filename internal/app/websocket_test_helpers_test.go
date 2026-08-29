@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -17,6 +18,29 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
+
+type testLogBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (b *testLogBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.Write(data)
+}
+
+func (b *testLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.String()
+}
+
+func captureTestLogs(server *server) *testLogBuffer {
+	logs := &testLogBuffer{}
+	server.log = slog.New(slog.NewJSONHandler(logs, nil))
+	return logs
+}
 
 func useOAuthRefreshServer(t *testing.T) func() int {
 	t.Helper()

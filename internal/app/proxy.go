@@ -46,6 +46,8 @@ type server struct {
 	countries        countryResolver
 	dashboardStreams atomic.Int64
 	dashboardUpdates dashboardBroadcaster
+	routeClaims      routeClaimRegistry
+	activeWebSockets activeWebSocketRegistry
 }
 
 func upstreamRetryBackoff(retry int) time.Duration {
@@ -193,10 +195,27 @@ func (s *server) refreshed(account *Account, id string) bool {
 	defer cancel()
 	if err := account.refresh(ctx, s.client, s.pool.persistAccountState); err != nil {
 		s.log.Warn("refresh failed", "account", id, "error", err)
+		if account.needsReauth() {
+			s.invalidateAccount(id, routingReasonOwnerSignedOut)
+		}
 		return false
 	}
 	s.log.Debug("account refreshed", "account", id)
 	return true
+}
+
+func (s *server) invalidateAccount(account string, reason routingReason) {
+	claims := s.routeClaims.invalidateAccount(account)
+	sockets := s.activeWebSockets.closeAccount(account, string(reason))
+	if claims == 0 && sockets == 0 {
+		return
+	}
+	s.log.Info("account websocket routing invalidated",
+		"account", account,
+		"routing_reason", reason,
+		"provisional_claims", claims,
+		"closed_websockets", sockets,
+	)
 }
 
 func copyWebSocketHeaders(dst, src http.Header) {

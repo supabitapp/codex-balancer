@@ -175,11 +175,11 @@ func (s *Stats) failedOver(account, reason string) {
 	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
-func (s *Stats) accepted(session, routeThread, statsThread, clientIP, apiKeySuffix, account, model, effort, serviceTier string, metadata turnMetadata, counted bool) {
+func (s *Stats) accepted(session, routeThread, statsThread, clientIP, apiKeySuffix, account, model, effort, serviceTier string, metadata turnMetadata, counted bool) bool {
 	now := time.Now()
-	s.persistRoute(storedRoute{At: now, Session: session, Thread: routeThread, Account: account})
+	persisted := s.persistRoute(storedRoute{At: now, Session: session, Thread: routeThread, Account: account})
 	if !counted {
-		return
+		return persisted
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -187,6 +187,7 @@ func (s *Stats) accepted(session, routeThread, statsThread, clientIP, apiKeySuff
 	if thread := s.threads[statsThread]; thread != nil {
 		thread.apiKeySuffix = apiKeySuffix
 	}
+	return persisted
 }
 
 func (s *Stats) applyRouted(now time.Time, thread, clientIP, account, model, effort, serviceTier string, metadata turnMetadata) {
@@ -415,13 +416,17 @@ func (s *Stats) appendEvent(event Event) {
 	}
 }
 
-func (s *Stats) persistRoute(route storedRoute) {
+func (s *Stats) persistRoute(route storedRoute) bool {
 	if s.store == nil {
-		return
+		return true
 	}
-	if err := s.store.recordRoute(route); err != nil && s.persistFailed != nil {
-		s.persistFailed(err)
+	if err := s.store.recordRoute(route); err != nil {
+		if s.persistFailed != nil {
+			s.persistFailed(err)
+		}
+		return false
 	}
+	return true
 }
 
 func (s *Stats) persistUsage(event storedUsage) {

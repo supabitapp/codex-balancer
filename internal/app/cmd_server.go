@@ -121,6 +121,9 @@ func serverCmd(args []string) error {
 	pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)
 		stats.note("accounts updated", "", fmt.Sprintf("%d added, %d removed, %d updated", change.added, change.removed, change.updated))
+		for _, account := range change.unavailable {
+			srv.invalidateAccount(account.id, account.reason)
+		}
 		srv.catalog.invalidate()
 		go func() {
 			if err := srv.refreshModels(ctx, srv.catalog.version()); err != nil && ctx.Err() == nil {
@@ -176,7 +179,7 @@ func serverCmd(args []string) error {
 	log.Info("listening", "addr", listener.Addr().String(), "accounts", pool.count(), "upstream", *upstream, "log_file", *logPath)
 
 	if !*plain {
-		board := dashboard{pool: pool, catalog: srv.catalog, stats: stats, countries: &srv.countries, addr: listener.Addr().String()}
+		board := dashboard{pool: pool, catalog: srv.catalog, stats: stats, server: srv, countries: &srv.countries, addr: listener.Addr().String()}
 		if _, err := tea.NewProgram(board, tea.WithContext(signalCtx)).Run(); err != nil &&
 			!errors.Is(err, context.Canceled) {
 			return err

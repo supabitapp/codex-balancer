@@ -47,6 +47,7 @@ type routingDecision struct {
 	account    *Account
 	blocked    string
 	priorOwner string
+	reason     routingReason
 	candidates []routingCandidate
 	now        time.Time
 }
@@ -367,12 +368,19 @@ func (a *Account) observe(h http.Header) {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.lastUsed = time.Now()
 	if primary.known() {
 		a.primary = primary
 	}
 	if secondary.known() {
 		a.secondary = secondary
+	}
+}
+
+func (a *Account) accepted(at time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if at.After(a.lastUsed) {
+		a.lastUsed = at
 	}
 }
 

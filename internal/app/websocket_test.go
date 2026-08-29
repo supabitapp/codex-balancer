@@ -181,6 +181,112 @@ func TestWebSocketPortableMoveAllowsNewSocketResponseChainAfterAcceptance(t *tes
 	}
 }
 
+func TestWebSocketOverlappingUnacceptedConnectionsShareProvisionalAccount(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, _ *websocket.Conn, _ websocketEnvelope) {})
+	defer upstream.Close()
+	firstAccount := testAccount("account-a", 10)
+	otherAccount := testAccount("account-b", 10)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{firstAccount, otherAccount})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	defer first.CloseNow()
+	if got := upstream.ConnectionAccounts(); fmt.Sprint(got) != "[account-a]" {
+		t.Fatalf("first connection accounts = %v, want account-a", got)
+	}
+
+	otherAccount.RoutingMode = routingModePriority
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	if got := upstream.ConnectionAccounts(); fmt.Sprint(got) != "[account-a account-a]" {
+		t.Fatalf("connection accounts = %v, want the provisional account shared before response.created", got)
+	}
+}
+
+func TestWebSocketOverlappingSiblingThreadsShareTheSessionClaim(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, _ *websocket.Conn, _ websocketEnvelope) {})
+	defer upstream.Close()
+	firstAccount := testAccount("account-a", 10)
+	otherAccount := testAccount("account-b", 10)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{firstAccount, otherAccount})
+
+	root, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "root"))
+	defer root.CloseNow()
+	otherAccount.RoutingMode = routingModePriority
+	child, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "child"))
+	defer child.CloseNow()
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-a]" {
+		t.Fatalf("connection accounts = %s, want sibling threads to share the provisional session account", got)
+	}
+}
+
+func TestWebSocketClosingEveryUnacceptedConnectionReleasesTheClaim(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, _ *websocket.Conn, _ websocketEnvelope) {})
+	defer upstream.Close()
+	firstAccount := testAccount("account-a", 10)
+	otherAccount := testAccount("account-b", 10)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{firstAccount, otherAccount})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	waitForWebSocketCounts(t, server, map[string]int64{firstAccount.id(): 1})
+	if err := first.Close(websocket.StatusNormalClosure, "done"); err != nil {
+		t.Fatal(err)
+	}
+	waitForWebSocketCounts(t, server, map[string]int64{firstAccount.id(): 0})
+	otherAccount.RoutingMode = routingModePriority
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	defer second.CloseNow()
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-b]" {
+		t.Fatalf("connection accounts = %s, want a fresh account after the unaccepted claim was released", got)
+	}
+}
+
+func TestWebSocketResponseCreatedCommitsTheProvisionalClaim(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("account-a", 10)})
+	conn, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "thread"))
+	defer conn.CloseNow()
+
+	server.routeClaims.mu.Lock()
+	before := len(server.routeClaims.byID)
+	server.routeClaims.mu.Unlock()
+	if before != 1 {
+		t.Fatalf("claims before response.created = %d, want 1", before)
+	}
+	completeWebSocketTurn(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	server.routeClaims.mu.Lock()
+	after := len(server.routeClaims.byID)
+	server.routeClaims.mu.Unlock()
+	if after != 0 {
+		t.Fatalf("claims after response.created = %d, want the durable route to replace the claim", after)
+	}
+}
+
+func TestWebSocketAccountInvalidationClosesLiveSocketAndDropsItsClaim(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, _ *websocket.Conn, _ websocketEnvelope) {})
+	defer upstream.Close()
+	account := testAccount("account-a", 10)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{account})
+	conn, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "thread"))
+	waitForWebSocketCounts(t, server, map[string]int64{account.id(): 1})
+
+	server.invalidateAccount(account.id(), routingReasonOwnerSignedOut)
+	readCloseStatus(t, conn, websocket.StatusServiceRestart)
+	waitForWebSocketCounts(t, server, map[string]int64{account.id(): 0})
+	server.routeClaims.mu.Lock()
+	claims := len(server.routeClaims.byID)
+	server.routeClaims.mu.Unlock()
+	if claims != 0 {
+		t.Fatalf("claims after invalidation = %d, want 0", claims)
+	}
+}
+
 func TestWebSocketChildThreadInheritsTheAcceptedSessionOwner(t *testing.T) {
 	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
@@ -264,6 +370,46 @@ func TestWebSocketAcceptedMoveDoesNotBounceWhenTheOldOwnerRecovers(t *testing.T)
 	completeWebSocketTurn(t, third, map[string]any{"type": "response.create", "input": []any{}})
 	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-old account-new account-new]" {
 		t.Fatalf("request accounts = %s, want the latest accepted owner so old quota recovery cannot cause a cache bounce", got)
+	}
+}
+
+func TestWebSocketAcceptedMoveLogsTheDurableSwitchReason(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	oldOwner := testAccount("account-old", 0)
+	newOwner := testAccount("account-new", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{oldOwner, newOwner})
+	logs := captureTestLogs(server)
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	first.CloseNow()
+	oldOwner.markSpent()
+
+	second, _ := dialWebSocket(t, proxy.URL, headers)
+	third, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	completeWebSocketTurn(t, third, map[string]any{"type": "response.create", "input": []any{}})
+	second.CloseNow()
+	third.CloseNow()
+	output := logs.String()
+	if got := strings.Count(output, `"msg":"websocket account switch accepted"`); got != 1 {
+		t.Fatalf("accepted switch log count = %d, want 1 for joined sockets:\n%s", got, output)
+	}
+	for _, want := range []string{
+		`"msg":"websocket account switch accepted"`,
+		`"from_account":"account-old"`,
+		`"to_account":"account-new"`,
+		`"routing_reason":"owner_spent"`,
+		`"route_persisted":true`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("accepted switch logs do not contain %s:\n%s", want, output)
+		}
 	}
 }
 

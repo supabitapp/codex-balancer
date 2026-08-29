@@ -49,6 +49,7 @@ type dashboard struct {
 	pool      *Pool
 	catalog   *modelCatalog
 	stats     *Stats
+	server    *server
 	addr      string
 	width     int
 	height    int
@@ -107,6 +108,9 @@ func (d dashboard) toggle() {
 	kind := "resumed"
 	if paused {
 		kind = "paused"
+		if d.server != nil {
+			d.server.invalidateAccount(account.id(), routingReasonOwnerPaused)
+		}
 	}
 	d.stats.note(kind, account.id(), "")
 }

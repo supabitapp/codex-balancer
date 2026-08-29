@@ -3,7 +3,25 @@ package app
 import (
 	"log/slog"
 	"maps"
+	"slices"
 	"time"
+)
+
+type routingReason string
+
+const (
+	routingReasonFresh                  routingReason = "fresh"
+	routingReasonRetained               routingReason = "retained"
+	routingReasonProvisionalClaim       routingReason = "provisional_claim"
+	routingReasonProvisionalConflict    routingReason = "provisional_claim_unavailable"
+	routingReasonOwnerRemoved           routingReason = "owner_removed"
+	routingReasonOwnerPaused            routingReason = "owner_paused"
+	routingReasonOwnerSignedOut         routingReason = "owner_signed_out"
+	routingReasonOwnerSpent             routingReason = "owner_spent"
+	routingReasonOwnerNotRoutable       routingReason = "owner_not_routable"
+	routingReasonOwnerModelIncompatible routingReason = "owner_model_incompatible"
+	routingReasonOwnerAttemptFailed     routingReason = "owner_attempt_failed"
+	routingReasonOwnerUnavailable       routingReason = "owner_unavailable"
 )
 
 func (s *server) pickAccount(thread string, owners []string, model, serviceTier string, skip map[string]bool, attempt int) routingDecision {
@@ -21,6 +39,7 @@ func (s *server) pickAccount(thread string, owners []string, model, serviceTier 
 		}
 	}
 	decision := s.pool.route(owners, routingSkip)
+	decision.reason = routingDecisionReason(decision, allowed, skip)
 	s.log.Debug("routing attempt",
 		"thread", thread,
 		"attempt", attempt+1,
@@ -30,6 +49,7 @@ func (s *server) pickAccount(thread string, owners []string, model, serviceTier 
 		"prior_owner", decision.priorOwner,
 		"blocked_owner", decision.blocked,
 		"account_move", decision.moved(),
+		"routing_reason", decision.reason,
 		"accounts", len(decision.candidates),
 	)
 	for _, candidate := range decision.candidates {
@@ -62,6 +82,40 @@ func (s *server) pickAccount(thread string, owners []string, model, serviceTier 
 		)
 	}
 	return decision
+}
+
+func routingDecisionReason(decision routingDecision, allowed map[string]bool, skip map[string]bool) routingReason {
+	if decision.priorOwner == "" {
+		return routingReasonFresh
+	}
+	if decision.account != nil && decision.account.id() == decision.priorOwner {
+		return routingReasonRetained
+	}
+	if !accountAllowed(allowed, decision.priorOwner) {
+		return routingReasonOwnerModelIncompatible
+	}
+	if skip[decision.priorOwner] {
+		return routingReasonOwnerAttemptFailed
+	}
+	index := slices.IndexFunc(decision.candidates, func(candidate routingCandidate) bool {
+		return candidate.id == decision.priorOwner
+	})
+	if index < 0 {
+		return routingReasonOwnerRemoved
+	}
+	owner := decision.candidates[index]
+	switch {
+	case !owner.routingEnabled():
+		return routingReasonOwnerNotRoutable
+	case owner.paused:
+		return routingReasonOwnerPaused
+	case owner.reauth != "":
+		return routingReasonOwnerSignedOut
+	case owner.spent:
+		return routingReasonOwnerSpent
+	default:
+		return routingReasonOwnerUnavailable
+	}
 }
 
 func (s *server) allowedAccounts(model, serviceTier string) map[string]bool {

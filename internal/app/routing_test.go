@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -208,6 +209,106 @@ func TestPoolRouteBreaksEqualPressureTiesByLastUsedAndID(t *testing.T) {
 	if got := p.route(nil, nil).account; got != b {
 		t.Fatalf("account = %s, want account-b", got.id())
 	}
+}
+
+func TestRoutingDecisionReasonExplainsEveryAccountChangeClass(t *testing.T) {
+	owner := testAccount("account-owner", 10)
+	fresh := testAccount("account-fresh", 20)
+	tests := []struct {
+		name       string
+		decision   routingDecision
+		allowed    map[string]bool
+		skip       map[string]bool
+		wantReason routingReason
+	}{
+		{
+			name:       "fresh placement",
+			decision:   routingDecision{account: fresh},
+			wantReason: routingReasonFresh,
+		},
+		{
+			name:       "healthy owner retained",
+			decision:   routingDecision{priorOwner: owner.id(), account: owner},
+			wantReason: routingReasonRetained,
+		},
+		{
+			name:       "owner removed",
+			decision:   routingDecision{priorOwner: owner.id(), account: fresh},
+			wantReason: routingReasonOwnerRemoved,
+		},
+		{
+			name:       "owner paused",
+			decision:   routingDecision{priorOwner: owner.id(), account: fresh, candidates: []routingCandidate{candidateWith(owner, func(c *routingCandidate) { c.paused = true })}},
+			wantReason: routingReasonOwnerPaused,
+		},
+		{
+			name:       "owner signed out",
+			decision:   routingDecision{priorOwner: owner.id(), account: fresh, candidates: []routingCandidate{candidateWith(owner, func(c *routingCandidate) { c.reauth = "login required" })}},
+			wantReason: routingReasonOwnerSignedOut,
+		},
+		{
+			name:       "owner spent",
+			decision:   routingDecision{priorOwner: owner.id(), account: fresh, candidates: []routingCandidate{candidateWith(owner, func(c *routingCandidate) { c.spent = true })}},
+			wantReason: routingReasonOwnerSpent,
+		},
+		{
+			name:       "owner not routable",
+			decision:   routingDecision{priorOwner: owner.id(), account: fresh, candidates: []routingCandidate{testAccountWithPlan(owner.id(), 10, "business").routingCandidate()}},
+			wantReason: routingReasonOwnerNotRoutable,
+		},
+		{
+			name:       "owner model incompatible",
+			decision:   routingDecision{priorOwner: owner.id(), account: fresh, candidates: []routingCandidate{owner.routingCandidate()}},
+			allowed:    map[string]bool{fresh.id(): true},
+			wantReason: routingReasonOwnerModelIncompatible,
+		},
+		{
+			name:       "owner attempt failed",
+			decision:   routingDecision{priorOwner: owner.id(), account: fresh, candidates: []routingCandidate{owner.routingCandidate()}},
+			skip:       map[string]bool{owner.id(): true},
+			wantReason: routingReasonOwnerAttemptFailed,
+		},
+		{
+			name: "owner temporarily unavailable",
+			decision: routingDecision{priorOwner: owner.id(), account: fresh, candidates: []routingCandidate{candidateWith(owner, func(c *routingCandidate) {
+				c.cooldown = time.Now().Add(time.Minute)
+			})}},
+			wantReason: routingReasonOwnerUnavailable,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := routingDecisionReason(test.decision, test.allowed, test.skip); got != test.wantReason {
+				t.Fatalf("reason = %q, want %q", got, test.wantReason)
+			}
+		})
+	}
+}
+
+func TestAccountUsageObservationDoesNotBindAnIdentifiedRoute(t *testing.T) {
+	account := testAccount("account-a", 10)
+	before := time.Now().Add(-time.Hour)
+	account.lastUsed = before
+	account.observe(http.Header{"X-Codex-Primary-Used-Percent": {"50"}})
+	if got := account.routingCandidate().lastUsed; !got.Equal(before) {
+		t.Fatalf("last used after handshake observation = %s, want %s", got, before)
+	}
+
+	accepted := time.Now()
+	account.accepted(accepted)
+	if got := account.routingCandidate().lastUsed; !got.Equal(accepted) {
+		t.Fatalf("last used after response.created = %s, want %s", got, accepted)
+	}
+	account.accepted(before)
+	if got := account.routingCandidate().lastUsed; !got.Equal(accepted) {
+		t.Fatalf("last used moved backwards to %s, want %s", got, accepted)
+	}
+}
+
+func candidateWith(account *Account, change func(*routingCandidate)) routingCandidate {
+	candidate := account.routingCandidate()
+	change(&candidate)
+	return candidate
 }
 
 func TestAccountStatusPreservesRoutingStates(t *testing.T) {

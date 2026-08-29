@@ -27,6 +27,7 @@ type responsesWebSocketRelay struct {
 	pending      []websocketMessage
 	pendingBytes int
 	pinned       bool
+	socketID     uint64
 }
 
 func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *http.Request, initial *websocketDial, route websocketRoute, apiKey apiKeyIdentity) *responsesWebSocketRelay {
@@ -52,8 +53,18 @@ func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *
 
 func (r *responsesWebSocketRelay) run() {
 	readWebSocketMessages(r.ctx, r.downstream, true, r.messages)
+	r.socketID = r.server.activeWebSockets.add(r.current.account.id(), func(reason string) {
+		go func() {
+			r.closeDownstream(websocket.StatusServiceRestart, "account unavailable: "+reason)
+			r.cancel()
+		}()
+	})
 	r.server.websocketOpened(r.thread, r.current.account)
 	defer r.close()
+	if !r.server.accountRoutable(r.current.account.id()) || !r.current.claim.active() {
+		r.closeDownstream(websocket.StatusServiceRestart, "account became unavailable during connection setup")
+		return
+	}
 	for {
 		select {
 		case message := <-r.messages:
@@ -73,6 +84,8 @@ func (r *responsesWebSocketRelay) run() {
 func (r *responsesWebSocketRelay) close() {
 	r.cancel()
 	r.current.conn.CloseNow()
+	r.current.releaseClaim()
+	r.server.activeWebSockets.remove(r.socketID, r.current.account.id())
 	r.server.websocketClosed(r.thread, r.current.account)
 	for thread := range r.liveThreads {
 		r.server.stats.deactivateThread(thread)
@@ -85,13 +98,19 @@ func (r *responsesWebSocketRelay) closeDownstream(status websocket.StatusCode, r
 	}
 }
 
-func (r *responsesWebSocketRelay) switchAccount(next *websocketDial, model, serviceTier string) {
+func (r *responsesWebSocketRelay) switchAccount(next *websocketDial, model, serviceTier string) bool {
 	previous := r.current
 	previous.conn.CloseNow()
+	previous.releaseClaim()
 	r.server.websocketClosed(r.thread, previous.account)
 	r.current = next
+	r.server.activeWebSockets.move(r.socketID, previous.account.id(), r.current.account.id())
 	r.current.conn.SetReadLimit(maxWebSocketMessage)
 	r.server.websocketOpened(r.thread, r.current.account)
+	if !r.server.accountRoutable(r.current.account.id()) || !r.current.claim.active() {
+		r.closeDownstream(websocket.StatusServiceRestart, "account became unavailable during connection setup")
+		return false
+	}
 	r.server.log.Info("websocket selected model-compatible account",
 		"thread", r.thread,
 		"from_account", previous.account.id(),
@@ -99,6 +118,7 @@ func (r *responsesWebSocketRelay) switchAccount(next *websocketDial, model, serv
 		"model", model,
 		"service_tier", serviceTier,
 	)
+	return true
 }
 
 func (r *responsesWebSocketRelay) writeUpstream(message websocketMessage) bool {
@@ -171,6 +191,7 @@ func (r *responsesWebSocketRelay) ensureCompatibleAccount(event websocketEnvelop
 		r.closeDownstream(websocket.StatusServiceRestart, "requested model requires another account")
 		return false
 	}
+	r.current.releaseClaim()
 	next, failed, err := r.server.dialResponsesWebSocket(r.request, r.route, event.Model, event.ServiceTier)
 	closeWebSocketResponse(failed)
 	if err != nil || failed != nil {
@@ -178,8 +199,7 @@ func (r *responsesWebSocketRelay) ensureCompatibleAccount(event websocketEnvelop
 		r.closeDownstream(websocket.StatusTryAgainLater, "no account supports requested model")
 		return false
 	}
-	r.switchAccount(next, event.Model, event.ServiceTier)
-	return true
+	return r.switchAccount(next, event.Model, event.ServiceTier)
 }
 
 func (r *responsesWebSocketRelay) pin() bool {
@@ -264,7 +284,22 @@ func (r *responsesWebSocketRelay) responseCreated() {
 		if routeThread == "" {
 			routeThread = turn.statsThread
 		}
-		r.server.stats.accepted(r.route.session, routeThread, turn.statsThread, requestIP(r.request), r.apiKey.suffix, r.current.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata, turn.counted)
+		acceptedAt := time.Now()
+		r.current.account.accepted(acceptedAt)
+		persisted := r.server.stats.accepted(r.route.session, routeThread, turn.statsThread, requestIP(r.request), r.apiKey.suffix, r.current.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata, turn.counted)
+		logSwitch := r.current.acceptSwitch()
+		if persisted {
+			r.current.commitClaim()
+		}
+		if logSwitch {
+			r.server.log.Info("websocket account switch accepted",
+				"thread", turn.statsThread,
+				"from_account", r.current.priorOwner,
+				"to_account", r.current.account.id(),
+				"routing_reason", r.current.routingReason,
+				"route_persisted", persisted,
+			)
+		}
 		r.current.moved = false
 		if turn.counted {
 			r.server.stats.answered(turn.statsThread, r.current.account.id(), time.Since(turn.sent))
