@@ -41,9 +41,9 @@ func (d *websocketDial) releaseClaim() {
 	}
 }
 
-func (d *websocketDial) commitClaim() {
+func (d *websocketDial) commitClaim(keys []string) {
 	if d != nil && d.claim != nil {
-		d.claim.commit()
+		d.claim.commit(keys)
 		d.claim = nil
 	}
 }
@@ -288,8 +288,6 @@ func (s *server) handleWebSocketRejection(account *Account, kind websocketReject
 	}
 	s.log.Info("account rejected websocket request", "thread", thread, "account", id, "reason", kind)
 	switch kind {
-	case websocketRejectionUnauthorized:
-		account.failed(0)
 	case websocketRejectionRateLimited:
 		account.rateLimited(headers, 0)
 		s.stats.rateLimited(id)
@@ -341,19 +339,6 @@ func websocketErrorIs(event websocketEnvelope, code string) bool {
 
 func websocketRequestPortable(event websocketEnvelope) bool {
 	return strings.TrimSpace(event.PreviousResponseID) == "" && strings.TrimSpace(event.ClientMetadata[codexTurnStateKey]) == ""
-}
-
-func websocketOwnerMayRefresh(owners []string, account *Account) bool {
-	candidate := account.routingCandidate()
-	if candidate.reauth != "" {
-		return false
-	}
-	for _, owner := range owners {
-		if owner == candidate.id {
-			return true
-		}
-	}
-	return false
 }
 
 func websocketRouteFrom(headers http.Header) websocketRoute {

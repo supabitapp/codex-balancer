@@ -93,7 +93,7 @@ func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error
 			continue
 		}
 
-		result := d.open(account, attempt)
+		result := d.open(account)
 		if result.err == nil {
 			if !d.server.accountRoutable(account.id()) || !selection.claim.active() {
 				result.conn.CloseNow()
@@ -131,28 +131,15 @@ func (d *responsesWebSocketDialer) refreshBeforeDial(account *Account, retained 
 	return true, nil
 }
 
-func (d *responsesWebSocketDialer) open(account *Account, attempt int) upstreamWebSocketDial {
-	result := upstreamWebSocketDial{}
-	for retry := 0; ; retry++ {
-		result.sent = time.Now()
-		ctx, cancel := context.WithTimeout(d.request.Context(), upstreamWait)
-		result.conn, result.response, result.err = websocket.Dial(ctx, d.upstream, &websocket.DialOptions{
-			HTTPClient: d.server.client,
-			HTTPHeader: responsesWebSocketHeaders(d.request.Header, account),
-		})
-		cancel()
-		if result.err == nil || result.response == nil || result.response.StatusCode < 500 || retry == maxUpstreamRetries {
-			return result
-		}
-		status := result.response.StatusCode
-		closeWebSocketResponse(result.response)
-		d.server.log.Info("retrying upstream websocket server failure", "thread", d.thread, "account", account.id(), "attempt", attempt+1, "retry", retry+1, "status", status)
-		if !d.server.waitForUpstreamRetry(d.request.Context(), retry+1) {
-			result.response = nil
-			result.err = context.Cause(d.request.Context())
-			return result
-		}
-	}
+func (d *responsesWebSocketDialer) open(account *Account) upstreamWebSocketDial {
+	result := upstreamWebSocketDial{sent: time.Now()}
+	ctx, cancel := context.WithTimeout(d.request.Context(), upstreamWait)
+	defer cancel()
+	result.conn, result.response, result.err = websocket.Dial(ctx, d.upstream, &websocket.DialOptions{
+		HTTPClient: d.server.client,
+		HTTPHeader: responsesWebSocketHeaders(d.request.Header, account),
+	})
+	return result
 }
 
 func (s *server) accountRoutable(id string) bool {

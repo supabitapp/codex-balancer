@@ -70,13 +70,3 @@ func TestResetHeaderAcceptsHTTPDate(t *testing.T) {
 		t.Fatalf("reset = %s, want %s", got, want)
 	}
 }
-
-func TestUpstreamRetryBackoffTotalsFiveSeconds(t *testing.T) {
-	var total time.Duration
-	for retry := 1; retry <= maxUpstreamRetries; retry++ {
-		total += upstreamRetryBackoff(retry)
-	}
-	if remaining := upstreamRetryBudget - total; remaining < 0 || remaining > time.Nanosecond {
-		t.Fatalf("backoff total = %s, want %s", total, upstreamRetryBudget)
-	}
-}

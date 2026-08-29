@@ -12,22 +12,28 @@ import (
 )
 
 type responsesWebSocketRelay struct {
-	server       *server
-	downstream   *websocket.Conn
-	request      *http.Request
-	apiKey       apiKeyIdentity
-	route        websocketRoute
-	thread       string
-	ctx          context.Context
-	cancel       context.CancelFunc
-	messages     chan websocketMessage
-	liveThreads  map[string]struct{}
-	current      *websocketDial
-	turns        []websocketTurn
-	pending      []websocketMessage
-	pendingBytes int
-	pinned       bool
-	socketID     uint64
+	server        *server
+	downstream    *websocket.Conn
+	request       *http.Request
+	apiKey        apiKeyIdentity
+	route         websocketRoute
+	thread        string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	messages      chan websocketMessage
+	invalidations chan websocketInvalidation
+	liveThreads   map[string]struct{}
+	current       *websocketDial
+	turns         []websocketTurn
+	pending       []websocketMessage
+	pendingBytes  int
+	pinned        bool
+	socketID      uint64
+}
+
+type websocketInvalidation struct {
+	account string
+	reason  string
 }
 
 func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *http.Request, initial *websocketDial, route websocketRoute, apiKey apiKeyIdentity) *responsesWebSocketRelay {
@@ -37,28 +43,24 @@ func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	return &responsesWebSocketRelay{
-		server:      s,
-		downstream:  downstream,
-		request:     request,
-		apiKey:      apiKey,
-		route:       route,
-		thread:      route.key(),
-		ctx:         ctx,
-		cancel:      cancel,
-		messages:    make(chan websocketMessage, 8),
-		liveThreads: map[string]struct{}{},
-		current:     initial,
+		server:        s,
+		downstream:    downstream,
+		request:       request,
+		apiKey:        apiKey,
+		route:         route,
+		thread:        route.key(),
+		ctx:           ctx,
+		cancel:        cancel,
+		messages:      make(chan websocketMessage, 8),
+		invalidations: make(chan websocketInvalidation, 4),
+		liveThreads:   map[string]struct{}{},
+		current:       initial,
 	}
 }
 
 func (r *responsesWebSocketRelay) run() {
 	readWebSocketMessages(r.ctx, r.downstream, true, r.messages)
-	r.socketID = r.server.activeWebSockets.add(r.current.account.id(), func(reason string) {
-		go func() {
-			r.closeDownstream(websocket.StatusServiceRestart, "account unavailable: "+reason)
-			r.cancel()
-		}()
-	})
+	r.socketID = r.registerActiveSocket(r.current.account.id())
 	r.server.websocketOpened(r.thread, r.current.account)
 	defer r.close()
 	if !r.server.accountRoutable(r.current.account.id()) || !r.current.claim.active() {
@@ -75,10 +77,25 @@ func (r *responsesWebSocketRelay) run() {
 			} else if !r.handleUpstream(message) {
 				return
 			}
+		case invalidation := <-r.invalidations:
+			if invalidation.account != r.current.account.id() {
+				continue
+			}
+			r.closeDownstream(websocket.StatusServiceRestart, "account unavailable: "+invalidation.reason)
+			return
 		case <-r.ctx.Done():
 			return
 		}
 	}
+}
+
+func (r *responsesWebSocketRelay) registerActiveSocket(account string) uint64 {
+	return r.server.activeWebSockets.add(account, func(account, reason string) {
+		select {
+		case r.invalidations <- websocketInvalidation{account: account, reason: reason}:
+		case <-r.ctx.Done():
+		}
+	})
 }
 
 func (r *responsesWebSocketRelay) close() {
@@ -104,7 +121,9 @@ func (r *responsesWebSocketRelay) switchAccount(next *websocketDial, model, serv
 	previous.releaseClaim()
 	r.server.websocketClosed(r.thread, previous.account)
 	r.current = next
-	r.server.activeWebSockets.move(r.socketID, previous.account.id(), r.current.account.id())
+	if !r.server.activeWebSockets.move(r.socketID, previous.account.id(), r.current.account.id()) {
+		r.socketID = r.registerActiveSocket(r.current.account.id())
+	}
 	r.current.conn.SetReadLimit(maxWebSocketMessage)
 	r.server.websocketOpened(r.thread, r.current.account)
 	if !r.server.accountRoutable(r.current.account.id()) || !r.current.claim.active() {
@@ -165,6 +184,10 @@ func (r *responsesWebSocketRelay) queuePending(message websocketMessage) bool {
 }
 
 func (r *responsesWebSocketRelay) handleResponseCreate(message websocketMessage, event websocketEnvelope) bool {
+	if r.pinned && r.current.account.routingCandidate().spent && websocketRequestPortable(event) {
+		r.closeDownstream(websocket.StatusServiceRestart, "account exhausted before a new turn")
+		return false
+	}
 	allowed := r.server.allowedAccounts(event.Model, event.ServiceTier)
 	if (r.current.moved || !accountAllowed(allowed, r.current.account.id())) && !websocketRequestPortable(event) {
 		r.closeDownstream(websocket.StatusTryAgainLater, "account-bound turn cannot move accounts")
@@ -238,25 +261,28 @@ func (r *responsesWebSocketRelay) handleUpstream(message websocketMessage) bool 
 		return false
 	}
 	var event websocketEnvelope
-	if message.kind == websocket.MessageText && json.Unmarshal(message.data, &event) == nil && !r.handleUpstreamEvent(event) {
-		return false
+	rejection := websocketRejectionNone
+	if message.kind == websocket.MessageText && json.Unmarshal(message.data, &event) == nil {
+		rejection = r.handleUpstreamEvent(event)
 	}
 	if err := r.downstream.Write(r.ctx, message.kind, message.data); err != nil {
 		r.server.log.Warn("downstream websocket response write failed", "thread", r.thread, "account", r.current.account.id(), "active_turns", len(r.turns), "error", err)
+		if rejection == websocketRejectionUnauthorized {
+			r.server.refreshed(r.current.account, r.current.account.id())
+		}
 		return false
 	}
-	return true
+	return r.afterUpstreamEvent(rejection)
 }
 
-func (r *responsesWebSocketRelay) handleUpstreamEvent(event websocketEnvelope) bool {
+func (r *responsesWebSocketRelay) handleUpstreamEvent(event websocketEnvelope) websocketRejectionKind {
 	headers := websocketEventHeaders(event.Headers)
 	if len(headers) > 0 {
 		r.current.account.observe(headers)
 	}
-	if rejection := websocketRejection(event); rejection != websocketRejectionNone {
+	rejection := websocketRejection(event)
+	if rejection != websocketRejectionNone {
 		r.server.handleWebSocketRejection(r.current.account, rejection, headers, r.thread)
-		r.closeDownstream(websocket.StatusServiceRestart, "account rejected websocket request")
-		return false
 	}
 	switch event.Type {
 	case "response.created":
@@ -264,7 +290,18 @@ func (r *responsesWebSocketRelay) handleUpstreamEvent(event websocketEnvelope) b
 	case "error", "response.completed", "response.failed", "response.incomplete":
 		r.responseFinished(event)
 	}
-	return true
+	return rejection
+}
+
+func (r *responsesWebSocketRelay) afterUpstreamEvent(rejection websocketRejectionKind) bool {
+	switch rejection {
+	case websocketRejectionNone, websocketRejectionConnectionLimit:
+		return true
+	case websocketRejectionUnauthorized:
+		r.server.refreshed(r.current.account, r.current.account.id())
+	}
+	r.closeDownstream(websocket.StatusServiceRestart, "account rejected websocket request")
+	return false
 }
 
 func (r *responsesWebSocketRelay) responseCreated() {
@@ -289,7 +326,12 @@ func (r *responsesWebSocketRelay) responseCreated() {
 		persisted := r.server.stats.accepted(r.route.session, routeThread, turn.statsThread, requestIP(r.request), r.apiKey.suffix, r.current.account.id(), turn.model, turn.effort, turn.serviceTier, turn.metadata, turn.counted)
 		logSwitch := r.current.acceptSwitch()
 		if persisted {
-			r.current.commitClaim()
+			keys := routeClaimKeys(r.route)
+			if r.current.claim != nil {
+				r.current.commitClaim(keys)
+			} else {
+				r.server.routeClaims.clearBarriers(keys)
+			}
 		}
 		if logSwitch {
 			r.server.log.Info("websocket account switch accepted",

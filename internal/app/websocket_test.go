@@ -268,14 +268,22 @@ func TestWebSocketResponseCreatedCommitsTheProvisionalClaim(t *testing.T) {
 	}
 }
 
-func TestWebSocketAccountInvalidationClosesLiveSocketAndDropsItsClaim(t *testing.T) {
-	upstream := newWebSocketUpstream(t, func(_ string, _ *websocket.Conn, _ websocketEnvelope) {})
+func TestWebSocketAccountInvalidationPreservesAMoveBarrierUntilReplacementAcceptance(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
 	defer upstream.Close()
 	account := testAccount("account-a", 10)
-	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{account})
-	conn, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "thread"))
+	replacement := testAccount("account-b", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{account, replacement})
+	headers := codexWebSocketHeaders("session", "thread")
+	conn, _ := dialWebSocket(t, proxy.URL, headers)
 	waitForWebSocketCounts(t, server, map[string]int64{account.id(): 1})
 
+	account.mu.Lock()
+	account.Paused = true
+	account.mu.Unlock()
 	server.invalidateAccount(account.id(), routingReasonOwnerSignedOut)
 	readCloseStatus(t, conn, websocket.StatusServiceRestart)
 	waitForWebSocketCounts(t, server, map[string]int64{account.id(): 0})
@@ -284,6 +292,36 @@ func TestWebSocketAccountInvalidationClosesLiveSocketAndDropsItsClaim(t *testing
 	server.routeClaims.mu.Unlock()
 	if claims != 0 {
 		t.Fatalf("claims after invalidation = %d, want 0", claims)
+	}
+	owners, err := server.pool.store.routeOwners("thread", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(owners) != "[account-a]" {
+		t.Fatalf("owners after invalidation = %v, want the account-a move barrier", owners)
+	}
+
+	bound, _ := dialWebSocket(t, proxy.URL, headers)
+	writeWebSocketEvent(t, bound, map[string]any{
+		"type":            "response.create",
+		"client_metadata": map[string]string{codexTurnStateKey: "account-a-state"},
+		"input":           []any{},
+	})
+	readCloseStatus(t, bound, websocket.StatusTryAgainLater)
+	bound.CloseNow()
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[]" {
+		t.Fatalf("request accounts after account-bound reconnect = %s, want no cross-account request", got)
+	}
+
+	portable, _ := dialWebSocket(t, proxy.URL, headers)
+	defer portable.CloseNow()
+	completeWebSocketTurn(t, portable, map[string]any{"type": "response.create", "input": []any{}})
+	owners, err = server.pool.store.routeOwners("thread", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(owners) != "[account-b]" {
+		t.Fatalf("owners after replacement acceptance = %v, want account-b", owners)
 	}
 }
 
@@ -690,6 +728,9 @@ func TestWebSocketExhaustedOwnerMovesTheNextFullReplayAndRebinds(t *testing.T) {
 	first.CloseNow()
 	exhausted, _ := dialWebSocket(t, proxy.URL, headers)
 	writeWebSocketEvent(t, exhausted, map[string]any{"type": "response.create", "input": []any{}})
+	if event := readWebSocketEvent(t, exhausted); event.Type != "error" || !websocketErrorIs(event, "usage_limit_reached") {
+		t.Fatalf("usage-limit event = %+v", event)
+	}
 	readCloseStatus(t, exhausted, websocket.StatusServiceRestart)
 	exhausted.CloseNow()
 
@@ -703,6 +744,35 @@ func TestWebSocketExhaustedOwnerMovesTheNextFullReplayAndRebinds(t *testing.T) {
 	completeWebSocketTurn(t, reconnected, map[string]any{"type": "response.create", "input": []any{}})
 	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-owner account-fresh account-fresh]" {
 		t.Fatalf("request accounts = %s, want exhaustion to move only a full replay and acceptance to rebind away from the old owner", got)
+	}
+}
+
+func TestWebSocketKnownSpentAccountRestartsBeforeSendingANewTurn(t *testing.T) {
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	conn, _ := dialWebSocket(t, proxy.URL, headers)
+	completeWebSocketTurn(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	owner.markSpent()
+	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	readCloseStatus(t, conn, websocket.StatusServiceRestart)
+	conn.CloseNow()
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner]" {
+		t.Fatalf("request accounts before reconnect = %s, want no doomed second request", got)
+	}
+
+	reconnected, _ := dialWebSocket(t, proxy.URL, headers)
+	defer reconnected.CloseNow()
+	completeWebSocketTurn(t, reconnected, map[string]any{"type": "response.create", "input": []any{}})
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-fresh]" {
+		t.Fatalf("request accounts after reconnect = %s, want the fresh account", got)
 	}
 }
 
@@ -894,17 +964,17 @@ func TestWebSocketUsageDoesNotMovePinnedSockets(t *testing.T) {
 	}
 }
 
-func TestWebSocketRejectionClosesWithoutReplayAndReconnects(t *testing.T) {
+func TestWebSocketRateLimitPassesThroughBeforeReconnect(t *testing.T) {
 	requests := 0
+	const rateLimitEvent = `{"type":"error","status":429,"headers":{"retry-after":"30"},"error":{"type":"invalid_request_error","code":"rate_limit_exceeded"},"upstream_only":{"kept":true}}`
 	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		requests++
 		if requests == 1 {
-			writeWebSocketEvent(t, conn, map[string]any{
-				"type":    "error",
-				"status":  http.StatusTooManyRequests,
-				"headers": map[string]any{"retry-after": "30"},
-				"error":   map[string]any{"type": "invalid_request_error", "code": "rate_limit_exceeded"},
-			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := conn.Write(ctx, websocket.MessageText, []byte(rateLimitEvent)); err != nil {
+				t.Error(err)
+			}
 			return
 		}
 		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
@@ -914,6 +984,12 @@ func TestWebSocketRejectionClosesWithoutReplayAndReconnects(t *testing.T) {
 	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, testAccount("account-b", 20)})
 	conn, _ := dialWebSocket(t, proxy.URL, nil)
 	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	kind, data, err := conn.Read(ctx)
+	cancel()
+	if err != nil || kind != websocket.MessageText || string(data) != rateLimitEvent {
+		t.Fatalf("rate-limit frame = %q/%q, error = %v, want the original upstream frame", kind, data, err)
+	}
 	readCloseStatus(t, conn, websocket.StatusServiceRestart)
 	conn.CloseNow()
 
@@ -957,7 +1033,9 @@ func TestWebSocketConnectionLimitReconnectsSameAccountWithoutCooldown(t *testing
 	conn, _ := dialWebSocket(t, proxy.URL, headers)
 	completeWebSocketTurn(t, conn, map[string]any{"type": "response.create", "input": []any{}})
 	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
-	readCloseStatus(t, conn, websocket.StatusServiceRestart)
+	if event := readWebSocketEvent(t, conn); event.Type != "error" || !websocketErrorIs(event, "websocket_connection_limit_reached") {
+		t.Fatalf("connection-limit event = %+v", event)
+	}
 	conn.CloseNow()
 	if _, _, cooldown, _ := account.health(); !cooldown.IsZero() {
 		t.Fatalf("cooldown = %s, want zero", cooldown)
@@ -971,26 +1049,33 @@ func TestWebSocketConnectionLimitReconnectsSameAccountWithoutCooldown(t *testing
 	}
 }
 
-func TestWebSocketCredentialAndUsageRejectionsRestart(t *testing.T) {
+func TestWebSocketCredentialAndUsageRejectionsPassThroughBeforeRestart(t *testing.T) {
 	tests := []struct {
 		name    string
 		event   map[string]any
+		code    string
 		limited int64
 		spent   bool
 	}{
 		{
 			name:  "credential",
 			event: map[string]any{"type": "error", "status": http.StatusUnauthorized, "error": map[string]any{"code": "unauthorized"}},
+			code:  "unauthorized",
 		},
 		{
 			name:    "usage",
 			event:   map[string]any{"type": "error", "error": map[string]any{"code": "usage_limit_reached"}},
+			code:    "usage_limit_reached",
 			limited: 1,
 			spent:   true,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			refreshCalls := func() int { return 0 }
+			if test.name == "credential" {
+				refreshCalls = useOAuthRefreshServer(t)
+			}
 			upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 				writeWebSocketEvent(t, conn, test.event)
 			})
@@ -999,14 +1084,17 @@ func TestWebSocketCredentialAndUsageRejectionsRestart(t *testing.T) {
 			server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{account})
 			conn, _ := dialWebSocket(t, proxy.URL, nil)
 			writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+			if event := readWebSocketEvent(t, conn); event.Type != "error" || !websocketErrorIs(event, test.code) {
+				t.Fatalf("rejection event = %+v", event)
+			}
 			readCloseStatus(t, conn, websocket.StatusServiceRestart)
 			conn.CloseNow()
 			candidate := account.routingCandidate()
 			if candidate.spent != test.spent || server.stats.snapshot().Limited != test.limited {
 				t.Fatalf("candidate = %+v, limited = %d", candidate, server.stats.snapshot().Limited)
 			}
-			if test.name == "credential" && candidate.cooldown.IsZero() {
-				t.Fatal("credential rejection did not cool account")
+			if test.name == "credential" && (!candidate.cooldown.IsZero() || refreshCalls() != 1) {
+				t.Fatalf("credential cooldown/refresh calls = %s/%d, want zero/1", candidate.cooldown, refreshCalls())
 			}
 			if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-a]" {
 				t.Fatalf("request accounts = %s", got)
@@ -1067,7 +1155,7 @@ func TestWebSocketHandshakeServerFailurePassesThroughWithoutFailover(t *testing.
 	if response == nil || response.StatusCode != http.StatusBadGateway {
 		t.Fatalf("response = %+v", response)
 	}
-	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-a account-a account-a]" {
+	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a]" {
 		t.Fatalf("connection accounts = %s", got)
 	}
 	_, _, cooldown, _ := a.health()

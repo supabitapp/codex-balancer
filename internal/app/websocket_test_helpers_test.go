@@ -90,14 +90,13 @@ func newTestServer(t *testing.T, accounts []*Account) *server {
 	}
 	t.Cleanup(func() { state.Close() })
 	return &server{
-		ctx:          context.Background(),
-		pool:         pool,
-		catalog:      newModelCatalog(),
-		stats:        stats,
-		upstream:     "http://127.0.0.1:1",
-		client:       newProxyClient(),
-		log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
-		retryBackoff: func(int) time.Duration { return 0 },
+		ctx:      context.Background(),
+		pool:     pool,
+		catalog:  newModelCatalog(),
+		stats:    stats,
+		upstream: "http://127.0.0.1:1",
+		client:   newProxyClient(),
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestRouteClaimsKeepConcurrentConnectionsOnTheFirstAccount(t *testing.T) {
 	a := testAccount("account-a", 10)
@@ -127,7 +130,8 @@ func TestRouteClaimsBlockACompetingAccountWhileClaimedAccountIsUnavailable(t *te
 
 func TestRouteClaimCommitAndInvalidationRemoveEveryLinkedKey(t *testing.T) {
 	a := testAccount("account-a", 10)
-	pool := &Pool{accounts: []*Account{a}}
+	b := testAccount("account-b", 20)
+	pool := &Pool{accounts: []*Account{a, b}}
 	pick := func(owners []string) routingDecision { return pool.route(owners, nil) }
 
 	t.Run("commit", func(t *testing.T) {
@@ -137,7 +141,7 @@ func TestRouteClaimCommitAndInvalidationRemoveEveryLinkedKey(t *testing.T) {
 		if !first.claim.acceptSwitch() || joined.claim.acceptSwitch() {
 			t.Fatal("joined claim did not deduplicate its accepted switch signal")
 		}
-		joined.claim.commit()
+		joined.claim.commit(routeClaimKeys(websocketRoute{session: "session", thread: "child"}))
 		if first.claim.active() || joined.claim.active() {
 			t.Fatal("claim remained active after response.created committed a joined connection")
 		}
@@ -149,14 +153,26 @@ func TestRouteClaimCommitAndInvalidationRemoveEveryLinkedKey(t *testing.T) {
 
 	t.Run("account invalidation", func(t *testing.T) {
 		registry := routeClaimRegistry{}
-		claim := registry.selectAccount(websocketRoute{session: "session", thread: "thread"}, durableRouteOwners{}, pick)
-		if removed := registry.invalidateAccount(a.id()); removed != 1 {
-			t.Fatalf("removed claims = %d, want 1", removed)
+		route := websocketRoute{session: "session", thread: "thread"}
+		claim := registry.selectAccount(route, durableRouteOwners{}, pick)
+		invalidated := registry.invalidateAccount(a.id())
+		if invalidated.claims != 1 || fmt.Sprint(invalidated.keys) != "[session thread]" {
+			t.Fatalf("invalidation = %+v, want one claim and both route keys", invalidated)
 		}
 		if claim.claim.active() {
 			t.Fatal("claim remained active after account invalidation")
 		}
+		a.Paused = true
+		replacement := registry.selectAccount(route, durableRouteOwners{}, pick)
+		if replacement.account != b || replacement.priorOwner != a.id() || !replacement.moved() || replacement.claim == nil {
+			t.Fatalf("replacement = %+v, want account-b behind the account-a move barrier", replacement)
+		}
+		replacement.claim.commit(routeClaimKeys(route))
+		if len(registry.barriers) != 0 {
+			t.Fatalf("barriers after accepted replacement = %v, want empty", registry.barriers)
+		}
 		claim.claim.release()
+		a.Paused = false
 	})
 }
 

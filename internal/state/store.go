@@ -14,7 +14,7 @@ import (
 
 const (
 	ApplicationID = 0x43425853
-	schemaVersion = 2
+	schemaVersion = 3
 )
 
 const currentSchema = `CREATE TABLE accounts (
@@ -36,7 +36,7 @@ CREATE TABLE api_keys (
 ) STRICT;
 CREATE TABLE routes (
 	key TEXT PRIMARY KEY CHECK (length(key) > 0),
-	account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+	account_id TEXT NOT NULL,
 	updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns > 0)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX routes_account ON routes (account_id);
@@ -201,7 +201,13 @@ func (s *Store) initialize() error {
 		return fmt.Errorf("%s is not a codex-balancer state database", s.path)
 	}
 	if version == 1 {
-		return s.migrateUsageAccounts()
+		if err := s.migrateUsageAccounts(); err != nil {
+			return err
+		}
+		version = 2
+	}
+	if version == 2 {
+		return s.migrateRoutesToOwnerTombstones()
 	}
 	if version != schemaVersion {
 		return fmt.Errorf("state schema %d is unsupported; expected %d", version, schemaVersion)
@@ -218,8 +224,33 @@ func (s *Store) migrateUsageAccounts() error {
 		tx.Rollback()
 		return err
 	}
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := tx.Exec("PRAGMA user_version = 2"); err != nil {
 		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) migrateRoutesToOwnerTombstones() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`CREATE TABLE routes_v2 (
+		key TEXT PRIMARY KEY CHECK (length(key) > 0),
+		account_id TEXT NOT NULL,
+		updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns > 0)
+	) STRICT, WITHOUT ROWID;
+	INSERT INTO routes_v2 (key, account_id, updated_at_ns)
+		SELECT key, account_id, updated_at_ns FROM routes;
+	DROP INDEX routes_account;
+	DROP TABLE routes;
+	ALTER TABLE routes_v2 RENAME TO routes;
+	CREATE INDEX routes_account ON routes (account_id);`); err != nil {
+		return fmt.Errorf("migrate routes to owner tombstones: %w", err)
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -377,16 +408,40 @@ func (s *Store) RecordRoute(route Route) error {
 		if changed == 0 {
 			return fmt.Errorf("route account %q does not exist", route.Account)
 		}
-		for _, key := range routeKeys(route.Thread, route.Session) {
-			if _, err := conn.ExecContext(context.Background(), `INSERT INTO routes (key, account_id, updated_at_ns)
-				VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET account_id = excluded.account_id,
-				updated_at_ns = excluded.updated_at_ns WHERE excluded.updated_at_ns >= routes.updated_at_ns`,
-				key, route.Account, encodeTime(route.At)); err != nil {
-				return err
-			}
-		}
-		return nil
+		return upsertRouteOwners(conn, route.At, route.Account, routeKeys(route.Thread, route.Session))
 	})
+}
+
+// PreserveRouteOwners records the account boundary for routes whose
+// provisional owner disappeared before upstream accepted the request. Unlike
+// RecordRoute, this intentionally permits an account tombstone.
+func (s *Store) PreserveRouteOwners(at time.Time, account string, keys []string) error {
+	if at.IsZero() || account == "" {
+		return errors.New("route owner has no time or account")
+	}
+	return s.immediate(func(conn *sql.Conn) error {
+		return upsertRouteOwners(conn, at, account, keys)
+	})
+}
+
+func upsertRouteOwners(exec sqlExecer, at time.Time, account string, keys []string) error {
+	seen := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			return errors.New("route owner has an empty key")
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if _, err := exec.ExecContext(context.Background(), `INSERT INTO routes (key, account_id, updated_at_ns)
+			VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET account_id = excluded.account_id,
+			updated_at_ns = excluded.updated_at_ns WHERE excluded.updated_at_ns >= routes.updated_at_ns`,
+			key, account, encodeTime(at)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) RouteOwners(thread, session string) ([]string, error) {

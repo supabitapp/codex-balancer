@@ -5,14 +5,15 @@ import (
 	"sync"
 )
 
-// routeClaimRegistry pins unaccepted WebSocket routes to one account. Claims are
-// process-local on purpose: they coordinate concurrent connections while this
-// server is alive, while accepted ownership remains durable in SQLite.
+// routeClaimRegistry pins unaccepted WebSocket routes to one account. Live
+// claims are process-local; invalidation barriers are mirrored to SQLite until
+// a replacement route is accepted.
 type routeClaimRegistry struct {
-	mu    sync.Mutex
-	next  uint64
-	byKey map[string]*routeClaim
-	byID  map[uint64]*routeClaim
+	mu       sync.Mutex
+	next     uint64
+	byKey    map[string]*routeClaim
+	byID     map[uint64]*routeClaim
+	barriers map[string]string
 }
 
 type routeClaim struct {
@@ -36,6 +37,11 @@ type claimedRoutingDecision struct {
 	routingDecision
 	claim  *routeClaimHandle
 	joined bool
+}
+
+type routeClaimInvalidation struct {
+	claims int
+	keys   []string
 }
 
 type durableRouteOwners struct {
@@ -70,19 +76,25 @@ func (r *routeClaimRegistry) selectAccount(
 
 	claims := r.claimsForKeys(keys)
 	owners := make([]string, 0, len(claims)+2)
-	// An exact in-flight thread claim is strongest. A durable thread owner then
-	// wins over a sibling's session claim; that session claim in turn wins over
-	// a stale durable session owner that was unavailable when work started.
+	// An exact in-flight thread claim is strongest, followed by an invalidated
+	// claim's move barrier. A durable thread owner then wins over a sibling's
+	// session claim; that session claim in turn wins over a stale durable
+	// session owner that was unavailable when work started.
 	if route.thread != "" {
 		owners = appendClaimOwner(owners, r.byKey[route.thread])
+		owners = appendUniqueOwner(owners, r.barriers[route.thread])
 	}
 	owners = appendUniqueOwner(owners, durable.thread)
 	if route.session != "" {
 		owners = appendClaimOwner(owners, r.byKey[route.session])
+		owners = appendUniqueOwner(owners, r.barriers[route.session])
 	}
 	owners = appendUniqueOwner(owners, durable.session)
 	for _, claim := range claims {
 		owners = appendClaimOwner(owners, claim)
+	}
+	for _, key := range keys {
+		owners = appendUniqueOwner(owners, r.barriers[key])
 	}
 	decision := pick(owners)
 	if decision.account == nil {
@@ -164,6 +176,9 @@ func (r *routeClaimRegistry) ensureMaps() {
 	if r.byID == nil {
 		r.byID = map[uint64]*routeClaim{}
 	}
+	if r.barriers == nil {
+		r.barriers = map[string]string{}
+	}
 }
 
 func (r *routeClaimRegistry) claimsForKeys(keys []string) []*routeClaim {
@@ -207,11 +222,11 @@ func (h *routeClaimHandle) release() {
 	h.once.Do(func() { h.registry.release(h.id) })
 }
 
-func (h *routeClaimHandle) commit() {
+func (h *routeClaimHandle) commit(keys []string) {
 	if h == nil || h.registry == nil {
 		return
 	}
-	h.once.Do(func() { h.registry.remove(h.id) })
+	h.once.Do(func() { h.registry.commit(h.id, keys) })
 }
 
 func (h *routeClaimHandle) active() bool {
@@ -259,21 +274,50 @@ func (r *routeClaimRegistry) remove(id uint64) {
 	}
 }
 
-func (r *routeClaimRegistry) invalidateAccount(account string) int {
+func (r *routeClaimRegistry) commit(id uint64, acceptedKeys []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	removed := 0
+	for _, key := range acceptedKeys {
+		delete(r.barriers, key)
+	}
+	if claim := r.byID[id]; claim != nil {
+		r.removeLocked(claim)
+	}
+}
+
+func (r *routeClaimRegistry) clearBarriers(keys []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, key := range keys {
+		delete(r.barriers, key)
+	}
+}
+
+func (r *routeClaimRegistry) invalidateAccount(account string) routeClaimInvalidation {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ensureMaps()
+	result := routeClaimInvalidation{}
+	seenKeys := map[string]bool{}
 	claims := make([]*routeClaim, 0, len(r.byID))
 	for _, claim := range r.byID {
 		claims = append(claims, claim)
 	}
 	for _, claim := range claims {
 		if claim.account == account {
+			for _, key := range claim.keys {
+				r.barriers[key] = account
+				if !seenKeys[key] {
+					seenKeys[key] = true
+					result.keys = append(result.keys, key)
+				}
+			}
 			r.removeLocked(claim)
-			removed++
+			result.claims++
 		}
 	}
-	return removed
+	slices.Sort(result.keys)
+	return result
 }
 
 func (s *server) claimAccount(

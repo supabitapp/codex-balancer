@@ -14,6 +14,9 @@ Codex CLI sets the lifecycle that the balancer matches:
   `previous_response_id` state and sends full input. Codex replays the request.
   The balancer closes the socket and waits for the client.
 
+Inference uses only `GET /v1/responses` as a WebSocket endpoint. The balancer
+does not expose an HTTP Responses fallback or a second account-specific route.
+
 ## Fresh placement
 
 For a session tree with neither an accepted route nor a provisional claim, the
@@ -60,7 +63,12 @@ the claim, then dials upstream:
 - On `response.created`, the server writes the route to SQLite. The server
   removes the claim after SQLite accepts the write and keeps it after an error
   until its connections close.
-- Server restart drops claims from memory. SQLite retains accepted routes.
+- Account invalidation converts unaccepted claims into owner barriers before it
+  closes their sockets. The barriers are also written to SQLite, so reconnects
+  cannot lose the account boundary during invalidation or restart. Acceptance
+  by a replacement clears the corresponding barriers.
+- Server restart drops claims from memory. SQLite retains accepted routes and
+  invalidation tombstones.
 - Anonymous sockets create no claims.
 
 ## Accepted route retention
@@ -68,10 +76,12 @@ the claim, then dials upstream:
 The router uses this affinity precedence:
 
 1. In-flight claim for the same thread
-2. Accepted thread owner
-3. In-flight claim for the same session
-4. Accepted session owner
-5. Fresh placement
+2. Invalidated provisional owner for the same thread
+3. Accepted thread owner
+4. In-flight claim for the same session
+5. Invalidated provisional owner for the same session
+6. Accepted session owner
+7. Fresh placement
 
 A retained owner in cooldown, or one with unknown quota, blocks weaker entries
 and returns `503`. Codex then retries the route.
@@ -90,6 +100,9 @@ The server records the account from each `response.created` event. A
   turn starts, the relay pins the socket to its account.
 - A later turn that needs another account receives a `1012` close before the
   relay sends it. Codex reconnects and routes the turn again.
+- If quota polling marks the pinned account spent between turns, the relay
+  closes before forwarding the next portable turn. The reconnect can then
+  choose another account without sending a doomed request first.
 - A spent, paused, removed, signed-out, non-routable, or model-incompatible
   owner permits replacement on reconnect.
 - A replacement request must omit `previous_response_id` and
@@ -97,8 +110,8 @@ The server records the account from each `response.created` event. A
   before forwarding it to another account.
 - A replacement account takes ownership after `response.created`. Recovery of
   the old owner's quota leaves the new route in place.
-- SQLite accepted-attempt records determine retained routes. The server stores
-  no separate binding or response-ID map.
+- SQLite accepted-attempt records and provisional invalidation tombstones
+  determine retained routes. The server stores no response-ID map.
 
 `previous_response_id` belongs to the current upstream WebSocket. Codex drops
 it on reconnect and sends full input. `x-codex-turn-state` belongs to one turn
@@ -117,18 +130,19 @@ The following transitions invalidate an account:
 - Permanent sign-out
 - Change to a non-routable managed workspace
 
-The server removes the account's provisional claims and closes its downstream
-sockets with `1012` (`Service Restart`). The close reason carries the routing
-reason.
+The server converts the account's provisional claims into owner barriers and
+closes its downstream sockets with `1012` (`Service Restart`). The close reason
+carries the routing reason.
 
 The live-socket registry follows a socket that changes accounts during
 first-turn model selection. Invalidation of the old account then leaves that
 socket under its replacement account.
 
-The server keeps accepted SQLite routes during invalidation. On reconnect, the
-stored owner supplies the switch reason, and the router requires portable input
-before choosing a replacement. Login under the same account ID can reuse those
-routes. A different account ID receives no ownership transfer.
+The server keeps accepted SQLite routes during invalidation and account
+deletion. Route rows are owner tombstones rather than account children. On
+reconnect, the stored owner supplies the switch reason, and the router requires
+portable input before choosing a replacement. Login under the same account ID
+can reuse those routes. A different account ID receives no ownership transfer.
 
 The account watcher polls file changes. The TUI calls invalidation in the server
 process as part of a pause.
@@ -183,20 +197,23 @@ new connection.
 The error applies to one WebSocket. The server leaves account capacity, rate
 limits, quota, and credentials unchanged.
 
-The balancer closes the downstream socket with `1012`. Codex reconnects to the
-retained account and replays the request.
+The balancer forwards the original typed error event unchanged. Codex owns the
+socket reset, reconnects to the retained account, and replays the request. The
+balancer does not add a second reconnect path.
 
 ## Failure policy
 
-- For network errors and `5xx`, retry the same account for a short period.
-  Preserve its routing and quota state.
-- For `401`, refresh once. A temporary refresh failure returns a retry for an
-  accepted owner. A permanent failure marks the account signed out, invalidates
-  its claims and sockets, and lets a portable reconnect choose another account.
-- For transient `429`, cool down the account and retain its accepted route
-  through the retry.
-- For a usage limit, mark the account spent. The next full replay may choose
-  another eligible account.
+- For a handshake network error or `5xx`, return that attempt without an
+  internal retry loop. Codex owns its reconnect policy.
+- For handshake `401`, refresh the same account once before routing elsewhere.
+  For an event-level `401`, forward the original event, refresh the same account
+  once, then retire the socket. A permanent failure marks the account signed
+  out and preserves its owner boundary for a portable reconnect.
+- For transient `429`, forward the original event, cool down the account, and
+  retire the socket. The balancer does not replay the request.
+- For a usage limit, forward the original terminal event, mark the account
+  spent, and retire the socket. A later fresh user turn may choose another
+  eligible account; account-bound state from the failed turn cannot move.
 - For an account-specific setup failure, try another eligible account if the
   retained owner cannot continue and no provisional claim conflicts.
 - The balancer does not replay in-flight work.

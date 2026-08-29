@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -16,8 +15,6 @@ import (
 const (
 	maxWebSocketMessage  = 64 << 20
 	maxUpstreamErrorBody = 64 << 10
-	maxUpstreamRetries   = 3
-	upstreamRetryBudget  = 5 * time.Second
 	refreshTimeout       = 30 * time.Second
 	upstreamWait         = 90 * time.Second
 )
@@ -41,36 +38,12 @@ type server struct {
 	client           *http.Client
 	log              *slog.Logger
 	admission        *admissionGate
-	retryBackoff     func(int) time.Duration
 	resources        *resourceMonitor
 	countries        countryResolver
 	dashboardStreams atomic.Int64
 	dashboardUpdates dashboardBroadcaster
 	routeClaims      routeClaimRegistry
 	activeWebSockets activeWebSocketRegistry
-}
-
-func upstreamRetryBackoff(retry int) time.Duration {
-	return upstreamRetryBudget * time.Duration(1<<(retry-1)) / time.Duration((1<<maxUpstreamRetries)-1)
-}
-
-func upstreamRetryDelay(retry int) time.Duration {
-	return time.Duration(float64(upstreamRetryBackoff(retry)) * (0.9 + rand.Float64()*0.2))
-}
-
-func (s *server) waitForUpstreamRetry(ctx context.Context, retry int) bool {
-	delay := upstreamRetryDelay(retry)
-	if s.retryBackoff != nil {
-		delay = s.retryBackoff(retry)
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
 }
 
 var webSocketExcludedHeaders = map[string]bool{
@@ -205,15 +178,21 @@ func (s *server) refreshed(account *Account, id string) bool {
 }
 
 func (s *server) invalidateAccount(account string, reason routingReason) {
+	invalidatedAt := time.Now()
 	claims := s.routeClaims.invalidateAccount(account)
 	sockets := s.activeWebSockets.closeAccount(account, string(reason))
-	if claims == 0 && sockets == 0 {
+	if len(claims.keys) > 0 && s.pool != nil && s.pool.store != nil {
+		if err := s.pool.store.preserveRouteOwners(invalidatedAt, account, claims.keys); err != nil {
+			s.log.Warn("provisional route owner preservation failed", "account", account, "routing_reason", reason, "routes", claims.keys, "error", err)
+		}
+	}
+	if claims.claims == 0 && sockets == 0 {
 		return
 	}
 	s.log.Info("account websocket routing invalidated",
 		"account", account,
 		"routing_reason", reason,
-		"provisional_claims", claims,
+		"provisional_claims", claims.claims,
 		"closed_websockets", sockets,
 	)
 }

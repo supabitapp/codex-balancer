@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -144,8 +145,80 @@ func TestStateStorePersistsLatestRoutesAndLastUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(owners) != 0 {
-		t.Fatalf("owners after account removal = %v", owners)
+	if !reflect.DeepEqual(owners, []string{"account-b"}) {
+		t.Fatalf("owners after account removal = %v, want the account-b tombstone", owners)
+	}
+}
+
+func TestStateStoreMigratesRoutesToOwnerTombstones(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySchema := fmt.Sprintf(`PRAGMA application_id = %d;
+		PRAGMA user_version = 2;
+		PRAGMA foreign_keys = ON;
+		CREATE TABLE accounts (account_id TEXT PRIMARY KEY) STRICT;
+		CREATE TABLE routes (
+			key TEXT PRIMARY KEY CHECK (length(key) > 0),
+			account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+			updated_at_ns INTEGER NOT NULL CHECK (updated_at_ns > 0)
+		) STRICT, WITHOUT ROWID;
+		CREATE INDEX routes_account ON routes (account_id);
+		INSERT INTO accounts (account_id) VALUES ('account-a');
+		INSERT INTO routes (key, account_id, updated_at_ns) VALUES ('thread', 'account-a', 1);`, stateApplicationID)
+	if _, err := db.Exec(legacySchema); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := openStateStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var version, foreignKeys int
+	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow("SELECT count(*) FROM pragma_foreign_key_list('routes')").Scan(&foreignKeys); err != nil {
+		t.Fatal(err)
+	}
+	if version != stateSchemaVersion || foreignKeys != 0 {
+		t.Fatalf("migrated version/route foreign keys = %d/%d, want %d/0", version, foreignKeys, stateSchemaVersion)
+	}
+	if _, err := store.db.Exec(`DELETE FROM accounts WHERE account_id = 'account-a'`); err != nil {
+		t.Fatal(err)
+	}
+	owners, err := store.routeOwners("thread", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(owners, []string{"account-a"}) {
+		t.Fatalf("owners after migrated account removal = %v, want account-a", owners)
+	}
+}
+
+func TestStateStorePreservesAProvisionalOwnerWithoutALiveAccount(t *testing.T) {
+	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	at := time.Now()
+	if err := store.preserveRouteOwners(at, "removed-account", []string{"thread", "session", "thread"}); err != nil {
+		t.Fatal(err)
+	}
+	owners, err := store.routeOwners("thread", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(owners, []string{"removed-account"}) {
+		t.Fatalf("owners = %v, want one removed-account tombstone", owners)
 	}
 }
 
