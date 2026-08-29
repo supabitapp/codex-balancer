@@ -397,10 +397,10 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			resetIn = short(account.ResetAt.Sub(now))
 		}
 		routedValue := "--"
-		routedValueInfo := "No routed usage data is available for this reset window yet."
+		routedValueInfo := "No usage routed in this reset window."
 		if account.RoutedCredits != nil && account.RoutedCreditsSince != nil {
 			routedValue = formatCreditValue(*account.RoutedCredits)
-			routedValueInfo = fmt.Sprintf("Estimated at $%.2f per Codex credit from traffic routed through this balancer since %s. Usage elsewhere is not included. OpenAI credit rates checked %s.", usdPerCodexCredit, account.RoutedCreditsSince.In(now.Location()).Format("2 January 2006, 15:04 MST"), creditRatesCheckedAt)
+			routedValueInfo = fmt.Sprintf("Estimated from usage routed here since %s at $%.2f per credit.", account.RoutedCreditsSince.In(now.Location()).Format("2 January 2006, 15:04 MST"), usdPerCodexCredit)
 		}
 		accounts = append(accounts, dashboardAccountView{
 			DOMID:           dashboardDOMID("account", account.ID),

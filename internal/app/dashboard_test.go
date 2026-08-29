@@ -443,11 +443,11 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatalf("accounts = %d, want two", len(view.Accounts))
 	}
 	accountView := view.Accounts[0]
-	wantValueInfo := "Estimated at $0.04 per Codex credit from traffic routed through this balancer since " + resetAt.Add(-7*24*time.Hour).Format("2 January 2006, 15:04 MST") + ". Usage elsewhere is not included. OpenAI credit rates checked 29 August 2026."
+	wantValueInfo := "Estimated from usage routed here since " + resetAt.Add(-7*24*time.Hour).Format("2 January 2006, 15:04 MST") + " at $0.04 per credit."
 	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.RoutedValue != "$49.38" || accountView.RoutedValueInfo != wantValueInfo || accountView.Traffic != "1" {
 		t.Fatalf("account values = %+v", accountView)
 	}
-	if view.Accounts[1].RoutedValue != "--" || view.Accounts[1].RoutedValueInfo != "No routed usage data is available for this reset window yet." {
+	if view.Accounts[1].RoutedValue != "--" || view.Accounts[1].RoutedValueInfo != "No usage routed in this reset window." {
 		t.Fatalf("unknown credit burn = %+v", view.Accounts[1])
 	}
 	if view.Accounts[1].Traffic != "99" {

@@ -9,7 +9,6 @@ import (
 const (
 	nanoCreditsPerCredit = 1_000_000_000
 	routedCreditHistory  = 8 * 24 * time.Hour
-	creditRatesCheckedAt = "29 August 2026"
 	usdPerCodexCredit    = 0.04
 )
 
