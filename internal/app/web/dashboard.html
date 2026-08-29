@@ -87,12 +87,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 {{template "accounts" .}}
 </div>
 </section>
-<section>
-<h2>Business &amp; Enterprise <span id="workspace-summary">{{len .Workspaces}} not routed</span></h2>
-<div id="workspaces" class="scroll">
-{{template "workspaces" .}}
-</div>
-</section>
+{{template "workspace-section" .}}
 <section>
 <h2>Active Threads&nbsp; <span id="routing-count">{{len .Threads}}</span></h2>
 <div id="threads" class="scroll">
@@ -110,8 +105,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 {{define "overview-update"}}<dl id="overview" class="overview" hx-swap-oob="morph">{{template "overview" .}}</dl>{{end}}
 {{define "summary-update"}}<span id="summary" hx-swap-oob="morph">{{template "summary" .}}</span>{{end}}
 {{define "accounts-update"}}<div id="accounts" class="scroll" hx-swap-oob="morph">{{template "accounts" .}}</div>{{end}}
-{{define "workspace-summary-update"}}<span id="workspace-summary" hx-swap-oob="morph">{{len .Workspaces}} not routed</span>{{end}}
-{{define "workspaces-update"}}<div id="workspaces" class="scroll" hx-swap-oob="morph">{{template "workspaces" .}}</div>{{end}}
+{{define "workspace-section-update"}}<section id="workspace-section" hx-swap-oob="morph"{{if not .Workspaces}} hidden{{end}}>{{template "workspace-section-content" .}}</section>{{end}}
 {{define "routing-count-update"}}<span id="routing-count" hx-swap-oob="morph">{{len .Threads}}</span>{{end}}
 {{define "threads-update"}}<div id="threads" class="scroll" hx-swap-oob="morph">{{template "threads" .}}</div>{{end}}
 {{define "events-update"}}<div id="events" class="scroll" hx-swap-oob="morph">{{template "events" .}}</div>{{end}}
@@ -119,6 +113,15 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 {{define "overview"}}{{range .Overview}}<div id="{{.DOMID}}"><dt>{{.Name}}</dt><dd>{{if .Info}}<span id="{{.DOMID}}-tooltip" class="has-tooltip" data-tooltip="{{.Info}}"{{if .InfoStrong}} data-tooltip-strong="{{.InfoStrong}}"{{end}} aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}{{end}}
 
 {{define "summary"}}{{range $index, $item := .Summary}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}{{end}}
+
+{{define "workspace-section"}}<section id="workspace-section"{{if not .Workspaces}} hidden{{end}}>{{template "workspace-section-content" .}}</section>{{end}}
+
+{{define "workspace-section-content"}}
+<h2>Business &amp; Enterprise <span id="workspace-summary">{{len .Workspaces}} not routed</span></h2>
+<div id="workspaces" class="scroll">
+{{template "workspaces" .}}
+</div>
+{{end}}
 
 {{define "accounts"}}
 {{if .Accounts}}<table>

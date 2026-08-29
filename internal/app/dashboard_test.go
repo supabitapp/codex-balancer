@@ -61,8 +61,7 @@ func TestDashboardPageConnectsHTMXSSE(t *testing.T) {
 		`id="dashboard"`,
 		`table { width: max-content; min-width: 100%;`,
 		`.status-mark.status-live { color: var(--green-11) }`,
-		`<h2>Business &amp; Enterprise <span id="workspace-summary">0 not routed</span></h2>`,
-		`id="workspaces"`,
+		`<section id="workspace-section" hidden>`,
 		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
 		`no live threads`,
 	} {
@@ -165,8 +164,7 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 		`id="overview" class="overview" hx-swap-oob="morph"`,
 		`id="summary" hx-swap-oob="morph"`,
 		`id="accounts" class="scroll" hx-swap-oob="morph"`,
-		`id="workspace-summary" hx-swap-oob="morph"`,
-		`id="workspaces" class="scroll" hx-swap-oob="morph"`,
+		`id="workspace-section" hx-swap-oob="morph" hidden`,
 		`id="routing-count" hx-swap-oob="morph"`,
 		`id="threads" class="scroll" hx-swap-oob="morph"`,
 		`id="events" class="scroll" hx-swap-oob="morph"`,
@@ -242,7 +240,7 @@ func TestDashboardChangesOnlyRenderChangedFragments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"overview", "summary", "accounts", "workspace-summary", "workspaces", "routing-count", "threads", "events"} {
+	for _, id := range []string{"overview", "summary", "accounts", "workspace-section", "routing-count", "threads", "events"} {
 		if !strings.Contains(string(initial), `id="`+id+`"`) {
 			t.Fatalf("initial dashboard update missing %q: %s", id, initial)
 		}
@@ -265,20 +263,41 @@ func TestDashboardChangesOnlyRenderChangedFragments(t *testing.T) {
 	if !strings.Contains(body, `id="summary"`) || !strings.Contains(body, `1 live`) {
 		t.Fatalf("changed dashboard missing summary: %s", body)
 	}
-	for _, id := range []string{"overview", "accounts", "workspace-summary", "workspaces", "routing-count", "threads", "events"} {
+	for _, id := range []string{"overview", "accounts", "workspace-section", "routing-count", "threads", "events"} {
 		if strings.Contains(body, `id="`+id+`"`) {
 			t.Fatalf("summary change unnecessarily rendered %q: %s", id, body)
 		}
 	}
 
 	full := string(fullDashboardUpdate(previous))
-	for _, id := range []string{"overview", "summary", "accounts", "workspace-summary", "workspaces", "routing-count", "threads", "events"} {
+	for _, id := range []string{"overview", "summary", "accounts", "workspace-section", "routing-count", "threads", "events"} {
 		if !strings.Contains(full, `id="`+id+`"`) {
 			t.Fatalf("full dashboard update missing %q: %s", id, full)
 		}
 	}
 	if !strings.Contains(full, `1 live`) {
 		t.Fatalf("full dashboard update contains stale summary: %s", full)
+	}
+}
+
+func TestDashboardWorkspaceSectionTracksContent(t *testing.T) {
+	previous := make(map[string][]byte)
+	for _, test := range []struct {
+		workspaces []dashboardWorkspaceView
+		hidden     bool
+	}{
+		{hidden: true},
+		{workspaces: []dashboardWorkspaceView{{Name: "workspace"}}},
+		{hidden: true},
+	} {
+		payload, err := renderDashboardChanges(dashboardView{Workspaces: test.workspaces}, previous)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tag := dashboardOpeningTag(t, string(payload), "workspace-section")
+		if hidden := strings.Contains(tag, " hidden"); hidden != test.hidden {
+			t.Fatalf("workspace section hidden = %t, want %t: %s", hidden, test.hidden, tag)
+		}
 	}
 }
 
@@ -382,7 +401,7 @@ func TestDashboardStreamRootAttributesMatchPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"overview", "summary", "accounts", "workspace-summary", "workspaces", "routing-count", "threads", "events"} {
+	for _, id := range []string{"overview", "summary", "accounts", "workspace-section", "routing-count", "threads", "events"} {
 		pageTag := dashboardOpeningTag(t, string(page), id)
 		streamTag := dashboardOpeningTag(t, string(stream), id)
 		streamTag = strings.Replace(streamTag, ` hx-swap-oob="morph"`, "", 1)
@@ -517,6 +536,7 @@ func TestDashboardSeparatesManagedWorkspacesAndShowsSpendControl(t *testing.T) {
 	}
 	body := string(payload)
 	for _, expected := range []string{
+		`<section id="workspace-section">`,
 		`<h2>Business &amp; Enterprise <span id="workspace-summary">2 not routed</span></h2>`,
 		`<th>Credit limit</th>`,
 		`<th>Remaining</th>`,
