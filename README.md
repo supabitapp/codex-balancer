@@ -2,6 +2,8 @@
 
 <img width="3000" height="1930" alt="screenshot-Codex Balancer" src="https://github.com/user-attachments/assets/199da68d-c73e-4614-8776-349ec60df87b" />
 
+_I wrote this README by hand, no LLM :)_
+
 Balancing usage across several ChatGPT Codex accounts.
 
 - Dead simple, 1 single websocket endpoint
