@@ -1,10 +1,11 @@
 # codex-balancer
 
-<img width="3024" height="1898" alt="CleanShot 2026-08-14 at 12 20 51@2x" src="https://github.com/user-attachments/assets/9df4be94-7c98-406c-9af5-6ad5d97e4ca0" />
+<img width="3000" height="1930" alt="screenshot-Codex Balancer" src="https://github.com/user-attachments/assets/199da68d-c73e-4614-8776-349ec60df87b" />
 
-Spread Codex WebSocket connections across several ChatGPT accounts.
+Balancing usage across several ChatGPT Codex accounts.
 
-Dead simple, one WebSocket-only proxied endpoint, 1 SQLite database.
+- Dead simple, 1 single websocket endpoint
+- 1 single SQLite database
 
 ## Install
 
@@ -12,21 +13,20 @@ Dead simple, one WebSocket-only proxied endpoint, 1 SQLite database.
 go install github.com/supabitapp/codex-balancer@latest
 ```
 
-## Serve
+## Running the proxy
 
-```sh
-export CODEX_BALANCER_API_KEY=$(codex-balancer keys add my-laptop)
-codex-balancer server           # serve the proxy with a TUI
 ```
-
-`keys add` prints the generated key. Save it on the client that will use it.
-Run the command with another name to provision another client.
+codex-balancer server           # serve the proxy with a TUI at 
+```
 
 The server runs at http://127.0.0.1:8317
 
+- `/v1/responses` - the websocket only proxy route
 - `/dashboard` — HTML dashboard
 - `/stats` — JSON stats of the server
 - `/accounts` — add an account. On a real server, send this to your friends so they join the pool without exposing credentials.
+
+The TUI also allows you to put a `pause` or `priority` on some accounts.
 
 ## CLI
 
@@ -50,12 +50,6 @@ each key.
 
 State lives in `~/.codex-balancer/state.db`.
 
-SQLite stores account credentials and settings, client API keys with cumulative
-token usage derived from retained response facts, and the latest route owner for
-active conversations. Limits, reset credits, credit burn, model lists, prices,
-dashboard events, and other computed state stay in memory and are fetched or
-rebuilt after restart.
-
 ## Point Codex at it
 
 On each machine that runs Codex, export a key from the server before starting
@@ -65,9 +59,9 @@ Codex:
 export CODEX_BALANCER_API_KEY="<server-key>"
 ```
 
-For Fish, use `set -x CODEX_BALANCER_API_KEY "<server-key>"`. To persist it, add the appropriate command to a private startup file that your shell sources.
+add that to your `~/.zshrc` or whatever env loading mechanism or shell you use.
 
-In `~/.codex/config.toml`:
+Then in `~/.codex/config.toml`:
 
 ```toml
 model_provider = "balancer"
@@ -80,7 +74,5 @@ requires_openai_auth = true
 supports_websockets = true
 ```
 
-Codex reads the bearer token from the environment that launches it. Do not also configure `[model_providers.balancer.auth]`; command-backed auth and `env_key` are mutually exclusive.
-
 ## Routing
-Routing logic is in ROUTING.md, keep that up to date and simple, human readable
+Routing logic is in ROUTING.md.
