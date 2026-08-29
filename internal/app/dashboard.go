@@ -20,7 +20,6 @@ const (
 	dashboardEventName       = "dashboard"
 	dashboardSubscriberQueue = 2
 	dashboardContextBaseline = 12_000
-	creditValueUSD           = 0.04
 	waterCSSURL              = "https://cdn.jsdelivr.net/npm/water.css@2/out/water.css"
 )
 
@@ -65,20 +64,20 @@ type dashboardCount struct {
 }
 
 type dashboardAccountView struct {
-	DOMID          string
-	Name           string
-	Plan           string
-	Status         accountStatus
-	StatusInfo     string
-	Weekly         string
-	Banked         string
-	BankedInfo     string
-	ResetIn        string
-	ValueBurn      string
-	ValueBurnInfo  string
-	OpenWebSockets string
-	Traffic        string
-	Activity       string
+	DOMID             string
+	Name              string
+	Plan              string
+	Status            accountStatus
+	StatusInfo        string
+	Weekly            string
+	Banked            string
+	BankedInfo        string
+	ResetIn           string
+	RoutedCredits     string
+	RoutedCreditsInfo string
+	OpenWebSockets    string
+	Traffic           string
+	Activity          string
 }
 
 type dashboardWorkspaceView struct {
@@ -397,27 +396,27 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		if account.ResetAt != nil {
 			resetIn = short(account.ResetAt.Sub(now))
 		}
-		valueBurn := "--"
-		valueBurnInfo := ""
-		if account.CreditBurn != nil && account.CreditBurnSince != nil {
-			valueBurn = formatCreditValue(*account.CreditBurn)
-			valueBurnInfo = "Calculated at $0.04 per credit since reset at " + account.CreditBurnSince.In(now.Location()).Format("2 January 2006, 15:04 MST") + ". Daily analytics includes the full reset day."
+		routedCredits := "--"
+		routedCreditsInfo := "No routed credit data is available for this reset window yet."
+		if account.RoutedCredits != nil && account.RoutedCreditsSince != nil {
+			routedCredits = formatDecimal(*account.RoutedCredits)
+			routedCreditsInfo = "Calculated from traffic routed through this balancer since " + account.RoutedCreditsSince.In(now.Location()).Format("2 January 2006, 15:04 MST") + ". Usage elsewhere is not included. OpenAI credit rates checked " + creditRatesCheckedAt + "."
 		}
 		accounts = append(accounts, dashboardAccountView{
-			DOMID:          dashboardDOMID("account", account.ID),
-			Name:           name,
-			Plan:           account.Plan,
-			Status:         account.Status,
-			StatusInfo:     dashboardAccountStatusInfo(now, account),
-			Weekly:         weekly,
-			Banked:         banked,
-			BankedInfo:     bankedInfo,
-			ResetIn:        resetIn,
-			ValueBurn:      valueBurn,
-			ValueBurnInfo:  valueBurnInfo,
-			OpenWebSockets: dashboardNumber(account.OpenWebSockets),
-			Traffic:        dashboardNumber(traffic[i]),
-			Activity:       sparkline(account.Activity),
+			DOMID:             dashboardDOMID("account", account.ID),
+			Name:              name,
+			Plan:              account.Plan,
+			Status:            account.Status,
+			StatusInfo:        dashboardAccountStatusInfo(now, account),
+			Weekly:            weekly,
+			Banked:            banked,
+			BankedInfo:        bankedInfo,
+			ResetIn:           resetIn,
+			RoutedCredits:     routedCredits,
+			RoutedCreditsInfo: routedCreditsInfo,
+			OpenWebSockets:    dashboardNumber(account.OpenWebSockets),
+			Traffic:           dashboardNumber(traffic[i]),
+			Activity:          sparkline(account.Activity),
 		})
 	}
 
@@ -525,10 +524,6 @@ func dashboardSpendAmount(value string) string {
 		return value
 	}
 	return formatDecimal(parsed)
-}
-
-func formatCreditValue(credits float64) string {
-	return fmt.Sprintf("$%.2f", credits*creditValueUSD)
 }
 
 func trafficPercentages(accounts []accountStatsResponse) []int64 {

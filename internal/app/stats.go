@@ -52,10 +52,11 @@ type Stats struct {
 }
 
 type accountStats struct {
-	turns    int64
-	limited  rollingCounter
-	wsOpen   int64
-	activity rollingCounter
+	turns         int64
+	limited       rollingCounter
+	wsOpen        int64
+	activity      rollingCounter
+	routedCredits []routedCreditPoint
 }
 
 type rollingCounter struct {
@@ -120,13 +121,17 @@ func newPersistentStats(store *StateStore, prices priceSnapshot, persistFailed f
 	stats := newStatsWithPrices(prices)
 	stats.store = store
 	stats.persistFailed = persistFailed
-	monthStart := calendarMonthStart(time.Now())
-	events, err := store.usageEventsSince(monthStart)
+	start := calendarMonthStart(stats.started)
+	creditStart := stats.started.Add(-routedCreditHistory)
+	if creditStart.Before(start) {
+		start = creditStart
+	}
+	events, err := store.usageEventsSince(start)
 	if err != nil {
 		return nil, err
 	}
 	for _, event := range events {
-		stats.applyUsageAt(event.At, "", "", event.Model, "", event.ServiceTier, event.Usage)
+		stats.applyUsageAt(event.At, "", event.Account, event.Model, "", event.ServiceTier, event.Usage)
 	}
 	return stats, nil
 }
@@ -323,7 +328,7 @@ func (s *Stats) recordAPIKeyUsage(apiKeyName, thread, account, model, effort, se
 	s.pricingMu.Lock()
 	defer s.pricingMu.Unlock()
 	now := time.Now()
-	s.persistUsage(storedUsage{At: now, APIKeyName: apiKeyName, Model: model, ServiceTier: serviceTier, Usage: usage})
+	s.persistUsage(storedUsage{At: now, APIKeyName: apiKeyName, Account: account, Model: model, ServiceTier: serviceTier, Usage: usage})
 	s.applyUsageAt(now, thread, account, model, effort, serviceTier, usage)
 }
 
@@ -331,6 +336,10 @@ func (s *Stats) applyUsageAt(at time.Time, thread, account, model, effort, servi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cost, known := s.prices.estimate(model, serviceTier, usage)
+	if account != "" {
+		credits, creditKnown := estimateCodexCredits(model, serviceTier, usage)
+		s.account(account).addRoutedCredits(at, credits, creditKnown)
+	}
 	if current := s.threads[thread]; current != nil && current.account == account && !at.Before(current.segmentStartedAt) {
 		current.model = model
 		if model != "" {
@@ -367,6 +376,16 @@ func (s *Stats) applyUsageAt(at time.Time, thread, account, model, effort, servi
 	s.apiCostNanoDollars += cost
 	modelCost.apiCostNanoDollars += cost
 	s.monthlyModelCosts[model] = modelCost
+}
+
+func (s *Stats) routedCreditsSince(account string, start time.Time) (float64, time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stats := s.accounts[account]
+	if stats == nil {
+		return 0, time.Time{}, false
+	}
+	return stats.routedCreditsSince(start)
 }
 
 func (s *Stats) reprice(prices priceSnapshot) error {
@@ -664,8 +683,8 @@ type accountStatsResponse struct {
 	BankedResets           *int64                        `json:"banked_resets"`
 	ResetCredits           []resetCreditStatsResponse    `json:"reset_credits,omitempty"`
 	ResetAt                *time.Time                    `json:"reset_at"`
-	CreditBurn             *float64                      `json:"credit_burn,omitempty"`
-	CreditBurnSince        *time.Time                    `json:"credit_burn_since,omitempty"`
+	RoutedCredits          *float64                      `json:"routed_credits,omitempty"`
+	RoutedCreditsSince     *time.Time                    `json:"routed_credits_since,omitempty"`
 	SpendControl           *spendControlStatsResponse    `json:"spend_control,omitempty"`
 	Turns                  int64                         `json:"turns"`
 	OpenWebSockets         int64                         `json:"open_websockets"`
@@ -740,11 +759,13 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		if reset := weekly.resetsAt; reset.After(now) {
 			resetAt = &reset
 		}
-		var creditBurn *float64
-		var creditBurnSince *time.Time
-		if burn, since, known := account.creditBurnSinceReset(now); known {
-			creditBurn = &burn
-			creditBurnSince = &since
+		var routedCredits *float64
+		var routedCreditsSince *time.Time
+		if start, known := creditCycleStart(now, primary, secondary); known {
+			if credits, since, known := s.stats.routedCreditsSince(claims.Auth.AccountID, start); known {
+				routedCredits = &credits
+				routedCreditsSince = &since
+			}
 		}
 		var routingPriority *routingPriorityStatsResponse
 		status := candidate.status(now)
@@ -766,8 +787,8 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			BankedResets:           bankedResets,
 			ResetCredits:           resetCredits,
 			ResetAt:                resetAt,
-			CreditBurn:             creditBurn,
-			CreditBurnSince:        creditBurnSince,
+			RoutedCredits:          routedCredits,
+			RoutedCreditsSince:     routedCreditsSince,
 			SpendControl:           spendControl,
 			Turns:                  traffic.Turns,
 			OpenWebSockets:         traffic.WSOpen,

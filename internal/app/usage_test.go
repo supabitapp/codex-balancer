@@ -223,50 +223,6 @@ func TestExpiringResetCreditChoosesEarliestEligibleCredit(t *testing.T) {
 	}
 }
 
-func TestCreditBurnPollSumsCurrentCycle(t *testing.T) {
-	now := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.FixedZone("BST", 60*60))
-	resetAt := time.Date(2026, time.August, 22, 12, 0, 0, 0, now.Location())
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/analytics/daily-workspace-usage-counts" {
-			http.NotFound(w, r)
-			return
-		}
-		if got := r.URL.Query(); got.Get("start_date") != "2026-08-15" || got.Get("end_date") != "2026-08-20" || got.Get("group_by") != "day" || got.Get("workspace_user") != "true" {
-			t.Errorf("query = %v", got)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer token-account-a" {
-			t.Errorf("authorization = %q", got)
-		}
-		if got := r.Header.Get("chatgpt-account-id"); got != "account-a" {
-			t.Errorf("account = %q", got)
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]any{
-				{"totals": map[string]any{"credits": 1_234.5}},
-				{"totals": map[string]any{"credits": 67.89}},
-			},
-		})
-	}))
-	defer upstream.Close()
-
-	oldBaseURL := accountAPIBaseURL
-	accountAPIBaseURL = upstream.URL
-	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
-	account := testAccount("account-a", 0)
-	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: resetAt, seenAt: now}
-	server := &server{client: upstream.Client()}
-	if err := server.pollCreditBurn(context.Background(), account, now); err != nil {
-		t.Fatal(err)
-	}
-	got, since, known := account.creditBurnSinceReset(now)
-	if !known || got != 1_302.39 || !since.Equal(resetAt.Add(-7*24*time.Hour)) {
-		t.Fatalf("credit burn = %v since %v, %v", got, since, known)
-	}
-	if got, since, known := account.creditBurnSinceReset(resetAt.Add(time.Second)); known {
-		t.Fatalf("next cycle credit burn = %v since %v, true, want unknown", got, since)
-	}
-}
-
 func TestPollAllUsageRefreshesResetCreditsWithoutConsuming(t *testing.T) {
 	now := time.Now().UTC()
 	resetAt := now.Add(3 * 24 * time.Hour)
@@ -289,8 +245,6 @@ func TestPollAllUsageRefreshesResetCreditsWithoutConsuming(t *testing.T) {
 				},
 				"rate_limit_reset_credits": map[string]any{"available_count": 1},
 			})
-		case "GET /analytics/daily-workspace-usage-counts":
-			json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"totals": map[string]any{"credits": 12.5}}}})
 		case "GET /rate-limit-reset-credits":
 			json.NewEncoder(w).Encode(map[string]any{
 				"available_count": 1,
@@ -336,14 +290,10 @@ func TestPollAllUsageRefreshesResetCreditsWithoutConsuming(t *testing.T) {
 
 	wantCalls := []string{
 		"GET /usage",
-		"GET /analytics/daily-workspace-usage-counts",
 		"GET /rate-limit-reset-credits",
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", calls, wantCalls)
-	}
-	if got, _, known := account.creditBurnSinceReset(time.Now()); !known || got != 12.5 {
-		t.Fatalf("credit burn = %v, %v, want 12.5, true", got, known)
 	}
 }
 
@@ -390,8 +340,6 @@ func TestUsageIsFetchedAgainAfterRestart(t *testing.T) {
 					"secondary_window": map[string]any{"used_percent": 40, "limit_window_seconds": 604800, "reset_at": now.Add(5 * 24 * time.Hour).Unix()},
 				},
 			})
-		case "/analytics/daily-workspace-usage-counts":
-			json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"totals": map[string]any{"credits": 12.5}}}})
 		case "/rate-limit-reset-credits":
 			json.NewEncoder(w).Encode(map[string]any{"available_count": 2, "credits": []map[string]any{}})
 		default:
@@ -422,8 +370,8 @@ func TestUsageIsFetchedAgainAfterRestart(t *testing.T) {
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s.pollAllUsage(context.Background())
-	if requests != 3 {
-		t.Fatalf("requests = %d, want 3", requests)
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -445,9 +393,6 @@ func TestUsageIsFetchedAgainAfterRestart(t *testing.T) {
 	if count, _, known := restored.bankedResets(); known || count != 0 {
 		t.Fatalf("reset credits = %d, %v", count, known)
 	}
-	if credits, _, known := restored.creditBurnSinceReset(time.Now()); known || credits != 0 {
-		t.Fatalf("credit burn = %v, %v", credits, known)
-	}
 	restarted := &server{
 		pool:   reloaded,
 		stats:  newStatsWithPrices(priceSnapshot{}),
@@ -455,8 +400,8 @@ func TestUsageIsFetchedAgainAfterRestart(t *testing.T) {
 		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	restarted.pollDueUsage(context.Background(), 10*time.Minute)
-	if requests != 6 {
-		t.Fatalf("restart requests = %d, want 6", requests)
+	if requests != 4 {
+		t.Fatalf("restart requests = %d, want 4", requests)
 	}
 }
 
@@ -544,19 +489,18 @@ func TestAccountPollScheduleKeepsOnlyUrgentUsageFrequent(t *testing.T) {
 	account := testAccount("account-a", 20)
 	account.usageFetchedAt = now
 	account.resetCredits.fetchedAt = now
-	account.creditBurn.fetchedAt = now
 	account.secondary.minutes = 7 * 24 * 60
 	account.secondary.resetsAt = now.Add(5 * 24 * time.Hour)
 
-	if usage, creditBurn, resets := account.pollsDue(now.Add(2*time.Minute), 10*time.Minute); usage || creditBurn || resets {
-		t.Fatalf("fresh polls due = %v, %v, %v", usage, creditBurn, resets)
+	if usage, resets := account.pollsDue(now.Add(2*time.Minute), 10*time.Minute); usage || resets {
+		t.Fatalf("fresh polls due = %v, %v", usage, resets)
 	}
 	account.primary.usedPercent = 95
-	if usage, creditBurn, resets := account.pollsDue(now.Add(2*time.Minute), 10*time.Minute); !usage || creditBurn || resets {
-		t.Fatalf("urgent polls due = %v, %v, %v", usage, creditBurn, resets)
+	if usage, resets := account.pollsDue(now.Add(2*time.Minute), 10*time.Minute); !usage || resets {
+		t.Fatalf("urgent polls due = %v, %v", usage, resets)
 	}
 	account.primary.usedPercent = 20
-	if usage, creditBurn, resets := account.pollsDue(now.Add(time.Hour), 10*time.Minute); !usage || !creditBurn || !resets {
-		t.Fatalf("hourly polls due = %v, %v, %v", usage, creditBurn, resets)
+	if usage, resets := account.pollsDue(now.Add(time.Hour), 10*time.Minute); !usage || !resets {
+		t.Fatalf("hourly polls due = %v, %v", usage, resets)
 	}
 }

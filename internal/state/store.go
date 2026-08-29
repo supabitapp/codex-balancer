@@ -14,7 +14,7 @@ import (
 
 const (
 	ApplicationID = 0x43425853
-	schemaVersion = 1
+	schemaVersion = 2
 )
 
 const currentSchema = `CREATE TABLE accounts (
@@ -50,7 +50,8 @@ CREATE TABLE response_usage (
 	cached_tokens INTEGER NOT NULL CHECK (cached_tokens >= 0),
 	cache_write_tokens INTEGER NOT NULL CHECK (cache_write_tokens >= 0),
 	output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
-	reasoning_tokens INTEGER NOT NULL CHECK (reasoning_tokens >= 0)
+	reasoning_tokens INTEGER NOT NULL CHECK (reasoning_tokens >= 0),
+	account_id TEXT REFERENCES accounts(account_id) ON DELETE SET NULL
 ) STRICT;
 CREATE INDEX response_usage_at ON response_usage (at_ns);
 CREATE INDEX response_usage_api_key ON response_usage (api_key_name);`
@@ -97,6 +98,7 @@ type Route struct {
 type UsageEvent struct {
 	At          time.Time
 	APIKeyName  string
+	Account     string
 	Model       string
 	ServiceTier string
 	Usage       Usage
@@ -198,10 +200,29 @@ func (s *Store) initialize() error {
 	if applicationID != ApplicationID {
 		return fmt.Errorf("%s is not a codex-balancer state database", s.path)
 	}
+	if version == 1 {
+		return s.migrateUsageAccounts()
+	}
 	if version != schemaVersion {
 		return fmt.Errorf("state schema %d is unsupported; expected %d", version, schemaVersion)
 	}
 	return nil
+}
+
+func (s *Store) migrateUsageAccounts() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE response_usage ADD COLUMN account_id TEXT REFERENCES accounts(account_id) ON DELETE SET NULL`); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ReadAPIKeys() ([]APIKey, error) {
@@ -409,18 +430,22 @@ func (s *Store) RecordUsage(event UsageEvent) error {
 	if event.APIKeyName != "" {
 		apiKeyName = event.APIKeyName
 	}
+	var account any
+	if event.Account != "" {
+		account = event.Account
+	}
 	_, err := s.db.Exec(`INSERT INTO response_usage (
 		api_key_name, at_ns, model, service_tier, input_tokens, cached_tokens, cache_write_tokens,
-		output_tokens, reasoning_tokens
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, apiKeyName, encodeTime(event.At), event.Model,
+		output_tokens, reasoning_tokens, account_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, apiKeyName, encodeTime(event.At), event.Model,
 		serviceTier, event.Usage.InputTokens, event.Usage.CachedTokens, event.Usage.CacheWriteTokens,
-		event.Usage.OutputTokens, event.Usage.ReasoningTokens)
+		event.Usage.OutputTokens, event.Usage.ReasoningTokens, account)
 	return err
 }
 
 func (s *Store) UsageEventsSince(start time.Time) ([]UsageEvent, error) {
 	rows, err := s.db.Query(`SELECT api_key_name, at_ns, model, service_tier, input_tokens, cached_tokens,
-		cache_write_tokens, output_tokens, reasoning_tokens FROM response_usage WHERE at_ns >= ? ORDER BY id`, encodeTime(start))
+		cache_write_tokens, output_tokens, reasoning_tokens, account_id FROM response_usage WHERE at_ns >= ? ORDER BY at_ns, id`, encodeTime(start))
 	if err != nil {
 		return nil, err
 	}
@@ -428,15 +453,18 @@ func (s *Store) UsageEventsSince(start time.Time) ([]UsageEvent, error) {
 	var events []UsageEvent
 	for rows.Next() {
 		var event UsageEvent
-		var apiKeyName sql.NullString
+		var apiKeyName, account sql.NullString
 		var at int64
 		if err := rows.Scan(&apiKeyName, &at, &event.Model, &event.ServiceTier, &event.Usage.InputTokens,
 			&event.Usage.CachedTokens, &event.Usage.CacheWriteTokens, &event.Usage.OutputTokens,
-			&event.Usage.ReasoningTokens); err != nil {
+			&event.Usage.ReasoningTokens, &account); err != nil {
 			return nil, err
 		}
 		if apiKeyName.Valid {
 			event.APIKeyName = apiKeyName.String
+		}
+		if account.Valid {
+			event.Account = account.String
 		}
 		event.At = decodeTime(at)
 		events = append(events, event)

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"time"
 )
 
@@ -77,22 +76,6 @@ type usageWindow struct {
 	UsedPercent        *float64 `json:"used_percent"`
 	ResetAt            int64    `json:"reset_at"`
 	LimitWindowSeconds int      `json:"limit_window_seconds"`
-}
-
-type creditBurnPayload struct {
-	Data []struct {
-		Totals struct {
-			Credits float64 `json:"credits"`
-		} `json:"totals"`
-	} `json:"data"`
-}
-
-func (p creditBurnPayload) total() float64 {
-	var total float64
-	for _, day := range p.Data {
-		total += day.Totals.Credits
-	}
-	return total
 }
 
 type resetCreditsPayload struct {
@@ -193,36 +176,6 @@ func (s *server) pollResetCredits(ctx context.Context, account *Account) error {
 	}
 	fetchedAt := time.Now()
 	account.adoptResetCredits(fetchedAt, payload.AvailableCount, payload.Credits)
-	return nil
-}
-
-func (s *server) pollCreditBurn(ctx context.Context, account *Account, now time.Time) error {
-	account.mu.Lock()
-	start, known := creditCycleStart(now, account.primary, account.secondary)
-	account.mu.Unlock()
-	if !known {
-		return nil
-	}
-	query := url.Values{
-		"end_date":       {now.Format(time.DateOnly)},
-		"group_by":       {"day"},
-		"start_date":     {start.In(now.Location()).Format(time.DateOnly)},
-		"workspace_user": {"true"},
-	}
-	endpoint := accountAPIBaseURL + "/analytics/daily-workspace-usage-counts?" + query.Encode()
-	resp, err := s.doAccountRequest(ctx, account, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("credit burn returned %s", resp.Status)
-	}
-	var payload creditBurnPayload
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return err
-	}
-	account.adoptCreditBurn(now, payload.total())
 	return nil
 }
 
@@ -406,13 +359,7 @@ func (a *Account) adoptResetCredits(fetchedAt time.Time, count int64, credits []
 	}
 }
 
-func (a *Account) adoptCreditBurn(fetchedAt time.Time, credits float64) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.creditBurn = creditBurnState{fetchedAt: fetchedAt, credits: credits}
-}
-
-func (a *Account) pollsDue(now time.Time, every time.Duration) (usage, creditBurn, resetCredits bool) {
+func (a *Account) pollsDue(now time.Time, every time.Duration) (usage, resetCredits bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	usageEvery := every
@@ -420,10 +367,8 @@ func (a *Account) pollsDue(now time.Time, every time.Duration) (usage, creditBur
 		usageEvery = min(usageEvery, urgentUsageRefreshInterval)
 	}
 	usage = a.usageFetchedAt.IsZero() || now.Sub(a.usageFetchedAt) >= usageEvery
-	_, cycleKnown := creditCycleStart(now, a.primary, a.secondary)
-	creditBurn = cycleKnown && (a.creditBurn.fetchedAt.IsZero() || now.Sub(a.creditBurn.fetchedAt) >= accountDetailRefreshInterval)
 	resetCredits = a.resetCredits.fetchedAt.IsZero() || now.Sub(a.resetCredits.fetchedAt) >= accountDetailRefreshInterval
-	return usage, creditBurn, resetCredits
+	return usage, resetCredits
 }
 
 func (s *server) pollAllUsage(ctx context.Context) {
@@ -452,9 +397,9 @@ func (s *server) pollAccountData(ctx context.Context, every time.Duration, force
 			}
 			return ctx.Err() == nil
 		}
-		usageDue, creditBurnDue, resetCreditsDue := true, true, true
+		usageDue, resetCreditsDue := true, true
 		if !force {
-			usageDue, creditBurnDue, resetCreditsDue = account.pollsDue(time.Now(), every)
+			usageDue, resetCreditsDue = account.pollsDue(time.Now(), every)
 		}
 		if !poll(usageDue, "usage", func() error { return s.pollUsage(ctx, account) }) {
 			return
@@ -463,15 +408,7 @@ func (s *server) pollAccountData(ctx context.Context, every time.Duration, force
 			continue
 		}
 		if !force {
-			_, creditBurnDue, resetCreditsDue = account.pollsDue(time.Now(), every)
-		}
-		if !poll(creditBurnDue, "credit burn", func() error {
-			return s.pollCreditBurn(ctx, account, time.Now())
-		}) {
-			return
-		}
-		if account.needsReauth() {
-			continue
+			_, resetCreditsDue = account.pollsDue(time.Now(), every)
 		}
 		if !poll(resetCreditsDue, "reset credits", func() error {
 			return s.pollResetCredits(ctx, account)

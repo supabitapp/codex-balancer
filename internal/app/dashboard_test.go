@@ -428,9 +428,9 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	account.adoptResetCredits(now, 0, nil)
 	resetAt := now.Add(3 * 24 * time.Hour)
 	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: resetAt, seenAt: now}
-	account.adoptCreditBurn(now, 1_234.56)
 	other := testAccount("account-b", 20)
 	stats := newStatsWithPrices(testPriceSnapshot(t))
+	stats.applyUsageAt(resetAt.Add(-7*24*time.Hour), "", "account-a", "gpt-5.6-sol", "", "default", responseUsage{InputTokens: 12_345_600})
 	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", turnMetadata{})
 	stats.applyRouted(now, "", "", "account-a", "", "", "", turnMetadata{})
 	for range 100 {
@@ -443,11 +443,11 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatalf("accounts = %d, want two", len(view.Accounts))
 	}
 	accountView := view.Accounts[0]
-	wantBurnInfo := "Calculated at $0.04 per credit since reset at " + resetAt.Add(-7*24*time.Hour).Format("2 January 2006, 15:04 MST") + ". Daily analytics includes the full reset day."
-	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.ValueBurn != "$49.38" || accountView.ValueBurnInfo != wantBurnInfo || accountView.Traffic != "1" {
+	wantCreditsInfo := "Calculated from traffic routed through this balancer since " + resetAt.Add(-7*24*time.Hour).Format("2 January 2006, 15:04 MST") + ". Usage elsewhere is not included. OpenAI credit rates checked 29 August 2026."
+	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.RoutedCredits != "1234.56" || accountView.RoutedCreditsInfo != wantCreditsInfo || accountView.Traffic != "1" {
 		t.Fatalf("account values = %+v", accountView)
 	}
-	if view.Accounts[1].ValueBurn != "--" || view.Accounts[1].ValueBurnInfo != "" {
+	if view.Accounts[1].RoutedCredits != "--" || view.Accounts[1].RoutedCreditsInfo != "No routed credit data is available for this reset window yet." {
 		t.Fatalf("unknown credit burn = %+v", view.Accounts[1])
 	}
 	if view.Accounts[1].Traffic != "99" {
@@ -458,7 +458,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>Value Burn ≈</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">$49.38</span>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Routed credits ≈</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">1234.56</span>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -466,22 +466,6 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	for _, removed := range []string{"<th>Turns</th>", "<th>Limits 24h</th>"} {
 		if strings.Contains(body, removed) {
 			t.Fatalf("dashboard contains removed column %q", removed)
-		}
-	}
-}
-
-func TestFormatCreditValue(t *testing.T) {
-	for _, test := range []struct {
-		credits float64
-		want    string
-	}{
-		{0, "$0.00"},
-		{7_163.55, "$286.54"},
-		{12_714.47, "$508.58"},
-		{3_052.43, "$122.10"},
-	} {
-		if got := formatCreditValue(test.credits); got != test.want {
-			t.Fatalf("credit value for %.2f = %q, want %q", test.credits, got, test.want)
 		}
 	}
 }

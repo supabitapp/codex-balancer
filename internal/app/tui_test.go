@@ -73,19 +73,20 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 	}
 }
 
-func TestAccountTableShowsCycleCreditBurn(t *testing.T) {
+func TestAccountTableShowsRoutedCredits(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
 	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: now.Add(3 * 24 * time.Hour), seenAt: now}
-	account.adoptCreditBurn(now, 1_234.56)
+	stats := newStatsWithPrices(testPriceSnapshot(t))
+	stats.applyUsageAt(now, "", "account-a", "gpt-5.6-sol", "", "default", responseUsage{InputTokens: 12_345_600})
 	dashboard := dashboard{
 		pool:  &Pool{accounts: []*Account{account}},
-		stats: newStatsWithPrices(testPriceSnapshot(t)),
+		stats: stats,
 		width: 160,
 	}
 
 	rendered := dashboard.accounts(1)
-	for _, expected := range []string{"Credits burn≈", "1234.56"} {
+	for _, expected := range []string{"Routed credits≈", "1234.56"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("account table missing %q:\n%s", expected, rendered)
 		}

@@ -26,6 +26,7 @@ type storedRoute = statepkg.Route
 type storedUsage struct {
 	At          time.Time
 	APIKeyName  string
+	Account     string
 	Model       string
 	ServiceTier string
 	Usage       responseUsage
@@ -202,6 +203,7 @@ func stateUsageEvent(event storedUsage) statepkg.UsageEvent {
 	return statepkg.UsageEvent{
 		At:          event.At,
 		APIKeyName:  event.APIKeyName,
+		Account:     event.Account,
 		Model:       event.Model,
 		ServiceTier: event.ServiceTier,
 		Usage: statepkg.Usage{
@@ -220,6 +222,7 @@ func storedUsageEvents(events []statepkg.UsageEvent) []storedUsage {
 		stored = append(stored, storedUsage{
 			At:          event.At,
 			APIKeyName:  event.APIKeyName,
+			Account:     event.Account,
 			Model:       event.Model,
 			ServiceTier: event.ServiceTier,
 			Usage:       responseUsageFromState(event.Usage),

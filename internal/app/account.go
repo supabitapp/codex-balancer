@@ -46,7 +46,6 @@ type Account struct {
 	secondary      window
 	spent          bool
 	resetCredits   resetCreditState
-	creditBurn     creditBurnState
 	spendControl   *spendControlPayload
 	usageFetchedAt time.Time
 	lastUsed       time.Time
@@ -57,11 +56,6 @@ type resetCreditState struct {
 	known     bool
 	count     int64
 	details   []resetCredit
-}
-
-type creditBurnState struct {
-	fetchedAt time.Time
-	credits   float64
 }
 
 type window struct {
@@ -213,16 +207,6 @@ func (a *Account) bankedResets() (int64, []resetCredit, bool) {
 		return 0, nil, false
 	}
 	return a.resetCredits.count, append([]resetCredit(nil), a.resetCredits.details...), true
-}
-
-func (a *Account) creditBurnSinceReset(now time.Time) (float64, time.Time, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	start, known := creditCycleStart(now, a.primary, a.secondary)
-	if !known || a.creditBurn.fetchedAt.Before(start) {
-		return 0, time.Time{}, false
-	}
-	return a.creditBurn.credits, start, true
 }
 
 func (a *Account) persisted() accountState {

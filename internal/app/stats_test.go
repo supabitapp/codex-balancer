@@ -247,6 +247,13 @@ func TestCatalogRefreshRepricesMonthlyUsageWithoutPersistingThreadHistory(t *tes
 		t.Fatal(err)
 	}
 	defer store.Close()
+	pool, err := loadPool(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.add(testAccount("account", 0)); err != nil {
+		t.Fatal(err)
+	}
 	stats, err := newPersistentStats(store, priceSnapshot{}, nil)
 	if err != nil {
 		t.Fatal(err)

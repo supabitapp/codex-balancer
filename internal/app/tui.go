@@ -274,7 +274,7 @@ func (d dashboard) accounts(limit int) string {
 	weeklyW := 6
 	bankedW := 6
 	resetW := 8
-	creditsW := 13
+	creditsW := 15
 	wsW := 2
 	trafficW := 7
 	limitsW := 6
@@ -292,7 +292,7 @@ func (d dashboard) accounts(limit int) string {
 		styles.section.Render(fit("Weekly", weeklyW)),
 		styles.section.Render(fit("Banked", bankedW)),
 		styles.section.Render(fit("Reset in", resetW)),
-		styles.section.Render(fit("Credits burn≈", creditsW)),
+		styles.section.Render(fit("Routed credits≈", creditsW)),
 		styles.section.Render(fit("WS", wsW)),
 		styles.section.Render(fit("Traffic", trafficW)),
 		styles.section.Render(fit("Limits", limitsW)),
@@ -333,9 +333,11 @@ func (d dashboard) accounts(limit int) string {
 
 		credits := "--"
 		creditStyle := styles.dim
-		if burn, _, known := a.creditBurnSinceReset(now); known {
-			credits = formatDecimal(burn)
-			creditStyle = styles.num
+		if start, known := creditCycleStart(now, primary, secondary); known {
+			if routed, _, known := d.stats.routedCreditsSince(a.id(), start); known {
+				credits = formatDecimal(routed)
+				creditStyle = styles.num
+			}
 		}
 		websockets := ""
 		if stat.WSOpen > 0 {
