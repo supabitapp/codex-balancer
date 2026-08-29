@@ -135,6 +135,18 @@ func (p *Pool) togglePause(a *Account) (bool, error) {
 }
 
 func (p *Pool) cycleRoutingMode(a *Account) (routingMode, error) {
+	return p.updateRoutingMode(a, routingMode.next)
+}
+
+func (p *Pool) setRoutingMode(a *Account, mode routingMode) error {
+	if mode != routingModeNormal && mode != routingModePriority {
+		return fmt.Errorf("unknown routing mode %q; use normal or priority", mode)
+	}
+	_, err := p.updateRoutingMode(a, func(routingMode) routingMode { return mode })
+	return err
+}
+
+func (p *Pool) updateRoutingMode(a *Account, update func(routingMode) routingMode) (routingMode, error) {
 	id := a.id()
 	mode := routingModeNormal
 	err := p.mutate(func(accounts []*Account) ([]*Account, error) {
@@ -143,7 +155,7 @@ func (p *Pool) cycleRoutingMode(a *Account) (routingMode, error) {
 			return nil, fmt.Errorf("no account %q", id)
 		}
 		state := accounts[i].persisted()
-		state.RoutingMode = state.RoutingMode.next()
+		state.RoutingMode = update(state.RoutingMode.normalized())
 		mode = state.RoutingMode
 		accounts[i] = accountFromState(state)
 		return accounts, nil

@@ -20,6 +20,7 @@ Usage:
   codex-balancer accounts add                 Sign in to ChatGPT and pool the account
   codex-balancer accounts add --device-auth   Sign in with a code on another device
   codex-balancer accounts list                Show pooled accounts
+  codex-balancer accounts mode <account> <mode> Set routing to normal or priority
   codex-balancer accounts rm <email>          Drop an account
 
 Flags:
@@ -62,6 +63,20 @@ func accountsCmd(args []string) error {
 		return addAccount(pool, *deviceAuth)
 	case "list":
 		return listAccounts(pool, *asJSON)
+	case "mode":
+		if fs.NArg() != 2 {
+			return errors.New("accounts mode needs an account and one of: normal, priority")
+		}
+		account, err := pool.resolve(fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		mode := routingMode(fs.Arg(1))
+		if err := pool.setRoutingMode(account, mode); err != nil {
+			return err
+		}
+		fmt.Printf("set %s routing mode to %s\n", describe(account), mode)
+		return nil
 	case "rm":
 		who := fs.Arg(0)
 		if who == "" {
@@ -117,13 +132,15 @@ func listAccounts(pool *Pool, asJSON bool) error {
 	if asJSON {
 		out := make([]map[string]any, 0, len(accounts))
 		for _, a := range accounts {
+			candidate := a.routingCandidate()
 			out = append(out, map[string]any{
-				"id":     a.id(),
-				"email":  a.email(),
-				"plan":   a.plan(),
-				"paused": a.paused(),
-				"token":  tokenStatus(a),
-				"expiry": a.expires(),
+				"id":           a.id(),
+				"email":        a.email(),
+				"plan":         a.plan(),
+				"paused":       candidate.paused,
+				"routing_mode": candidate.mode,
+				"token":        tokenStatus(a),
+				"expiry":       a.expires(),
 			})
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -144,10 +161,14 @@ func listAccounts(pool *Pool, asJSON bool) error {
 }
 
 func routing(a *Account) string {
-	if a.paused() {
+	candidate := a.routingCandidate()
+	if candidate.paused {
 		return "paused"
 	}
-	return "live"
+	if candidate.mode == routingModePriority {
+		return string(routingModePriority)
+	}
+	return string(routingModeNormal)
 }
 
 func tokenStatus(a *Account) string {

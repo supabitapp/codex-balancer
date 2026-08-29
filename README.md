@@ -37,6 +37,8 @@ There is a CLI to manage the accounts
 ```sh
 codex-balancer accounts add                 # sign in through a local browser
 codex-balancer accounts list
+codex-balancer accounts mode you@example.com priority
+codex-balancer accounts mode you@example.com normal
 ```
 
 Use the CLI to manage client API keys:
