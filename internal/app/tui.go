@@ -274,7 +274,7 @@ func (d dashboard) accounts(limit int) string {
 	weeklyW := 6
 	bankedW := 6
 	resetW := 8
-	routedValueW := 15
+	routedValueW := 22
 	wsW := 2
 	trafficW := 7
 	limitsW := 6
@@ -292,7 +292,7 @@ func (d dashboard) accounts(limit int) string {
 		styles.section.Render(fit("Weekly", weeklyW)),
 		styles.section.Render(fit("Banked", bankedW)),
 		styles.section.Render(fit("Reset in", resetW)),
-		styles.section.Render(fit("Routed value≈", routedValueW)),
+		styles.section.Render(fit("Burnt since last reset", routedValueW)),
 		styles.section.Render(fit("WS", wsW)),
 		styles.section.Render(fit("Traffic", trafficW)),
 		styles.section.Render(fit("Limits", limitsW)),
@@ -629,7 +629,7 @@ func (d dashboard) totals(width int) string {
 		{
 			{"cached input", formatTokenCount(s.MonthlyUsage.InputDetails.CachedTokens)},
 			{"output tokens", formatTokenCount(s.MonthlyUsage.OutputTokens)},
-			{"api estimate", formatAPIPrice(s.APICostNanoDollars, s.UnpricedResponses)},
+			{"USD burnt this month", formatAPIPrice(s.APICostNanoDollars, s.UnpricedResponses)},
 		},
 	}
 	labelWidths := [3]int{}

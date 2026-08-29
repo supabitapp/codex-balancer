@@ -86,7 +86,7 @@ func TestAccountTableShowsRoutedValue(t *testing.T) {
 	}
 
 	rendered := dashboard.accounts(1)
-	for _, expected := range []string{"Routed value≈", "$49.38"} {
+	for _, expected := range []string{"Burnt since last reset", "$49.38"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("account table missing %q:\n%s", expected, rendered)
 		}
@@ -190,6 +190,9 @@ func TestTotalsRenderLabelValueTable(t *testing.T) {
 	dashboard := dashboard{snap: Snapshot{Turns: 70_600, Failures: 12, Limited: 34, WSOpen: 777}}
 	dashboard.snap.MonthlyUsage.InputDetails.CachedTokens = 8_510_000_000
 	lines := strings.Split(dashboard.totals(120), "\n")
+	if !strings.Contains(lines[4], "USD burnt this month") {
+		t.Fatalf("totals missing monthly burn label:\n%s", dashboard.totals(120))
+	}
 
 	turnsEnd := textColumn(t, lines[2], "70600") + len("70600")
 	openEnd := textColumn(t, lines[3], "777") + len("777")

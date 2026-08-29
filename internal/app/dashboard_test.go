@@ -179,7 +179,7 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 		`<span>1 checking</span>`,
 		`<th>WS</th>`,
 		`<span role="img" aria-label="Fast">⚡️</span>`,
-		`API estimate`,
+		`USD burnt this month`,
 		`$30.00`,
 		`<td>connection retry</td>`,
 		`&lt;script&gt;upstream unavailable&lt;/script&gt;`,
@@ -458,7 +458,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>Routed value ≈</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">$49.38</span>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Burnt since last reset</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">$49.38</span>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -662,13 +662,13 @@ func TestDashboardOverview(t *testing.T) {
 		"output tokens": "400",
 		"uptime":        "28m",
 	}
-	wantNames := []string{"active WS", "CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "API estimate"}
+	wantNames := []string{"active WS", "CPU", "RAM", "network in", "network out", "uptime", "input tokens", "cached input", "output tokens", "USD burnt this month"}
 	if len(view.Overview) != len(wantNames) {
 		t.Fatalf("overview metrics = %+v", view.Overview)
 	}
 	wantInfo := "From Aug 1"
 	wantPriceInfo := "gpt-5.6-sol: $0.012\ngpt-5.4-mini: $0.0012\n" + wantInfo + ". Prices from models.dev, updated 11 August 2026, 16:00 BST"
-	apiEstimateFound := false
+	monthlyBurnFound := false
 	for i, metric := range view.Overview {
 		if metric.Name != wantNames[i] {
 			t.Fatalf("overview metric %d = %q, want %q", i, metric.Name, wantNames[i])
@@ -683,13 +683,13 @@ func TestDashboardOverview(t *testing.T) {
 			delete(wantValues, metric.Name)
 		}
 		switch metric.Name {
-		case "API estimate":
-			apiEstimateFound = true
+		case "USD burnt this month":
+			monthlyBurnFound = true
 			if metric.Value != "$0.013" {
-				t.Fatalf("API estimate value = %q, want $0.013", metric.Value)
+				t.Fatalf("monthly burn value = %q, want $0.013", metric.Value)
 			}
 			if metric.Info != wantPriceInfo {
-				t.Fatalf("API estimate info = %q, want %q", metric.Info, wantPriceInfo)
+				t.Fatalf("monthly burn info = %q, want %q", metric.Info, wantPriceInfo)
 			}
 		case "turns", "http", "ws turns", "ws open", "turn rate", "estimated TPS", "threads", "accounts", "failovers", "rate limits", "ttfb":
 			t.Fatalf("removed overview metric %q is still present", metric.Name)
@@ -698,8 +698,8 @@ func TestDashboardOverview(t *testing.T) {
 	if len(wantValues) != 0 {
 		t.Fatalf("missing overview metrics: %v", wantValues)
 	}
-	if !apiEstimateFound {
-		t.Fatal("API estimate overview metric missing")
+	if !monthlyBurnFound {
+		t.Fatal("monthly burn overview metric missing")
 	}
 }
 

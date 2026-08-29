@@ -470,7 +470,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		dashboardMetric{Name: "cached input", Value: formatTokenCount(snapshot.MonthlyUsage.InputDetails.CachedTokens), Info: monthInfo},
 		dashboardMetric{Name: "output tokens", Value: formatTokenCount(snapshot.MonthlyUsage.OutputTokens), Info: monthInfo},
 		dashboardMetric{
-			Name:  "API estimate",
+			Name:  "USD burnt this month",
 			Value: formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses),
 			Info:  priceInfo,
 		},
