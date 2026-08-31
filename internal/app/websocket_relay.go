@@ -294,6 +294,11 @@ func (r *responsesWebSocketRelay) handleUpstream(message websocketMessage) bool 
 		if !allowed {
 			return false
 		}
+		if rejection == websocketRejectionModelCapacity {
+			r.server.preserveWebSocketRetryOwner(r.current)
+			r.closeDownstream(websocket.StatusServiceRestart, "model at capacity")
+			return false
+		}
 	}
 	if err := r.downstream.Write(r.ctx, message.kind, message.data); err != nil {
 		r.server.log.Warn("downstream websocket response write failed", "thread", r.thread, "account", r.current.account.id(), "active_turns", len(r.turns), "error", err)

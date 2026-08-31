@@ -87,6 +87,23 @@ func (s *server) acceptWebSocketRoute(dial *websocketDial, route storedRoute) ro
 	return result
 }
 
+func (s *server) preserveWebSocketRetryOwner(dial *websocketDial) {
+	if dial == nil || dial.claim == nil {
+		return
+	}
+	s.routeOwnership.Lock()
+	defer s.routeOwnership.Unlock()
+	at := time.Now()
+	keys := dial.claim.preserve()
+	dial.claim = nil
+	if len(keys) == 0 || s.pool == nil || s.pool.store == nil {
+		return
+	}
+	if err := s.pool.store.preserveRouteOwners(at, dial.account.id(), keys); err != nil {
+		s.log.Warn("capacity retry owner preservation failed", "account", dial.account.id(), "routes", keys, "error", err)
+	}
+}
+
 func (s *server) transferWebSocketClaim(current *routeClaimHandle, account, priorOwner string, reason routingReason) *routeClaimHandle {
 	s.routeOwnership.Lock()
 	defer s.routeOwnership.Unlock()
@@ -318,6 +335,7 @@ const (
 	websocketRejectionRateLimited     websocketRejectionKind = "rate limited"
 	websocketRejectionUsageLimit      websocketRejectionKind = "usage limit reached"
 	websocketRejectionConnectionLimit websocketRejectionKind = "connection limit reached"
+	websocketRejectionModelCapacity   websocketRejectionKind = "model capacity"
 )
 
 func websocketRejection(event websocketEnvelope) websocketRejectionKind {
@@ -329,6 +347,9 @@ func websocketRejection(event websocketEnvelope) websocketRejectionKind {
 	}
 	if websocketErrorIs(event, "usage_limit_reached") {
 		return websocketRejectionUsageLimit
+	}
+	if websocketErrorIs(event, "server_is_overloaded") || websocketErrorIs(event, "slow_down") {
+		return websocketRejectionModelCapacity
 	}
 	if websocketStatus(event) == http.StatusTooManyRequests || websocketErrorIs(event, "rate_limit_exceeded") {
 		return websocketRejectionRateLimited

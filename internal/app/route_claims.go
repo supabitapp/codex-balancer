@@ -276,6 +276,15 @@ func (h *routeClaimHandle) commit(keys []string) {
 	h.once.Do(func() { h.registry.commit(h.id, h.account, keys) })
 }
 
+func (h *routeClaimHandle) preserve() []string {
+	if h == nil || h.registry == nil {
+		return nil
+	}
+	var keys []string
+	h.once.Do(func() { keys = h.registry.preserve(h.id, h.account) })
+	return keys
+}
+
 func (h *routeClaimHandle) transfer(account, priorOwner string, reason routingReason) *routeClaimHandle {
 	if h == nil || h.registry == nil || account == "" {
 		return nil
@@ -350,6 +359,22 @@ func (r *routeClaimRegistry) commit(id uint64, account string, acceptedKeys []st
 	if claim.refs == 0 {
 		delete(r.byID, claim.id)
 	}
+}
+
+func (r *routeClaimRegistry) preserve(id uint64, account string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	claim := r.byID[id]
+	if claim == nil || claim.account != account {
+		return nil
+	}
+	keys := append([]string(nil), claim.keys...)
+	for _, key := range keys {
+		r.barriers[key] = account
+	}
+	r.removeLocked(claim)
+	slices.Sort(keys)
+	return keys
 }
 
 func (r *routeClaimRegistry) transfer(id uint64, from, to, priorOwner string, reason routingReason) *routeClaimHandle {

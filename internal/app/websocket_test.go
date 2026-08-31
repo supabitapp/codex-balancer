@@ -1373,6 +1373,105 @@ func TestWebSocketGenericErrorsPassThroughAndStayOnSocket(t *testing.T) {
 	}
 }
 
+func TestWebSocketCapacityFailureRestartsOnRetainedAccount(t *testing.T) {
+	for _, code := range []string{"server_is_overloaded", "slow_down"} {
+		t.Run(code, func(t *testing.T) {
+			var mu sync.Mutex
+			requests := 0
+			upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+				mu.Lock()
+				requests++
+				capacityFailure := requests == 1
+				mu.Unlock()
+				writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+				if capacityFailure {
+					writeWebSocketEvent(t, conn, map[string]any{
+						"type": "response.failed",
+						"response": map[string]any{
+							"error": map[string]any{"code": code},
+						},
+					})
+					return
+				}
+				writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+			})
+			defer upstream.Close()
+			owner := testAccount("account-owner", 0)
+			fresh := testAccount("account-fresh", 20)
+			_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+			headers := codexWebSocketHeaders("session", "thread")
+
+			first, _ := dialWebSocket(t, proxy.URL, headers)
+			writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
+			if event := readWebSocketEvent(t, first); event.Type != "response.created" {
+				t.Fatalf("first event = %q, want response.created", event.Type)
+			}
+			readCloseStatus(t, first, websocket.StatusServiceRestart)
+			first.CloseNow()
+
+			setTestAccountUsage(owner, 90)
+			setTestAccountUsage(fresh, 0)
+			fresh.RoutingMode = routingModePriority
+			retried, _ := dialWebSocket(t, proxy.URL, headers)
+			defer retried.CloseNow()
+			completeWebSocketTurn(t, retried, map[string]any{"type": "response.create", "input": []any{}})
+
+			if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-owner]" {
+				t.Fatalf("request accounts = %s, want capacity retry on retained account", got)
+			}
+		})
+	}
+}
+
+func TestWebSocketCapacityErrorRetainsProvisionalAccount(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+		mu.Lock()
+		requests++
+		capacityFailure := requests == 1
+		mu.Unlock()
+		if capacityFailure {
+			writeWebSocketEvent(t, conn, map[string]any{
+				"type":   "error",
+				"status": http.StatusServiceUnavailable,
+				"error":  map[string]any{"code": "server_is_overloaded"},
+			})
+			return
+		}
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	})
+	defer upstream.Close()
+	owner := testAccount("account-owner", 0)
+	fresh := testAccount("account-fresh", 20)
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
+	headers := codexWebSocketHeaders("session", "thread")
+
+	first, _ := dialWebSocket(t, proxy.URL, headers)
+	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
+	readCloseStatus(t, first, websocket.StatusServiceRestart)
+	first.CloseNow()
+	owners, err := server.pool.store.routeOwners("thread", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(owners); got != "[account-owner]" {
+		t.Fatalf("persisted owners = %s, want provisional capacity owner", got)
+	}
+
+	setTestAccountUsage(owner, 90)
+	setTestAccountUsage(fresh, 0)
+	fresh.RoutingMode = routingModePriority
+	retried, _ := dialWebSocket(t, proxy.URL, headers)
+	defer retried.CloseNow()
+	completeWebSocketTurn(t, retried, map[string]any{"type": "response.create", "input": []any{}})
+
+	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner account-owner]" {
+		t.Fatalf("request accounts = %s, want capacity retry on provisional account", got)
+	}
+}
+
 func TestWebSocketUpstreamTransportLossRestartsDownstream(t *testing.T) {
 	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		conn.CloseNow()

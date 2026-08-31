@@ -209,6 +209,11 @@ balancer does not add a second reconnect path.
   For an event-level `401`, forward the original event, refresh the same account
   once, then retire the socket. A permanent failure marks the account signed
   out and preserves its owner boundary for a portable reconnect.
+- For a structured `server_is_overloaded` or `slow_down` event, suppress the
+  terminal event, preserve the accepted or provisional owner, and close the
+  downstream socket with `1012`. Codex reconnects and replays the request to
+  the same account. The balancer neither replays the request nor marks the
+  account spent or cooling.
 - For transient `429`, forward the original event, cool down the account, and
   retire the socket. The balancer does not replay the request.
 - For a usage limit, forward the original terminal event, mark the account
