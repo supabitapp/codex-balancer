@@ -81,7 +81,5 @@ requires_openai_auth = true
 supports_websockets = true
 ```
 
-The proxy sets `store = false` on every response request.
-
 ## Routing
 Routing logic is in ROUTING.md.

@@ -148,7 +148,6 @@ type websocketEnvelope struct {
 	ServiceTier        string                     `json:"service_tier"`
 	PreviousResponseID string                     `json:"previous_response_id"`
 	Input              []json.RawMessage          `json:"input"`
-	Store              *bool                      `json:"store"`
 	ClientMetadata     map[string]string          `json:"client_metadata"`
 	Status             int                        `json:"status"`
 	StatusCode         int                        `json:"status_code"`
