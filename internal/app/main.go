@@ -16,6 +16,7 @@ Commands:
   server     Serve the balancing proxy
   accounts   Manage the account pool
   keys       Manage client API keys
+  configure  Configure this machine's Codex client
   version    Print the version
 
 Run "codex-balancer <command> -h" for flags.
@@ -34,6 +35,8 @@ func Run(args []string) error {
 		return accountsCmd(args[1:])
 	case "keys":
 		return keysCmd(args[1:])
+	case "configure":
+		return configureCmd(args[1:])
 	case "version":
 		fmt.Println(version())
 		return nil

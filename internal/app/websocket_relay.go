@@ -194,6 +194,11 @@ func (r *responsesWebSocketRelay) queuePending(message websocketMessage) bool {
 }
 
 func (r *responsesWebSocketRelay) handleResponseCreate(message websocketMessage, event websocketEnvelope) bool {
+	privateMessage, err := disableResponseStorage(message, event.Store)
+	if err != nil {
+		r.closeDownstream(websocket.StatusInvalidFramePayloadData, "invalid response request")
+		return false
+	}
 	if !r.current.claim.active() {
 		r.closeDownstream(websocket.StatusServiceRestart, "route owner changed before turn")
 		return false
@@ -213,11 +218,28 @@ func (r *responsesWebSocketRelay) handleResponseCreate(message websocketMessage,
 	if !r.pinned && !r.pin() {
 		return false
 	}
-	if !r.writeUpstream(message) {
+	if !r.writeUpstream(privateMessage) {
 		return false
 	}
 	r.startTurn(event)
 	return true
+}
+
+func disableResponseStorage(message websocketMessage, store *bool) (websocketMessage, error) {
+	if store != nil && !*store {
+		return message, nil
+	}
+	var event map[string]json.RawMessage
+	if err := json.Unmarshal(message.data, &event); err != nil {
+		return websocketMessage{}, err
+	}
+	event["store"] = json.RawMessage("false")
+	data, err := json.Marshal(event)
+	if err != nil {
+		return websocketMessage{}, err
+	}
+	message.data = data
+	return message, nil
 }
 
 func (r *responsesWebSocketRelay) ensureCompatibleAccount(event websocketEnvelope, allowed map[string]bool) bool {
