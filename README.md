@@ -41,6 +41,9 @@ codex-balancer accounts mode you@example.com priority
 codex-balancer accounts mode you@example.com normal
 ```
 
+Adding an account turns off ChatGPT model training for that account before it
+enters the pool.
+
 Use the CLI to manage client API keys:
 
 ```sh

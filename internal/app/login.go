@@ -20,7 +20,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 )
 
 const (
@@ -90,7 +89,7 @@ func login(ctx context.Context, hc *http.Client) (*Account, error) {
 	defer server.Shutdown(context.Background())
 
 	link := authorizeURL(challengeFor(verifier), state)
-	fmt.Fprintf(os.Stderr, "Opening your browser to sign in.\nIf nothing opens, visit:\n\n%s\n\nIf the callback does not open, paste its full URL here:\n", link)
+	fmt.Fprintf(os.Stderr, "Adding this account turns off model training for it.\n\nOpening your browser to sign in.\nIf nothing opens, visit:\n\n%s\n\nIf the callback does not open, paste its full URL here:\n", link)
 	openBrowser(link)
 	go acceptPastedCallbacks(os.Stdin, os.Stderr, flow)
 
@@ -166,16 +165,7 @@ func redeem(ctx context.Context, hc *http.Client, query url.Values, verifier str
 	if err != nil {
 		return nil, err
 	}
-	return accountFromTokens(tokens), nil
-}
-
-func accountFromTokens(tokens tokenResponse) *Account {
-	return accountFromState(accountState{
-		IDToken:      tokens.IDToken,
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: tokens.RefreshToken,
-		LastRefresh:  time.Now(),
-	})
+	return connectAccount(ctx, hc, tokens)
 }
 
 func exchangeCode(ctx context.Context, hc *http.Client, code, verifier string) (tokenResponse, error) {

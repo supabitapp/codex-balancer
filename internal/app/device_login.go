@@ -23,6 +23,8 @@ Enter this one-time code (expires in %d minutes):
 
 %s
 
+Adding this account turns off model training for it.
+
 Waiting for sign-in...
 `
 
@@ -76,7 +78,7 @@ func completeDeviceAuthorization(ctx context.Context, hc *http.Client, issuer st
 	if err != nil {
 		return nil, fmt.Errorf("device code exchange failed: %w", err)
 	}
-	return accountFromTokens(tokens), nil
+	return connectAccount(ctx, hc, tokens)
 }
 
 func deviceAuthIssuer(issuer string) string {

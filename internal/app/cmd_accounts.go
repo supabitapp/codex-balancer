@@ -17,8 +17,8 @@ import (
 const accountsHelp = `Manage the account pool.
 
 Usage:
-  codex-balancer accounts add                 Sign in to ChatGPT and pool the account
-  codex-balancer accounts add --device-auth   Sign in with a code on another device
+  codex-balancer accounts add                 Sign in, disable training, and pool the account
+  codex-balancer accounts add --device-auth   Do the same with a code on another device
   codex-balancer accounts list                Show pooled accounts
   codex-balancer accounts mode <account> <mode> Set routing to normal or priority
   codex-balancer accounts rm <email>          Drop an account
