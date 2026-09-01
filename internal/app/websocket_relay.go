@@ -194,7 +194,7 @@ func (r *responsesWebSocketRelay) queuePending(message websocketMessage) bool {
 }
 
 func (r *responsesWebSocketRelay) handleResponseCreate(message websocketMessage, event websocketEnvelope) bool {
-	privateMessage, err := disableResponseStorage(message, event.Store)
+	privateMessage, err := forceResponseStorageOff(message, event.Store)
 	if err != nil {
 		r.closeDownstream(websocket.StatusInvalidFramePayloadData, "invalid response request")
 		return false
@@ -225,7 +225,7 @@ func (r *responsesWebSocketRelay) handleResponseCreate(message websocketMessage,
 	return true
 }
 
-func disableResponseStorage(message websocketMessage, store *bool) (websocketMessage, error) {
+func forceResponseStorageOff(message websocketMessage, store *bool) (websocketMessage, error) {
 	if store != nil && !*store {
 		return message, nil
 	}

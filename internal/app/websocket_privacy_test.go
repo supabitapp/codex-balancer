@@ -7,7 +7,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-func TestDisableResponseStorage(t *testing.T) {
+func TestForceResponseStorageOff(t *testing.T) {
 	for _, request := range []string{
 		`{"type":"response.create","model":"gpt-5.6-sol"}`,
 		`{"type":"response.create","model":"gpt-5.6-sol","store":true}`,
@@ -17,7 +17,7 @@ func TestDisableResponseStorage(t *testing.T) {
 		if err := json.Unmarshal(message.data, &event); err != nil {
 			t.Fatal(err)
 		}
-		private, err := disableResponseStorage(message, event.Store)
+		private, err := forceResponseStorageOff(message, event.Store)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -31,10 +31,10 @@ func TestDisableResponseStorage(t *testing.T) {
 	}
 }
 
-func TestDisableResponseStorageLeavesPrivateRequestUntouched(t *testing.T) {
+func TestForceResponseStorageOffLeavesPrivateRequestUntouched(t *testing.T) {
 	request := []byte(`{"type": "response.create", "store": false}`)
 	store := false
-	private, err := disableResponseStorage(websocketMessage{kind: websocket.MessageText, data: request}, &store)
+	private, err := forceResponseStorageOff(websocketMessage{kind: websocket.MessageText, data: request}, &store)
 	if err != nil {
 		t.Fatal(err)
 	}

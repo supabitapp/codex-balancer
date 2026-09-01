@@ -56,17 +56,8 @@ State lives in `~/.codex-balancer/state.db`.
 
 ## Point Codex at it
 
-On each machine that runs Codex, configure the client:
-
-```sh
-codex-balancer configure
-```
-
-Pass `-base-url https://your-balancer.example/v1` when the server runs on
-another machine. This also disables Codex analytics and feedback. The balancer
-forces response storage off for every proxied request.
-
-Export a key from the server before starting Codex:
+On each machine that runs Codex, export a key from the server before starting
+Codex:
 
 ```sh
 export CODEX_BALANCER_API_KEY="<server-key>"
@@ -74,16 +65,10 @@ export CODEX_BALANCER_API_KEY="<server-key>"
 
 add that to your `~/.zshrc` or whatever env loading mechanism or shell you use.
 
-The command merges these settings into `~/.codex/config.toml`:
+Then in `~/.codex/config.toml`:
 
 ```toml
 model_provider = "balancer"
-
-[analytics]
-enabled = false
-
-[feedback]
-enabled = false
 
 [model_providers.balancer]
 name = "OpenAI" # must be exactly this for server-side compaction to work
@@ -92,6 +77,8 @@ env_key = "CODEX_BALANCER_API_KEY"
 requires_openai_auth = true
 supports_websockets = true
 ```
+
+The proxy sets `store = false` on every response request.
 
 ## Routing
 Routing logic is in ROUTING.md.

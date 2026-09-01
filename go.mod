@@ -6,7 +6,6 @@ require (
 	charm.land/bubbletea/v2 v2.0.8
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/coder/websocket v1.8.15
-	github.com/pelletier/go-toml/v2 v2.4.3
 	modernc.org/sqlite v1.56.0
 )
 
