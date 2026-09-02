@@ -700,8 +700,6 @@ func TestWebSocketRequestPortableRecognizesAccountBoundState(t *testing.T) {
 		{name: "ordinary full replay", request: map[string]any{"input": []any{map[string]any{"type": "message", "content": "hello"}}}, want: true},
 		{name: "previous response", request: map[string]any{"previous_response_id": "response"}},
 		{name: "turn state", request: map[string]any{"client_metadata": map[string]string{codexTurnStateKey: "state"}}},
-		{name: "encrypted reasoning", request: map[string]any{"input": []any{map[string]any{"type": "reasoning", "encrypted_content": "ciphertext"}}}},
-		{name: "empty encrypted field", request: map[string]any{"input": []any{map[string]any{"type": "reasoning", "encrypted_content": ""}}}, want: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -754,36 +752,6 @@ func TestWebSocketAccountBoundFrameDoesNotMoveForModelCompatibility(t *testing.T
 	readCloseStatus(t, second, websocket.StatusTryAgainLater)
 	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner]" {
 		t.Fatalf("request accounts = %s, want account-bound state rejected before a model-driven switch", got)
-	}
-}
-
-func TestWebSocketEncryptedReasoningDoesNotMoveFromAnExhaustedOwner(t *testing.T) {
-	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
-	})
-	defer upstream.Close()
-	owner := testAccount("account-owner", 0)
-	fresh := testAccount("account-fresh", 20)
-	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{owner, fresh})
-	headers := codexWebSocketHeaders("session", "thread")
-
-	first, _ := dialWebSocket(t, proxy.URL, headers)
-	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
-	first.CloseNow()
-	owner.markSpent()
-
-	second, _ := dialWebSocket(t, proxy.URL, headers)
-	defer second.CloseNow()
-	writeWebSocketEvent(t, second, map[string]any{
-		"type": "response.create",
-		"input": []any{
-			map[string]any{"type": "reasoning", "encrypted_content": "owner-bound-ciphertext"},
-		},
-	})
-	readCloseStatus(t, second, websocket.StatusTryAgainLater)
-	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-owner]" {
-		t.Fatalf("request accounts = %s, want encrypted reasoning withheld from account-fresh", got)
 	}
 }
 
@@ -853,7 +821,7 @@ func TestWebSocketModelClaimTransferStopsAnOldAccountPeerBeforeItsTurn(t *testin
 	}
 }
 
-func TestWebSocketExhaustedOwnerMovesTheNextFullReplayAndRebinds(t *testing.T) {
+func TestWebSocketExhaustedOwnerMovesTheNextEncryptedFullReplayAndRebinds(t *testing.T) {
 	var mu sync.Mutex
 	requests := 0
 	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, _ websocketEnvelope) {
@@ -892,7 +860,12 @@ func TestWebSocketExhaustedOwnerMovesTheNextFullReplayAndRebinds(t *testing.T) {
 	exhausted.CloseNow()
 
 	replayed, _ := dialWebSocket(t, proxy.URL, headers)
-	completeWebSocketTurn(t, replayed, map[string]any{"type": "response.create", "input": []any{}})
+	completeWebSocketTurn(t, replayed, map[string]any{
+		"type": "response.create",
+		"input": []any{
+			map[string]any{"type": "reasoning", "encrypted_content": "encrypted-history"},
+		},
+	})
 	replayed.CloseNow()
 	setTestAccountSpent(owner, false)
 	owner.RoutingMode = routingModePriority

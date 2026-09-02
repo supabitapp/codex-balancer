@@ -147,7 +147,6 @@ type websocketEnvelope struct {
 	Reasoning          responseReasoning          `json:"reasoning"`
 	ServiceTier        string                     `json:"service_tier"`
 	PreviousResponseID string                     `json:"previous_response_id"`
-	Input              []json.RawMessage          `json:"input"`
 	ClientMetadata     map[string]string          `json:"client_metadata"`
 	Status             int                        `json:"status"`
 	StatusCode         int                        `json:"status_code"`
@@ -416,24 +415,7 @@ func websocketErrorIs(event websocketEnvelope, code string) bool {
 
 func websocketRequestPortable(event websocketEnvelope) bool {
 	return strings.TrimSpace(event.PreviousResponseID) == "" &&
-		strings.TrimSpace(event.ClientMetadata[codexTurnStateKey]) == "" &&
-		!websocketInputHasEncryptedContent(event.Input)
-}
-
-func websocketInputHasEncryptedContent(input []json.RawMessage) bool {
-	for _, raw := range input {
-		var item struct {
-			EncryptedContent json.RawMessage `json:"encrypted_content"`
-		}
-		if json.Unmarshal(raw, &item) != nil {
-			continue
-		}
-		value := bytes.TrimSpace(item.EncryptedContent)
-		if len(value) > 0 && !bytes.Equal(value, []byte("null")) && !bytes.Equal(value, []byte(`""`)) {
-			return true
-		}
-	}
-	return false
+		strings.TrimSpace(event.ClientMetadata[codexTurnStateKey]) == ""
 }
 
 func websocketRouteFrom(headers http.Header) websocketRoute {

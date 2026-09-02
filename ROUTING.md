@@ -2,7 +2,9 @@
 
 Accepted conversation state stays with the account that created it. An account
 change crosses upstream cache and response-chain boundaries. The balancer
-requires portable input before it sends work to a replacement account. That
+requires a full replay without a `previous_response_id` or
+`x-codex-turn-state` before it sends work to a replacement account. Encrypted
+reasoning remains part of that replay and moves unchanged. The replacement
 account owns the route after it emits `response.created`.
 
 Codex CLI sets the lifecycle that the balancer matches:
@@ -10,6 +12,7 @@ Codex CLI sets the lifecycle that the balancer matches:
 - A running Codex process keeps the account used during authentication. Token
   refresh for the same account preserves the conversation boundary.
 - Logout ends the authenticated client lifecycle.
+- Login followed by resume creates a new client session from the saved history.
 - On WebSocket reconnect, Codex discards socket-scoped
   `previous_response_id` state and sends full input. Codex replays the request.
   The balancer closes the socket and waits for the client.
@@ -106,8 +109,8 @@ The server records the account from each `response.created` event. A
 - A spent, paused, removed, signed-out, non-routable, or model-incompatible
   owner permits replacement on reconnect.
 - A replacement request must omit `previous_response_id` and
-  `x-codex-turn-state`. The relay rejects account-bound input with `1013`
-  before forwarding it to another account.
+  `x-codex-turn-state`. Encrypted reasoning does not bind a full replay to its
+  prior account. The relay forwards it unchanged.
 - A replacement account takes ownership after `response.created`. Recovery of
   the old owner's quota leaves the new route in place.
 - SQLite accepted-attempt records and provisional invalidation tombstones
@@ -217,8 +220,9 @@ balancer does not add a second reconnect path.
 - For transient `429`, forward the original event, cool down the account, and
   retire the socket. The balancer does not replay the request.
 - For a usage limit, forward the original terminal event, mark the account
-  spent, and retire the socket. A later fresh user turn may choose another
-  eligible account; account-bound state from the failed turn cannot move.
+  spent, and retire the socket. A later fresh user turn or cold resume may
+  choose another eligible account and replay encrypted reasoning. Response IDs
+  and turn-state tokens from the failed turn cannot move.
 - For an account-specific setup failure, try another eligible account if the
   retained owner cannot continue and no provisional claim conflicts.
 - The balancer does not replay in-flight work.
