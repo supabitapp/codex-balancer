@@ -100,7 +100,7 @@ func (s *server) preserveWebSocketRetryOwner(dial *websocketDial) {
 		return
 	}
 	if err := s.pool.store.preserveRouteOwners(at, dial.account.id(), keys); err != nil {
-		s.log.Warn("capacity retry owner preservation failed", "account", dial.account.id(), "routes", keys, "error", err)
+		s.log.Warn("websocket retry owner preservation failed", "account", dial.account.id(), "routes", keys, "error", err)
 	}
 }
 
@@ -137,6 +137,7 @@ type websocketTurn struct {
 	metadata    turnMetadata
 	counted     bool
 	created     bool
+	turnState   string
 	statsThread string
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -268,6 +269,7 @@ func (r *responsesWebSocketRelay) startTurn(event websocketEnvelope) {
 		serviceTier: event.ServiceTier,
 		metadata:    metadata,
 		counted:     counted,
+		turnState:   event.ClientMetadata[codexTurnStateKey],
 		statsThread: statsThread,
 	})
 	attrs := []any{"thread", statsThread, "service_tier", event.ServiceTier}
@@ -289,9 +291,15 @@ func (r *responsesWebSocketRelay) handleUpstream(message websocketMessage) bool 
 		return false
 	}
 	if parsed {
+		retryUsage := websocketRejection(event) == websocketRejectionUsageLimit && r.canRetryUsageLimit()
 		var allowed bool
 		rejection, allowed = r.handleUpstreamEvent(event)
 		if !allowed {
+			return false
+		}
+		if retryUsage {
+			r.server.preserveWebSocketRetryOwner(r.current)
+			r.closeDownstream(websocket.StatusServiceRestart, "account exhausted; reconnect with full history")
 			return false
 		}
 		if rejection == websocketRejectionModelCapacity {
@@ -305,6 +313,31 @@ func (r *responsesWebSocketRelay) handleUpstream(message websocketMessage) bool 
 		return false
 	}
 	return r.afterUpstreamEvent(rejection)
+}
+
+// A reconnect drops Codex's socket-scoped response ID, but not its turn-state
+// token. Only retry a single unaccepted request with no account-bound token.
+// The replacement relay still requires a full replay before forwarding it.
+func (r *responsesWebSocketRelay) canRetryUsageLimit() bool {
+	if r.route.key() == "" || len(r.turns) != 1 || r.turns[0].created {
+		return false
+	}
+	turn := r.turns[0]
+	if strings.TrimSpace(turn.turnState) != "" || strings.TrimSpace(r.request.Header.Get(codexTurnStateKey)) != "" {
+		return false
+	}
+	if r.current.resp != nil && strings.TrimSpace(r.current.resp.Header.Get(codexTurnStateKey)) != "" {
+		return false
+	}
+	allowed := r.server.allowedAccounts(turn.model, turn.serviceTier)
+	now := time.Now()
+	for _, account := range r.server.pool.all() {
+		candidate := account.routingCandidate()
+		if candidate.id != r.current.account.id() && candidate.available(now) && accountAllowed(allowed, candidate.id) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *responsesWebSocketRelay) handleInBandUnauthorized() {

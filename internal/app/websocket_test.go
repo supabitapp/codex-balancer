@@ -603,7 +603,7 @@ func TestWebSocketFailedTurnDoesNotBindAnAccountBeforeResponseCreated(t *testing
 	defer upstream.Close()
 	failed := testAccount("account-failed", 0)
 	fresh := testAccount("account-fresh", 20)
-	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{failed, fresh})
+	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{failed, fresh})
 	headers := codexWebSocketHeaders("session", "thread")
 
 	first, _ := dialWebSocket(t, proxy.URL, headers)
@@ -612,6 +612,7 @@ func TestWebSocketFailedTurnDoesNotBindAnAccountBeforeResponseCreated(t *testing
 		t.Fatalf("failed turn event = %q, want error before any route becomes accepted", event.Type)
 	}
 	first.CloseNow()
+	waitForWebSocketCounts(t, server, map[string]int64{failed.id(): 0})
 	setTestAccountUsage(failed, 90)
 	setTestAccountUsage(fresh, 0)
 	fresh.RoutingMode = routingModePriority
@@ -853,9 +854,6 @@ func TestWebSocketExhaustedOwnerMovesTheNextEncryptedFullReplayAndRebinds(t *tes
 	first.CloseNow()
 	exhausted, _ := dialWebSocket(t, proxy.URL, headers)
 	writeWebSocketEvent(t, exhausted, map[string]any{"type": "response.create", "input": []any{}})
-	if event := readWebSocketEvent(t, exhausted); event.Type != "error" || !websocketErrorIs(event, "usage_limit_reached") {
-		t.Fatalf("usage-limit event = %+v", event)
-	}
 	readCloseStatus(t, exhausted, websocket.StatusServiceRestart)
 	exhausted.CloseNow()
 

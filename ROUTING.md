@@ -219,10 +219,38 @@ balancer does not add a second reconnect path.
   account spent or cooling.
 - For transient `429`, forward the original event, cool down the account, and
   retire the socket. The balancer does not replay the request.
-- For a usage limit, forward the original terminal event, mark the account
-  spent, and retire the socket. A later fresh user turn or cold resume may
-  choose another eligible account and replay encrypted reasoning. Response IDs
-  and turn-state tokens from the failed turn cannot move.
+- For a usage limit, mark the account spent. If the socket has a thread or
+  session identity, exactly one request is pending,
+  it has not received `response.created`, no turn-state token was sent in its
+  metadata or either side of the handshake, and another eligible account can
+  serve its model and tier, suppress the terminal event and close with `1012`.
+  Preserve the prior owner boundary, including unaccepted provisional claims.
+  Codex app-server (also used by Paseo) can then reconnect and replay full
+  history, including encrypted reasoning, without an old response ID.
+- Otherwise, forward the original usage-limit event and retire the socket.
+  A fresh user turn or cold resume can still choose another eligible account.
+  Reconnect is not identical to logout/login/resume: it clears response IDs
+  but retains turn-state tokens within the current turn. Never strip those
+  tokens to force a switch. Reject an account-moving handshake carrying a
+  turn-state header before opening the replacement upstream connection.
+- Replacement availability is a snapshot, not a reservation. Reconnect still
+  applies ownership, quota, model, and replay checks. If capacity disappears,
+  the client may exhaust its normal retry budget.
 - For an account-specific setup failure, try another eligible account if the
   retained owner cannot continue and no provisional claim conflicts.
 - The balancer does not replay in-flight work.
+
+### Verifying client recovery
+
+The opt-in app-server integration test runs a real Codex binary against a local
+mock upstream with synthetic credentials and an isolated `CODEX_HOME`:
+
+```sh
+CODEX_BALANCER_TEST_CODEX="$(command -v codex)" go test ./internal/app -run TestCodexAppServerUsageLimitReplaysFullHistory -count=1
+```
+
+It checks automatic replay after an incremental request hits a usage limit,
+preservation of history and encrypted reasoning, refusal to move a turn-state
+token, and cold resume in a new app-server process. Cold resume may warm up the
+replacement first; later requests may reference that replacement's response ID.
+This tests the client/proxy protocol, not live upstream decryption or login.

@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -88,6 +90,10 @@ func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error
 		account := decision.account
 		if account == nil {
 			return nil, nil, errNoAccountAvailable
+		}
+		if decision.moved() && strings.TrimSpace(d.request.Header.Get(codexTurnStateKey)) != "" {
+			selection.claim.release()
+			return nil, nil, errors.New("account-bound turn cannot move accounts; start a new turn or resume")
 		}
 		retained := slices.Contains(d.owners, account.id()) || selection.joined
 		if skip, err := d.refreshBeforeDial(account, retained); err != nil {
