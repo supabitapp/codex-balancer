@@ -1,0 +1,12 @@
+#!/bin/sh
+# Run from any directory; keep build artifacts out of the worktree.
+set -eu
+cd "$(dirname "$0")/.."
+build_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-balancer-verify.XXXXXX")
+trap 'rm -rf -- "$build_dir"' EXIT
+trap 'exit 1' HUP INT TERM
+
+go vet ./...
+go test -race -count=1 ./...
+go build -trimpath -o "$build_dir/codex-balancer" .
+"$build_dir/codex-balancer" version
