@@ -55,11 +55,3 @@ five sequential runs per revision:
 The median for repeated calls inside the interval fell about 96.5%. Each retry
 still performs a read; the practical benefit is avoiding repeated failed syscalls
 on unsupported hosts or transient read failures, not an overall server speedup.
-
-## Deployment boundary
-
-`deploy/deploy-codex-balancer` fetches and installs `origin/main` by default and
-restarts the systemd service. Do not run it as a verification command. No checked-in
-GitHub deployment workflow exists; an external scheduler or host-side trigger
-could still invoke that script. Confirm that host configuration before merging
-work when production deployment is prohibited.
