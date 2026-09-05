@@ -659,7 +659,7 @@ func TestDashboardExplainsManualRoutingStatus(t *testing.T) {
 }
 
 func TestDashboardOverview(t *testing.T) {
-	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.FixedZone("BST", 60*60))
+	now := time.Now().In(time.FixedZone("BST", 60*60))
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.started = time.Now().Add(-28 * time.Minute)
 	stats.usageMonth = calendarMonth(now)
@@ -686,7 +686,7 @@ func TestDashboardOverview(t *testing.T) {
 	if len(view.Overview) != len(wantNames) {
 		t.Fatalf("overview metrics = %+v", view.Overview)
 	}
-	wantInfo := "From Aug 1"
+	wantInfo := calendarMonthStart(now).Format("From Jan 2")
 	wantPriceInfo := "gpt-5.6-sol: $0.012\ngpt-5.4-mini: $0.0012\n" + wantInfo + ". Prices from models.dev, updated 11 August 2026, 16:00 BST"
 	monthlyBurnFound := false
 	for i, metric := range view.Overview {
@@ -702,8 +702,7 @@ func TestDashboardOverview(t *testing.T) {
 			}
 			delete(wantValues, metric.Name)
 		}
-		switch metric.Name {
-		case "USD burnt this month":
+		if metric.Name == "USD burnt this month" {
 			monthlyBurnFound = true
 			if metric.Value != "$0.013" {
 				t.Fatalf("monthly burn value = %q, want $0.013", metric.Value)
@@ -711,8 +710,6 @@ func TestDashboardOverview(t *testing.T) {
 			if metric.Info != wantPriceInfo {
 				t.Fatalf("monthly burn info = %q, want %q", metric.Info, wantPriceInfo)
 			}
-		case "turns", "http", "ws turns", "ws open", "turn rate", "estimated TPS", "threads", "accounts", "failovers", "rate limits", "ttfb":
-			t.Fatalf("removed overview metric %q is still present", metric.Name)
 		}
 	}
 	if len(wantValues) != 0 {

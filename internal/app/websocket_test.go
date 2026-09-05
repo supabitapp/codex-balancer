@@ -954,8 +954,9 @@ func TestWebSocketSocketsChooseIndependentAccounts(t *testing.T) {
 	second, _ := dialWebSocket(t, proxy.URL, nil)
 	defer second.CloseNow()
 	writeWebSocketEvent(t, first, map[string]any{"type": "response.create", "input": []any{}})
-	writeWebSocketEvent(t, second, map[string]any{"type": "response.create", "input": []any{}})
+	// Wait for the first socket to pin its upstream before starting the second.
 	readWebSocketEvent(t, first)
+	writeWebSocketEvent(t, second, map[string]any{"type": "response.create", "input": []any{}})
 	readWebSocketEvent(t, second)
 	if got := fmt.Sprint(upstream.ConnectionAccounts()); got != "[account-a account-b]" {
 		t.Fatalf("connection accounts = %s", got)

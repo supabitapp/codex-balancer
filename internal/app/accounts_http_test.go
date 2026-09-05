@@ -29,17 +29,18 @@ func TestAccountLoginPageRendersEmbeddedTemplate(t *testing.T) {
 func TestAccountLoginStatus(t *testing.T) {
 	login := accountLogin{device: deviceAuthorization{authID: "auth-id"}}
 	tests := []struct {
-		name     string
-		store    accountLoginStore
-		wantCode int
+		name      string
+		active    *accountLogin
+		completed bool
+		wantCode  int
 	}{
-		{name: "active", store: accountLoginStore{active: &login}, wantCode: http.StatusNoContent},
-		{name: "completed", store: accountLoginStore{completed: true}, wantCode: http.StatusOK},
-		{name: "failed", store: accountLoginStore{}, wantCode: http.StatusGone},
+		{name: "active", active: &login, wantCode: http.StatusNoContent},
+		{name: "completed", completed: true, wantCode: http.StatusOK},
+		{name: "failed", wantCode: http.StatusGone},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			s := server{logins: test.store}
+			s := server{logins: accountLoginStore{active: test.active, completed: test.completed}}
 			response := httptest.NewRecorder()
 			s.accountLoginStatus(response, httptest.NewRequest(http.MethodGet, "/accounts/status", nil))
 			if response.Code != test.wantCode {
