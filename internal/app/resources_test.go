@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -65,5 +66,51 @@ func TestHostResourceUsage(t *testing.T) {
 		if metrics[i] != want[i] {
 			t.Fatalf("resource metric %d = %+v, want %+v", i, metrics[i], want[i])
 		}
+	}
+}
+
+func BenchmarkResourceMonitorUnavailable(b *testing.B) {
+	m := newResourceMonitor()
+	m.readFile = func(string) ([]byte, error) { return os.ReadFile("/nonexistent-codex-balancer-proc/stat") }
+	now := time.Now()
+	b.ReportAllocs()
+	for b.Loop() {
+		m.usage(now)
+	}
+}
+
+func TestResourceMonitorRetriesAfterInterval(t *testing.T) {
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	calls := 0
+	m := &resourceMonitor{readFile: func(path string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, os.ErrNotExist
+		}
+		switch path {
+		case "/proc/stat":
+			return []byte("cpu 100 0 0 100 0 0 0 0\n"), nil
+		case "/proc/meminfo":
+			return []byte("MemTotal: 100 kB\nMemAvailable: 50 kB\n"), nil
+		default:
+			return []byte("eth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n"), nil
+		}
+	}}
+	if got := m.usage(now); got.MemoryTotal != 0 {
+		t.Fatalf("failed sample = %+v", got)
+	}
+	m.usage(now.Add(resourceSampleInterval - 1))
+	if calls != 1 {
+		t.Fatalf("read calls before retry = %d, want 1", calls)
+	}
+	if got := m.usage(now.Add(resourceSampleInterval)); got.MemoryTotal != 100*1024 {
+		t.Fatalf("recovered sample = %+v", got)
+	}
+	if calls != 4 {
+		t.Fatalf("read calls after retry = %d, want 4", calls)
+	}
+	m.usage(now.Add(resourceSampleInterval + 1))
+	if calls != 4 {
+		t.Fatalf("successful sample not cached: %d calls", calls)
 	}
 }

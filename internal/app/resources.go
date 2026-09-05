@@ -32,10 +32,11 @@ type resourceUsage struct {
 }
 
 type resourceMonitor struct {
-	mu       sync.Mutex
-	readFile func(string) ([]byte, error)
-	previous hostCounters
-	current  hostCounters
+	mu          sync.Mutex
+	readFile    func(string) ([]byte, error)
+	lastAttempt time.Time
+	previous    hostCounters
+	current     hostCounters
 }
 
 func newResourceMonitor() *resourceMonitor {
@@ -48,7 +49,8 @@ func (m *resourceMonitor) usage(now time.Time) resourceUsage {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.current.At.IsZero() || !now.Before(m.current.At.Add(resourceSampleInterval)) {
+	if m.lastAttempt.IsZero() || !now.Before(m.lastAttempt.Add(resourceSampleInterval)) {
+		m.lastAttempt = now
 		current, err := readHostCounters(now, m.readFile)
 		if err == nil {
 			m.previous = m.current
