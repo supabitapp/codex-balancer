@@ -629,7 +629,7 @@ func dashboardModel(model, effort string) string {
 func dashboardModelName(model string) string {
 	switch {
 	case model == "gpt-6-astra" || strings.HasPrefix(model, "gpt-6-astra-"):
-		return "⭐"
+		return "💫"
 	case model == "gpt-5.6-sol" || strings.HasPrefix(model, "gpt-5.6-sol-"):
 		return "☀️"
 	case model == "gpt-5.6-terra" || strings.HasPrefix(model, "gpt-5.6-terra-"):
