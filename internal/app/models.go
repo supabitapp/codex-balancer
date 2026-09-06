@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -81,25 +82,26 @@ func (c *modelCatalog) allowedAccounts(accounts []*Account, model, serviceTier s
 	defer c.mu.RUnlock()
 
 	now := time.Now()
-	for _, account := range accounts {
-		candidate := account.routingCandidate()
-		if !candidate.available(now) {
-			continue
-		}
-		if c.accounts[candidate.id] == nil {
-			return nil
-		}
-	}
-
 	serviceTier = canonicalServiceTier(serviceTier)
 	allowed := map[string]bool{}
+	availableMatch := false
 	for _, account := range accounts {
 		id := account.id()
+		available := account.routingCandidate().available(now)
+		if available && c.accounts[id] == nil {
+			return nil
+		}
 		entry := matchingModelEntry(c.accounts[id], model)
 		if entry == nil || serviceTier != "" && !modelSupportsServiceTier(entry, serviceTier) {
 			continue
 		}
 		allowed[id] = true
+		if available {
+			availableMatch = true
+		}
+	}
+	if !availableMatch {
+		return nil
 	}
 	return allowed
 }
@@ -223,7 +225,7 @@ func (c *modelCatalog) needsRefresh(active []string, clientVersion string, now t
 	if clientVersion == "" {
 		return false
 	}
-	if c.clientVersion == "" || !now.Before(c.nextRefresh) {
+	if c.clientVersion != clientVersion || !now.Before(c.nextRefresh) {
 		return true
 	}
 	for _, id := range active {
@@ -240,6 +242,15 @@ func (c *modelCatalog) version() string {
 	return c.clientVersion
 }
 
+func (c *modelCatalog) newestVersion(clientVersion string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if newerClientVersion(c.clientVersion, clientVersion) {
+		return clientVersion
+	}
+	return c.clientVersion
+}
+
 func (c *modelCatalog) invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -252,6 +263,7 @@ func (s *server) refreshModels(ctx context.Context, clientVersion string) error 
 	}
 	s.catalog.refreshMu.Lock()
 	defer s.catalog.refreshMu.Unlock()
+	clientVersion = s.catalog.newestVersion(clientVersion)
 
 	accounts := s.pool.all()
 	active := make([]*Account, 0, len(accounts))
@@ -398,6 +410,34 @@ func (s *server) watchModels(ctx context.Context) {
 func modelSlug(entry modelEntry) string {
 	slug, _ := entry["slug"].(string)
 	return strings.ToLower(strings.TrimSpace(slug))
+}
+
+func newerClientVersion(current, candidate string) bool {
+	if current == "" {
+		return candidate != ""
+	}
+	currentParts := strings.Split(current, ".")
+	candidateParts := strings.Split(candidate, ".")
+	for index := range max(len(currentParts), len(candidateParts)) {
+		currentPart := clientVersionPart(currentParts, index)
+		candidatePart := clientVersionPart(candidateParts, index)
+		if currentPart != candidatePart {
+			return candidatePart > currentPart
+		}
+	}
+	return false
+}
+
+func clientVersionPart(parts []string, index int) int {
+	if index >= len(parts) {
+		return 0
+	}
+	digits := 0
+	for digits < len(parts[index]) && parts[index][digits] >= '0' && parts[index][digits] <= '9' {
+		digits++
+	}
+	value, _ := strconv.Atoi(parts[index][:digits])
+	return value
 }
 
 const serviceTierPriority = "priority"

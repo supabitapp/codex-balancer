@@ -131,7 +131,7 @@ func TestModelCatalogFiltersAccountsByModelAndServiceTier(t *testing.T) {
 	}{
 		{model: "gpt-sol", want: "[account-b]"},
 		{model: "gpt-sol", tier: "fast", want: "[account-b]"},
-		{model: "gpt-terra", tier: "priority", want: "[]"},
+		{model: "gpt-terra", want: "[account-a]"},
 	} {
 		got := allowedAccountIDs(catalog.allowedAccounts([]*Account{a, b}, test.model, test.tier))
 		if fmt.Sprint(got) != test.want {
@@ -169,6 +169,31 @@ func TestModelCatalogIgnoresMissingCatalogForUnavailableAccount(t *testing.T) {
 	allowed := catalog.allowedAccounts([]*Account{a, b}, "gpt-terra", "")
 	if got := fmt.Sprint(allowedAccountIDs(allowed)); got != "[account-a]" {
 		t.Fatalf("allowed accounts = %s", got)
+	}
+}
+
+func TestModelCatalogDoesNotFilterModelWithoutRoutableAccount(t *testing.T) {
+	a := testAccount("account-a", 0)
+	b := testAccount("account-b", 20)
+	b.Paused = true
+	catalog := newModelCatalog()
+	catalog.replace(
+		[]string{a.id(), b.id()},
+		map[string][]modelEntry{
+			a.id(): {testModelEntry("gpt-terra")},
+			b.id(): {testModelEntry("gpt-sol")},
+		},
+		"0.150.0",
+	)
+
+	for _, test := range []struct{ model, tier string }{
+		{model: "gpt-astra"},
+		{model: "gpt-terra", tier: "priority"},
+		{model: "gpt-sol"},
+	} {
+		if allowed := catalog.allowedAccounts([]*Account{a, b}, test.model, test.tier); allowed != nil {
+			t.Fatalf("model %q tier %q accounts = %v, want unknown", test.model, test.tier, allowedAccountIDs(allowed))
+		}
 	}
 }
 
@@ -237,19 +262,43 @@ func TestModelCatalogInvalidationForcesRefresh(t *testing.T) {
 	}
 }
 
-func TestModelCatalogCoalescesClientVersionsWithinRefreshInterval(t *testing.T) {
+func TestModelCatalogCoalescesOlderClientVersionsWithinRefreshInterval(t *testing.T) {
 	catalog := newModelCatalog()
 	catalog.replace(
 		[]string{"account-a"},
 		map[string][]modelEntry{"account-a": {testModelEntry("gpt-common")}},
-		"0.1.0",
+		"0.2.0",
 	)
 	nextRefresh := catalog.nextRefresh
-	if catalog.needsRefresh([]string{"account-a"}, "0.2.0", nextRefresh.Add(-time.Second)) {
-		t.Fatal("new client version bypassed refresh interval")
+	if catalog.needsRefresh([]string{"account-a"}, catalog.newestVersion("0.1.0"), nextRefresh.Add(-time.Second)) {
+		t.Fatal("older client version bypassed refresh interval")
 	}
-	if !catalog.needsRefresh([]string{"account-a"}, "0.2.0", nextRefresh) {
+	if !catalog.needsRefresh([]string{"account-a"}, catalog.newestVersion("0.1.0"), nextRefresh) {
 		t.Fatal("catalog did not refresh after interval")
+	}
+	if got := catalog.newestVersion("0.1.0"); got != "0.2.0" {
+		t.Fatalf("refresh version = %s, want the newest client version", got)
+	}
+}
+
+func TestNewerClientVersionComparesNumericParts(t *testing.T) {
+	for _, test := range []struct {
+		current   string
+		candidate string
+		want      bool
+	}{
+		{current: "", candidate: "0.150.0", want: true},
+		{current: "0.150.0", candidate: "0.153.4", want: true},
+		{current: "0.9.0", candidate: "0.10.0", want: true},
+		{current: "0.153.4", candidate: "0.153.4"},
+		{current: "0.153.4", candidate: "0.150.0"},
+		{current: "0.153.4", candidate: "0.153"},
+		{current: "0.153", candidate: "0.153.4", want: true},
+		{current: "0.153.4", candidate: "0.153.5-alpha", want: true},
+	} {
+		if got := newerClientVersion(test.current, test.candidate); got != test.want {
+			t.Fatalf("newerClientVersion(%q, %q) = %t", test.current, test.candidate, got)
+		}
 	}
 }
 
@@ -417,6 +466,76 @@ func TestModelsRefreshFailureWaitsForRefreshInterval(t *testing.T) {
 		"client_version": "0.1.0",
 		"models":         float64(0),
 	})
+}
+
+func TestModelsServeNewestClientCatalogWhateverTheClientOrder(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		clients  []string
+		fetched  string
+		accounts string
+	}{
+		{
+			name:     "older client keeps the newer catalog and fetches nothing",
+			clients:  []string{"0.153.4", "0.150.0"},
+			fetched:  "[0.153.4]",
+			accounts: "[account-a]",
+		},
+		{
+			name:     "newer client refreshes without waiting for the interval",
+			clients:  []string{"0.150.0", "0.153.4"},
+			fetched:  "[0.150.0 0.153.4]",
+			accounts: "[account-a]",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			a := testAccount("account-a", 0)
+			var mu sync.Mutex
+			fetched := []string{}
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				version := r.URL.Query().Get("client_version")
+				mu.Lock()
+				fetched = append(fetched, version)
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				if version == "0.153.4" {
+					fmt.Fprint(w, `{"models":[{"slug":"gpt-terra"},{"slug":"gpt-astra"}]}`)
+					return
+				}
+				fmt.Fprint(w, `{"models":[{"slug":"gpt-terra"}]}`)
+			}))
+			defer upstream.Close()
+
+			server := &server{
+				pool:     &Pool{accounts: []*Account{a}},
+				catalog:  newModelCatalog(),
+				upstream: upstream.URL,
+				client:   upstream.Client(),
+				log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			for _, clientVersion := range test.clients {
+				request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version="+clientVersion, nil)
+				response := httptest.NewRecorder()
+				server.models(response, request)
+				if response.Code != http.StatusOK {
+					t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+				}
+			}
+			if got := modelSlugs(server.catalog.entries()); fmt.Sprint(got) != "[gpt-astra gpt-terra]" {
+				t.Fatalf("models = %v, want the newest client catalog", got)
+			}
+			mu.Lock()
+			gotFetched := fmt.Sprint(fetched)
+			mu.Unlock()
+			if gotFetched != test.fetched {
+				t.Fatalf("upstream client versions = %s, want %s", gotFetched, test.fetched)
+			}
+			allowed := server.catalog.allowedAccounts([]*Account{a}, "gpt-astra", "")
+			if got := fmt.Sprint(allowedAccountIDs(allowed)); got != test.accounts {
+				t.Fatalf("allowed accounts = %s, want %s", got, test.accounts)
+			}
+		})
+	}
 }
 
 func testModelEntry(slug string, serviceTiers ...string) modelEntry {

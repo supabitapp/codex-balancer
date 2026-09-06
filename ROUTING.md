@@ -27,8 +27,10 @@ server considers accounts in this order:
 
 1. Exclude paused, spent, cooling, signed-out, unknown-quota, and non-routable
    accounts.
-2. If all available accounts publish model catalogs, exclude accounts that lack
-   the requested model or service tier.
+2. If all available accounts publish model catalogs and at least one of them
+   carries the requested model and service tier, exclude the accounts that lack
+   it. When no available account carries it, keep every candidate and let
+   upstream answer for the model.
 3. Prefer manual priority.
 4. Prefer an account with a reset credit that expires within 24 hours, ordered
    by expiration time.
@@ -37,6 +39,12 @@ server considers accounts in this order:
    oldest last-used timestamp, then account ID.
 
 The model endpoint returns the union of known account catalogs.
+
+Upstream gates each model on a minimum client version, so the catalog follows
+the newest `client_version` the model endpoint has seen. A newer client
+refreshes the catalog at once. An older client neither refreshes it nor
+withdraws the models a newer client uses; every entry carries its own
+`minimal_client_version` for the client to filter on.
 
 For an identified route, a handshake leaves the last-used timestamp unchanged.
 `response.created` updates it. An anonymous socket has no thread or session
