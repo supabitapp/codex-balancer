@@ -13,7 +13,7 @@ import (
 const (
 	frame                 = 500 * time.Millisecond
 	columnGap             = 3
-	minimumDashboardWidth = 99
+	minimumDashboardWidth = 100
 )
 
 type tuiStyles struct {
@@ -272,7 +272,7 @@ func (d dashboard) accounts(limit int) string {
 	gap := 1
 	planW := 4
 	statusW := 10
-	fiveHourW := 5
+	fiveHourW := 6
 	weeklyW := 6
 	bankedW := 6
 	resetW := 8

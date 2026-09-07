@@ -99,7 +99,7 @@ func TestAccountTableShowsRoutedValue(t *testing.T) {
 func TestAccountTableShowsFiveHourAndWeeklyUsage(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 0)
-	account.primary = window{usedPercent: 35, minutes: fiveHourWindowMinutes, resetsAt: now.Add(3 * time.Hour), seenAt: now}
+	account.primary = window{usedPercent: 34.75, minutes: fiveHourWindowMinutes, resetsAt: now.Add(3 * time.Hour), seenAt: now}
 	account.secondary = window{usedPercent: 60, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
 	dashboard := dashboard{
 		pool:  &Pool{accounts: []*Account{account}},
@@ -108,7 +108,7 @@ func TestAccountTableShowsFiveHourAndWeeklyUsage(t *testing.T) {
 	}
 
 	rendered := dashboard.accounts(1)
-	for _, expected := range []string{"5h", "Weekly", "65%", "40%", "Reset in"} {
+	for _, expected := range []string{"5h", "Weekly", "65.25%", "40%", "Reset in"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("account table missing %q:\n%s", expected, rendered)
 		}
