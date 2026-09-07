@@ -445,8 +445,6 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
 	account.adoptResetCredits(now, 0, nil)
-	fiveHourResetAt := now.Add(4 * time.Hour)
-	account.primary = window{usedPercent: 35, minutes: fiveHourWindowMinutes, resetsAt: fiveHourResetAt, seenAt: now}
 	resetAt := now.Add(3 * 24 * time.Hour)
 	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: resetAt, seenAt: now}
 	other := testAccount("account-b", 20)
@@ -465,7 +463,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	}
 	accountView := view.Accounts[0]
 	wantValueInfo := "Estimated from usage routed here since " + resetAt.Add(-7*24*time.Hour).Format("2 January 2006, 15:04 MST") + " at $0.04 per credit."
-	if accountView.FiveHour != "65" || accountView.FiveHourResetIn != "4h00m" || accountView.Weekly != "80" || accountView.WeeklyResetIn != "3d0h" || accountView.Banked != "" || accountView.RoutedValue != "$49.38" || accountView.RoutedValueInfo != wantValueInfo || accountView.Traffic != "1" {
+	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.RoutedValue != "$49.38" || accountView.RoutedValueInfo != wantValueInfo || accountView.Traffic != "1" {
 		t.Fatalf("account values = %+v", accountView)
 	}
 	if view.Accounts[1].RoutedValue != "--" || view.Accounts[1].RoutedValueInfo != "No usage routed in this reset window." {
@@ -479,7 +477,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>5h %</th>", "<th>5h reset</th>", "<th>Weekly %</th>", "<th>Weekly reset</th>", "<th>Burnt since last reset</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">$49.38</span>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Burnt since last reset</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">$49.38</span>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}

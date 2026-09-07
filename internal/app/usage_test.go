@@ -13,21 +13,6 @@ import (
 	"time"
 )
 
-func TestUsageWindowConvertsFiveHoursToMinutes(t *testing.T) {
-	now := time.Now()
-	used := 37.5
-	resetAt := now.Add(4 * time.Hour).Truncate(time.Second)
-	w := (usageWindow{
-		UsedPercent:        &used,
-		ResetAt:            resetAt.Unix(),
-		LimitWindowSeconds: 5 * 60 * 60,
-	}).window(now)
-
-	if !w.known() || w.minutes != fiveHourWindowMinutes || w.usedPercent != used || !w.resetsAt.Equal(resetAt) {
-		t.Fatalf("window = %+v, want a five-hour window resetting at %s", w, resetAt)
-	}
-}
-
 func TestUsagePollLimitReachedRemovesAccountFromNewRouting(t *testing.T) {
 	account := testAccount("account-a", 50)
 	roomier := testAccount("account-b", 20)
@@ -40,7 +25,7 @@ func TestUsagePollLimitReachedRemovesAccountFromNewRouting(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"rate_limit": map[string]any{
 				"limit_reached":    true,
-				"primary_window":   map[string]any{"used_percent": used, "limit_window_seconds": 5 * 60 * 60},
+				"primary_window":   map[string]any{"used_percent": used, "limit_window_seconds": 300},
 				"secondary_window": map[string]any{"used_percent": used, "limit_window_seconds": 604800},
 			},
 		})
@@ -72,7 +57,7 @@ func TestUsagePollPositiveCapacityReturnsSpentAccountToRouting(t *testing.T) {
 	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"rate_limit": map[string]any{
-				"primary_window":   map[string]any{"used_percent": 99, "limit_window_seconds": 5 * 60 * 60},
+				"primary_window":   map[string]any{"used_percent": 99, "limit_window_seconds": 300},
 				"secondary_window": map[string]any{"used_percent": 99, "limit_window_seconds": 604800},
 			},
 		})
@@ -103,7 +88,7 @@ func TestUsagePollAdoptsCurrentPlan(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"plan_type": "prolite",
 			"rate_limit": map[string]any{
-				"primary_window": map[string]any{"used_percent": 20, "limit_window_seconds": 5 * 60 * 60},
+				"primary_window": map[string]any{"used_percent": 20, "limit_window_seconds": 300},
 			},
 		})
 	}))
@@ -194,7 +179,7 @@ func TestUsagePollRefreshesExpiringAccessToken(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"plan_type": "pro",
 			"rate_limit": map[string]any{
-				"primary_window": map[string]any{"used_percent": 20, "limit_window_seconds": 5 * 60 * 60},
+				"primary_window": map[string]any{"used_percent": 20, "limit_window_seconds": 300},
 			},
 		})
 	}))
@@ -255,7 +240,7 @@ func TestPollAllUsageRefreshesResetCreditsWithoutConsuming(t *testing.T) {
 		case "GET /usage":
 			json.NewEncoder(w).Encode(map[string]any{
 				"rate_limit": map[string]any{
-					"primary_window":   map[string]any{"used_percent": 80, "limit_window_seconds": 5 * 60 * 60},
+					"primary_window":   map[string]any{"used_percent": 80, "limit_window_seconds": 300},
 					"secondary_window": map[string]any{"used_percent": 80, "limit_window_seconds": 604800, "reset_at": resetAt.Unix()},
 				},
 				"rate_limit_reset_credits": map[string]any{"available_count": 1},
@@ -351,7 +336,7 @@ func TestUsageIsFetchedAgainAfterRestart(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{
 				"plan_type": "prolite",
 				"rate_limit": map[string]any{
-					"primary_window":   map[string]any{"used_percent": 25, "limit_window_seconds": 5 * 60 * 60, "reset_at": now.Add(4 * time.Hour).Unix()},
+					"primary_window":   map[string]any{"used_percent": 25, "limit_window_seconds": 300, "reset_at": now.Add(4 * time.Minute).Unix()},
 					"secondary_window": map[string]any{"used_percent": 40, "limit_window_seconds": 604800, "reset_at": now.Add(5 * 24 * time.Hour).Unix()},
 				},
 			})

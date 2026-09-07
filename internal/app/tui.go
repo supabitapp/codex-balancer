@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	frame                 = 500 * time.Millisecond
-	columnGap             = 3
-	minimumDashboardWidth = 100
+	frame     = 500 * time.Millisecond
+	columnGap = 3
 )
 
 type tuiStyles struct {
@@ -158,7 +157,7 @@ func (d dashboard) title() string {
 
 func (d dashboard) render() string {
 	styles := d.styles()
-	if d.width < minimumDashboardWidth || d.height < 16 {
+	if d.width < 80 || d.height < 16 {
 		return styles.dim.Render("terminal too small")
 	}
 	head := d.header()
@@ -272,7 +271,6 @@ func (d dashboard) accounts(limit int) string {
 	gap := 1
 	planW := 4
 	statusW := 10
-	fiveHourW := 6
 	weeklyW := 6
 	bankedW := 6
 	resetW := 8
@@ -281,7 +279,7 @@ func (d dashboard) accounts(limit int) string {
 	trafficW := 7
 	limitsW := 6
 
-	fixedCols := planW + statusW + fiveHourW + weeklyW + bankedW + resetW + routedValueW + wsW + trafficW + limitsW + 11*gap + 2
+	fixedCols := planW + statusW + weeklyW + bankedW + resetW + routedValueW + wsW + trafficW + limitsW + 10*gap + 2
 	nameW = min(nameW, max(9, d.width-fixedCols-8))
 	activityW := d.width - fixedCols - nameW
 
@@ -291,7 +289,6 @@ func (d dashboard) accounts(limit int) string {
 		styles.section.Render(fit("Account", nameW)),
 		styles.section.Render(fit("Plan", planW)),
 		styles.section.Render(fit("Status", statusW)),
-		styles.section.Render(fit("5h", fiveHourW)),
 		styles.section.Render(fit("Weekly", weeklyW)),
 		styles.section.Render(fit("Banked", bankedW)),
 		styles.section.Render(fit("Reset in", resetW)),
@@ -312,7 +309,6 @@ func (d dashboard) accounts(limit int) string {
 
 	for i, a := range accounts[start:end] {
 		primary, secondary, _, reauth := a.health()
-		fiveHour := windowByMinutes(fiveHourWindowMinutes, primary, secondary)
 		weekly := longestWindow(primary, secondary)
 		stat := d.snap.Accounts[a.id()]
 		now := time.Now()
@@ -356,11 +352,11 @@ func (d dashboard) accounts(limit int) string {
 			limits = fmt.Sprintf("%d", stat.Limited)
 		}
 
-		quotaCell := func(value window, width int) string {
-			left, known := remainingPercent(value)
-			if !known {
-				return styles.dim.Render(fit("--", width))
-			}
+		var weeklyCell string
+		left, known := remainingPercent(weekly)
+		if !known {
+			weeklyCell = styles.dim.Render(fit("--", weeklyW))
+		} else {
 			style := styles.good
 			switch {
 			case left <= 10:
@@ -368,10 +364,8 @@ func (d dashboard) accounts(limit int) string {
 			case left <= 30:
 				style = styles.warn
 			}
-			return style.Render(fit(formatPercent(left), width))
+			weeklyCell = style.Render(fit(formatPercent(left), weeklyW))
 		}
-		fiveHourCell := quotaCell(fiveHour, fiveHourW)
-		weeklyCell := quotaCell(weekly, weeklyW)
 
 		banked := styles.dim.Render(fit("--", bankedW))
 		if count, _, known := a.bankedResets(); known {
@@ -392,7 +386,6 @@ func (d dashboard) accounts(limit int) string {
 			name,
 			styles.dim.Render(fit(a.plan(), planW)),
 			status,
-			fiveHourCell,
 			weeklyCell,
 			banked,
 			reset,

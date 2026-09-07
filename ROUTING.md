@@ -35,8 +35,6 @@ server considers accounts in this order:
 4. Prefer an account with a reset credit that expires within 24 hours, ordered
    by expiration time.
 5. Choose the account with the lowest peak usage across its rate-limit windows.
-   Track the five-hour and longer windows independently; the higher used
-   percentage is the account's pressure.
 6. For a peak-usage difference of one percentage point or less, choose the
    oldest last-used timestamp, then account ID.
 

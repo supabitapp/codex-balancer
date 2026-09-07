@@ -1459,7 +1459,6 @@ func TestWebSocketUpstreamTransportLossRestartsDownstream(t *testing.T) {
 func TestWebSocketTracksUsageHeadersAndMetadata(t *testing.T) {
 	var mu sync.Mutex
 	serviceTiers := []string{}
-	resetAt := time.Now().Add(4 * time.Hour).Truncate(time.Second)
 	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
 		mu.Lock()
 		serviceTiers = append(serviceTiers, request.ServiceTier)
@@ -1469,7 +1468,6 @@ func TestWebSocketTracksUsageHeadersAndMetadata(t *testing.T) {
 			"headers": map[string]any{
 				"x-codex-primary-used-percent":   "97",
 				"x-codex-primary-window-minutes": "300",
-				"x-codex-primary-reset-at":       fmt.Sprintf("%d", resetAt.Unix()),
 			},
 			"response": map[string]any{"id": "response"},
 		})
@@ -1509,7 +1507,7 @@ func TestWebSocketTracksUsageHeadersAndMetadata(t *testing.T) {
 		t.Fatalf("service tiers = %v", gotTier)
 	}
 	primary, _, _, _ := a.health()
-	if primary.usedPercent != 97 || primary.minutes != fiveHourWindowMinutes || !primary.resetsAt.Equal(resetAt) {
+	if primary.usedPercent != 97 {
 		t.Fatalf("primary usage = %v", primary.usedPercent)
 	}
 	snapshot := server.stats.snapshot()

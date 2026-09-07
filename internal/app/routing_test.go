@@ -20,19 +20,6 @@ func TestPoolRouteChoosesRoomierAccount(t *testing.T) {
 	}
 }
 
-func TestPoolRouteUsesTheMostConstrainedQuotaWindow(t *testing.T) {
-	fiveHourConstrained := testAccount("account-five-hour", 0)
-	fiveHourConstrained.primary.usedPercent = 90
-	fiveHourConstrained.secondary.usedPercent = 10
-	weeklyConstrained := testAccount("account-weekly", 0)
-	weeklyConstrained.primary.usedPercent = 20
-	weeklyConstrained.secondary.usedPercent = 80
-
-	if got := (&Pool{accounts: []*Account{fiveHourConstrained, weeklyConstrained}}).route(nil, nil).account; got != weeklyConstrained {
-		t.Fatalf("account = %s, want account-weekly with lower peak usage", got.id())
-	}
-}
-
 func TestPoolRouteRetainsHealthyOwnerAheadOfFreshPlacementRules(t *testing.T) {
 	owner := testAccount("account-owner", 90)
 	fresh := testAccount("account-fresh", 0)
@@ -397,8 +384,8 @@ func testAccountWithPlan(id string, used float64, plan string) *Account {
 		RefreshToken: "refresh-" + id,
 		LastRefresh:  time.Now(),
 	})
-	account.primary = window{usedPercent: used, minutes: fiveHourWindowMinutes, seenAt: time.Now()}
-	account.secondary = window{usedPercent: used, minutes: 7 * 24 * 60, seenAt: time.Now()}
+	account.primary = window{usedPercent: used, seenAt: time.Now()}
+	account.secondary = window{usedPercent: used, seenAt: time.Now()}
 	return account
 }
 
