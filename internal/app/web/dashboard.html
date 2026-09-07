@@ -129,9 +129,11 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Account</th>
 <th>Plan</th>
 <th>Status</th>
+<th>5h %</th>
+<th>5h reset</th>
 <th>Weekly %</th>
+<th>Weekly reset</th>
 <th>Banked</th>
-<th>Reset in</th>
 <th>Burnt since last reset</th>
 <th>WS</th>
 <th>Traffic 24h %</th>
@@ -141,9 +143,11 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td>{{.Name}}</td>
 <td class="dim">{{.Plan}}</td>
 {{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span id="{{.DOMID}}-status" class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
+<td>{{.FiveHour}}</td>
+<td class="dim">{{.FiveHourResetIn}}</td>
 <td>{{.Weekly}}</td>
+<td class="dim">{{.WeeklyResetIn}}</td>
 <td>{{if .BankedInfo}}<span id="{{.DOMID}}-banked" class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
-<td class="dim">{{.ResetIn}}</td>
 <td>{{if .RoutedValueInfo}}<span id="{{.DOMID}}-routed-value" class="has-tooltip" data-tooltip="{{.RoutedValueInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.RoutedValue}}</span>{{else}}{{.RoutedValue}}{{end}}</td>
 <td>{{.OpenWebSockets}}</td>
 <td class="dim">{{.Traffic}}</td>

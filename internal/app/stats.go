@@ -677,23 +677,26 @@ type statsResponse struct {
 }
 
 type accountStatsResponse struct {
-	ID                     string                        `json:"id"`
-	Email                  string                        `json:"email,omitempty"`
-	Plan                   string                        `json:"plan"`
-	Status                 accountStatus                 `json:"status"`
-	RoutingMode            routingMode                   `json:"routing_mode"`
-	RoutingPriority        *routingPriorityStatsResponse `json:"routing_priority,omitempty"`
-	WeeklyRemainingPercent *float64                      `json:"weekly_remaining_percent"`
-	BankedResets           *int64                        `json:"banked_resets"`
-	ResetCredits           []resetCreditStatsResponse    `json:"reset_credits,omitempty"`
-	ResetAt                *time.Time                    `json:"reset_at"`
-	RoutedCredits          *float64                      `json:"routed_credits,omitempty"`
-	RoutedCreditsSince     *time.Time                    `json:"routed_credits_since,omitempty"`
-	SpendControl           *spendControlStatsResponse    `json:"spend_control,omitempty"`
-	Turns                  int64                         `json:"turns"`
-	OpenWebSockets         int64                         `json:"open_websockets"`
-	RateLimits             int64                         `json:"rate_limits"`
-	Activity               []int64                       `json:"activity"`
+	ID                       string                        `json:"id"`
+	Email                    string                        `json:"email,omitempty"`
+	Plan                     string                        `json:"plan"`
+	Status                   accountStatus                 `json:"status"`
+	RoutingMode              routingMode                   `json:"routing_mode"`
+	RoutingPriority          *routingPriorityStatsResponse `json:"routing_priority,omitempty"`
+	FiveHourRemainingPercent *float64                      `json:"five_hour_remaining_percent"`
+	FiveHourResetAt          *time.Time                    `json:"five_hour_reset_at"`
+	WeeklyRemainingPercent   *float64                      `json:"weekly_remaining_percent"`
+	WeeklyResetAt            *time.Time                    `json:"weekly_reset_at"`
+	BankedResets             *int64                        `json:"banked_resets"`
+	ResetCredits             []resetCreditStatsResponse    `json:"reset_credits,omitempty"`
+	ResetAt                  *time.Time                    `json:"reset_at"`
+	RoutedCredits            *float64                      `json:"routed_credits,omitempty"`
+	RoutedCreditsSince       *time.Time                    `json:"routed_credits_since,omitempty"`
+	SpendControl             *spendControlStatsResponse    `json:"spend_control,omitempty"`
+	Turns                    int64                         `json:"turns"`
+	OpenWebSockets           int64                         `json:"open_websockets"`
+	RateLimits               int64                         `json:"rate_limits"`
+	Activity                 []int64                       `json:"activity"`
 }
 
 type spendControlStatsResponse struct {
@@ -741,7 +744,12 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		candidate := account.routingCandidate()
 		primary, secondary := candidate.primary, candidate.secondary
 		traffic := snapshot.Accounts[claims.Auth.AccountID]
+		fiveHour := windowByMinutes(fiveHourWindowMinutes, primary, secondary)
 		weekly := longestWindow(primary, secondary)
+		var fiveHourRemaining *float64
+		if remaining, known := remainingPercent(fiveHour); known {
+			fiveHourRemaining = &remaining
+		}
 		var weeklyRemaining *float64
 		if remaining, known := remainingPercent(weekly); known {
 			weeklyRemaining = &remaining
@@ -759,9 +767,13 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 				})
 			}
 		}
-		var resetAt *time.Time
+		var fiveHourResetAt *time.Time
+		if reset := fiveHour.resetsAt; reset.After(now) {
+			fiveHourResetAt = &reset
+		}
+		var weeklyResetAt *time.Time
 		if reset := weekly.resetsAt; reset.After(now) {
-			resetAt = &reset
+			weeklyResetAt = &reset
 		}
 		var routedCredits *float64
 		var routedCreditsSince *time.Time
@@ -781,23 +793,26 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		}
 		spendControl := spendControlStats(candidate.spendControl)
 		out.Accounts = append(out.Accounts, accountStatsResponse{
-			ID:                     claims.Auth.AccountID,
-			Email:                  maskEmail(claims.Email),
-			Plan:                   plan,
-			Status:                 status,
-			RoutingMode:            candidate.mode,
-			RoutingPriority:        routingPriority,
-			WeeklyRemainingPercent: weeklyRemaining,
-			BankedResets:           bankedResets,
-			ResetCredits:           resetCredits,
-			ResetAt:                resetAt,
-			RoutedCredits:          routedCredits,
-			RoutedCreditsSince:     routedCreditsSince,
-			SpendControl:           spendControl,
-			Turns:                  traffic.Turns,
-			OpenWebSockets:         traffic.WSOpen,
-			RateLimits:             traffic.Limited,
-			Activity:               append([]int64{}, traffic.Activity...),
+			ID:                       claims.Auth.AccountID,
+			Email:                    maskEmail(claims.Email),
+			Plan:                     plan,
+			Status:                   status,
+			RoutingMode:              candidate.mode,
+			RoutingPriority:          routingPriority,
+			FiveHourRemainingPercent: fiveHourRemaining,
+			FiveHourResetAt:          fiveHourResetAt,
+			WeeklyRemainingPercent:   weeklyRemaining,
+			WeeklyResetAt:            weeklyResetAt,
+			BankedResets:             bankedResets,
+			ResetCredits:             resetCredits,
+			ResetAt:                  weeklyResetAt,
+			RoutedCredits:            routedCredits,
+			RoutedCreditsSince:       routedCreditsSince,
+			SpendControl:             spendControl,
+			Turns:                    traffic.Turns,
+			OpenWebSockets:           traffic.WSOpen,
+			RateLimits:               traffic.Limited,
+			Activity:                 append([]int64{}, traffic.Activity...),
 		})
 	}
 	return out

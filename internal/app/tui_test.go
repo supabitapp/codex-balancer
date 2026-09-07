@@ -96,6 +96,49 @@ func TestAccountTableShowsRoutedValue(t *testing.T) {
 	}
 }
 
+func TestAccountTableShowsFiveHourAndWeeklyUsage(t *testing.T) {
+	now := time.Now()
+	account := testAccount("account-a", 0)
+	account.primary = window{usedPercent: 34.75, minutes: fiveHourWindowMinutes, resetsAt: now.Add(3 * time.Hour), seenAt: now}
+	account.secondary = window{usedPercent: 60, minutes: 7 * 24 * 60, resetsAt: now.Add(6 * 24 * time.Hour), seenAt: now}
+	dashboard := dashboard{
+		pool:  &Pool{accounts: []*Account{account}},
+		stats: newStatsWithPrices(testPriceSnapshot(t)),
+		width: 160,
+	}
+
+	rendered := dashboard.accounts(1)
+	for _, expected := range []string{"5h", "Weekly", "65.25%", "40%", "Reset in"} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("account table missing %q:\n%s", expected, rendered)
+		}
+	}
+}
+
+func TestDashboardRejectsTerminalNarrowerThanAccountTable(t *testing.T) {
+	dashboard := dashboard{
+		pool:   &Pool{accounts: []*Account{testAccount("account-a", 20)}},
+		stats:  newStatsWithPrices(testPriceSnapshot(t)),
+		width:  minimumDashboardWidth - 1,
+		height: 40,
+	}
+
+	if rendered := dashboard.render(); !strings.Contains(rendered, "terminal too small") {
+		t.Fatalf("narrow dashboard rendered account table:\n%s", rendered)
+	}
+
+	dashboard.width = minimumDashboardWidth
+	rendered := dashboard.render()
+	if strings.Contains(rendered, "terminal too small") {
+		t.Fatalf("minimum-width dashboard was rejected:\n%s", rendered)
+	}
+	for _, line := range strings.Split(dashboard.accounts(1), "\n") {
+		if width := lipgloss.Width(line); width > minimumDashboardWidth {
+			t.Fatalf("account table line is %d columns at minimum width %d:\n%s", width, minimumDashboardWidth, line)
+		}
+	}
+}
+
 func assertColor(t *testing.T, got, want color.Color) {
 	t.Helper()
 	gotR, gotG, gotB, gotA := got.RGBA()

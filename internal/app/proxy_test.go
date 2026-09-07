@@ -70,3 +70,21 @@ func TestResetHeaderAcceptsHTTPDate(t *testing.T) {
 		t.Fatalf("reset = %s, want %s", got, want)
 	}
 }
+
+func TestResetHeaderUsesTheBindingFiveHourWindow(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	fiveHourReset := now.Add(2 * time.Hour)
+	weeklyReset := now.Add(5 * 24 * time.Hour)
+	headers := http.Header{
+		"X-Codex-Primary-Used-Percent":             {"100"},
+		"X-Codex-Primary-Window-Minutes":           {"300"},
+		"X-Codex-Primary-Reset-At":                 {fmt.Sprintf("%d", fiveHourReset.Unix())},
+		"X-Codex-Secondary-Primary-Used-Percent":   {"80"},
+		"X-Codex-Secondary-Primary-Window-Minutes": {"10080"},
+		"X-Codex-Secondary-Primary-Reset-At":       {fmt.Sprintf("%d", weeklyReset.Unix())},
+	}
+
+	if got := resetHeader(headers); !got.Equal(fiveHourReset) {
+		t.Fatalf("reset = %s, want five-hour reset %s", got, fiveHourReset)
+	}
+}
