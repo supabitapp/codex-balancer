@@ -27,6 +27,8 @@ func newProxyClient() *http.Client {
 }
 
 type server struct {
+	admin            adminAuth
+	settingsMu       sync.Mutex
 	fastMode         fastModePolicy
 	ctx              context.Context
 	pool             *Pool
@@ -73,11 +75,15 @@ var webSocketExcludedHeaders = map[string]bool{
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
+	admin := s.adminRoutes()
+	mux.Handle("/admin", admin)
+	mux.Handle("/admin/", admin)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard", http.StatusPermanentRedirect)
 	})
 	mux.HandleFunc("GET /accounts", s.accountsPage)
 	mux.HandleFunc("GET /accounts/status", s.accountLoginStatus)
+	mux.HandleFunc("GET /dashboard/assets/admin.css", webAsset("web/admin.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable"))
 	mux.HandleFunc("GET /dashboard/assets/accounts.css", webAsset("web/accounts.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable"))
 	mux.HandleFunc("GET /dashboard/assets/accounts.js", webAsset("web/accounts.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
 	mux.HandleFunc("GET /dashboard", s.dashboardPage)

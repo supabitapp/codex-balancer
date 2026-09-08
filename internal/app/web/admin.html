@@ -1,0 +1,82 @@
+{{define "head"}}<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"allowEval":false,"includeIndicatorStyles":false,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
+<title>Admin · Codex Balancer</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{waterCSSURL}}">
+<link rel="stylesheet" href="{{dashboardAssetURL "admin.css"}}">
+<script src="/dashboard/assets/htmx-2.0.10.min.js" defer></script>{{end}}
+
+{{define "login"}}<!doctype html><html lang="en"><head>{{template "head"}}</head>
+<body hx-history="false"><main class="login">
+<a href="/dashboard">← Dashboard</a>
+<h1>Admin</h1>
+{{if .Disabled}}<p>Admin access is disabled.</p><p>Set an admin password from the server terminal to enable access.</p>
+{{else}}<p>Sign in to manage Codex Balancer.</p>
+{{if .Error}}<p class="notice error" role="alert">{{.Error}}</p>{{end}}
+<form action="/admin/login" method="post">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label for="password">Admin password</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024" autofocus>
+<button type="submit">Sign in</button>
+</form>{{end}}</main></body></html>{{end}}
+
+{{define "page"}}<!doctype html><html lang="en"><head>{{template "head"}}</head>
+<body hx-history="false"><main>
+<header><div><a href="/dashboard">← Dashboard</a><h1>Admin</h1></div>
+<form action="/admin/logout" method="post">{{template "csrf" .CSRF}}<button type="submit">Sign out</button></form></header>
+{{template "settings-panel" .}}
+{{template "accounts-panel" .}}
+{{template "keys-panel" .}}
+{{template "status-panel" .}}
+</main></body></html>{{end}}
+
+{{define "csrf"}}<input type="hidden" name="csrf" value="{{.}}">{{end}}
+{{define "notice"}}{{if .Notice}}<p class="notice {{if .Error}}error{{end}}" role="status">{{.Notice}}</p>{{end}}{{end}}
+
+{{define "settings-panel"}}<section id="settings-panel">
+<h2>Settings</h2>
+<p>Fast mode: <strong>{{.ModeLabel}}</strong></p>
+{{if eq .NoticePanel "settings-panel"}}{{template "notice" .}}{{end}}
+<form action="/admin/settings" method="post" hx-post="/admin/settings" hx-target="#settings-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+{{template "csrf" .CSRF}}
+<label for="fast-mode">Fast mode</label>
+<div class="controls"><select id="fast-mode" name="fast-mode">
+<option value="default" {{if eq .Mode "default"}}selected{{end}}>Client preference</option>
+<option value="on" {{if eq .Mode "on"}}selected{{end}}>Force fast</option>
+<option value="off" {{if eq .Mode "off"}}selected{{end}}>Force standard</option>
+</select><button type="submit">Save fast mode</button></div>
+<p class="muted">Changing this restarts existing connections and can interrupt active turns. Account routing preferences still apply.</p>
+</form></section>{{end}}
+
+{{define "accounts-panel"}}<section id="accounts-panel">
+<div class="section-title"><h2>Accounts</h2><a href="/accounts">Add account ↗</a></div>
+{{if eq .NoticePanel "accounts-panel"}}{{template "notice" .}}{{end}}
+{{if .Accounts}}<div class="scroll"><table><thead><tr><th>Account</th><th>Status</th><th>Routing</th><th>Actions</th></tr></thead><tbody>
+{{range .Accounts}}<tr><td>{{.Name}}<small>{{.Plan}}</small></td><td>{{.Status}}</td><td>
+<form class="controls" action="/admin/accounts/mode" method="post" hx-post="/admin/accounts/mode" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+{{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}">
+<select name="mode" aria-label="Routing for {{.Name}}"><option value="normal" {{if eq .Mode "normal"}}selected{{end}}>Normal</option><option value="priority" {{if eq .Mode "priority"}}selected{{end}}>Priority</option></select><button type="submit">Save</button></form>
+</td><td><div class="controls">
+<form action="/admin/accounts/pause" method="post" hx-post="/admin/accounts/pause" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+{{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}"><input type="hidden" name="paused" value="{{if .Paused}}false{{else}}true{{end}}"><button type="submit">{{if .Paused}}Resume{{else}}Pause{{end}}</button></form>
+<form action="/admin/accounts/remove" method="post" hx-post="/admin/accounts/remove" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button" hx-confirm="Remove {{.Name}} from the pool? Existing connections will restart.">
+{{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}"><button class="danger" type="submit">Remove</button></form></div></td></tr>{{end}}
+</tbody></table></div>{{else}}<p class="muted">No accounts yet. Add one to start routing requests.</p>{{end}}</section>{{end}}
+
+{{define "keys-panel"}}<section id="keys-panel">
+<h2>API keys</h2>
+{{if eq .NoticePanel "keys-panel"}}{{template "notice" .}}{{end}}
+{{if .Secret}}<pre class="secret"><code>{{.Secret}}</code></pre>{{end}}
+<form action="/admin/keys/add" method="post" hx-post="/admin/keys/add" hx-target="#keys-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+{{template "csrf" .CSRF}}<label for="key-name">New key name</label><div class="controls"><input id="key-name" name="name" placeholder="my-laptop" required maxlength="128" autocomplete="off"><button type="submit">Create key</button></div></form>
+{{if .Keys}}<div class="scroll"><table><thead><tr><th>Name</th><th>Status</th><th>Input</th><th>Cached</th><th>Output</th><th>Total</th><th>Created</th><th></th></tr></thead><tbody>
+{{range .Keys}}<tr><td>{{.Name}}</td><td>{{if .Active}}Active{{else}}Revoked{{end}}</td><td>{{.Input}}</td><td>{{.Cached}}</td><td>{{.Output}}</td><td>{{.Total}}</td><td>{{.Created}}</td><td>
+{{if .Active}}<form action="/admin/keys/revoke" method="post" hx-post="/admin/keys/revoke" hx-target="#keys-panel" hx-swap="outerHTML" hx-disabled-elt="find button" hx-confirm="Revoke {{.Name}}? New requests using this key will be rejected.">{{template "csrf" $.CSRF}}<input type="hidden" name="name" value="{{.Name}}"><button class="danger" type="submit">Revoke</button></form>{{end}}
+</td></tr>{{end}}</tbody></table></div>{{else}}<p class="muted">No API keys yet.</p>{{end}}</section>{{end}}
+
+{{define "status-panel"}}<section id="status-panel" hx-get="/admin/status" hx-trigger="every 5s" hx-swap="outerHTML">
+<div class="section-title"><h2>Status</h2><span class="muted">Updates every 5 seconds</span></div>
+<p><strong>{{.Connections}}</strong> active WebSocket connections · <a href="/dashboard">Open dashboard</a></p>
+<h3>Recent events</h3>
+{{if .Events}}<div class="scroll"><table><thead><tr><th>Time</th><th>Event</th><th>Account</th><th>Detail</th></tr></thead><tbody>{{range .Events}}<tr><td>{{.At.Format "15:04:05"}}</td><td>{{.Kind}}</td><td>{{.Account}}</td><td class="detail">{{.Detail}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="muted">No recent events.</p>{{end}}</section>{{end}}

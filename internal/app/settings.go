@@ -85,6 +85,8 @@ func (p *fastModePolicy) set(mode fastMode) bool {
 }
 
 func (s *server) reloadSettings() error {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
 	value, err := s.pool.store.raw.FastMode()
 	if err != nil {
 		return err
@@ -112,4 +114,17 @@ func (s *server) watchSettings(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (s *server) saveFastMode(mode fastMode) error {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	if !mode.valid() {
+		return fmt.Errorf("invalid fast mode %q", mode)
+	}
+	if err := s.pool.store.raw.SetFastMode(string(mode)); err != nil {
+		return err
+	}
+	s.fastMode.set(mode)
+	return nil
 }

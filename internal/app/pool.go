@@ -119,6 +119,15 @@ func (p *Pool) remove(a *Account) error {
 }
 
 func (p *Pool) togglePause(a *Account) (bool, error) {
+	return p.updatePause(a, func(paused bool) bool { return !paused })
+}
+
+func (p *Pool) setPaused(a *Account, paused bool) error {
+	_, err := p.updatePause(a, func(bool) bool { return paused })
+	return err
+}
+
+func (p *Pool) updatePause(a *Account, update func(bool) bool) (bool, error) {
 	id := a.id()
 	paused := false
 	err := p.mutate(func(accounts []*Account) ([]*Account, error) {
@@ -127,7 +136,7 @@ func (p *Pool) togglePause(a *Account) (bool, error) {
 			return nil, fmt.Errorf("no account %q", id)
 		}
 		state := accounts[i].persisted()
-		state.Paused = !state.Paused
+		state.Paused = update(state.Paused)
 		paused = state.Paused
 		accounts[i] = accountFromState(state)
 		return accounts, nil
