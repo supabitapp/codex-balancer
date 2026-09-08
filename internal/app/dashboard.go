@@ -461,7 +461,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	if modelCosts := formatModelCosts(snapshot.ModelCosts); modelCosts != "" {
 		priceInfo = modelCosts + "\n" + priceInfo
 	}
-	overview := []dashboardMetric{{Name: "active WS", Value: strconv.FormatInt(snapshot.WSOpen, 10)}}
+	mode, _ := s.fastMode.snapshot()
+	overview := []dashboardMetric{{Name: "fast mode", Value: mode.label()}, {Name: "active WS", Value: strconv.FormatInt(snapshot.WSOpen, 10)}}
 	overview = append(overview, dashboardResourceMetrics(s.resources.usage(now))...)
 	overview = append(overview,
 		dashboardMetric{Name: "uptime", Value: short(snapshot.Uptime)},

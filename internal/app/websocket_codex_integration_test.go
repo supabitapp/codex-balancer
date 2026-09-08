@@ -23,17 +23,22 @@ import (
 // synthetic credentials, and a local upstream; no real inference or login.
 func TestCodexAppServerUsageLimitReplaysFullHistory(t *testing.T) {
 	for _, token := range []bool{false, true} {
-		t.Run(fmt.Sprintf("turn_state_%t", token), func(t *testing.T) { testCodexUsageReplay(t, token) })
+		t.Run(fmt.Sprintf("turn_state_%t", token), func(t *testing.T) { testCodexReconnectReplay(t, token, false) })
 	}
 }
 
-func testCodexUsageReplay(t *testing.T, token bool) {
+func TestCodexAppServerFastModeReplaysFullHistory(t *testing.T) {
+	testCodexReconnectReplay(t, false, true)
+}
+
+func testCodexReconnectReplay(t *testing.T, token, forceFast bool) {
 	binary := os.Getenv("CODEX_BALANCER_TEST_CODEX")
 	if binary == "" {
 		t.Skip("set CODEX_BALANCER_TEST_CODEX to run the app-server integration test")
 	}
 	var mu sync.Mutex
 	var rejected, replay, firstReplacement map[string]any
+	var enableFast func()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token && r.Header.Get("chatgpt-account-id") == "account-a" {
 			w.Header().Set(codexTurnStateKey, "account-a-token")
@@ -60,14 +65,24 @@ func testCodexUsageReplay(t *testing.T, token bool) {
 				continue
 			}
 			warmup := request["generate"] == false
-			if !warmup && account == "account-a" && strings.Contains(string(data), "SECOND_TURN") {
+			mu.Lock()
+			alreadyRejected := rejected != nil
+			mu.Unlock()
+			if !warmup && account == "account-a" && strings.Contains(string(data), "SECOND_TURN") && (!forceFast || !alreadyRejected) {
 				mu.Lock()
 				rejected = request
 				mu.Unlock()
-				writeWebSocketEvent(t, conn, map[string]any{"type": "error", "status": 429, "error": map[string]any{"type": "usage_limit_reached", "code": "usage_limit_reached"}})
+				if forceFast {
+					enableFast()
+				} else {
+					writeWebSocketEvent(t, conn, map[string]any{"type": "error", "status": 429, "error": map[string]any{"type": "usage_limit_reached", "code": "usage_limit_reached"}})
+				}
 				continue
 			}
-			if account == "account-b" {
+			if account == "account-b" || forceFast && alreadyRejected {
+				if forceFast && (account != "account-a" || request["service_tier"] != "priority") {
+					t.Errorf("fast mode replay account/tier = %s/%v", account, request["service_tier"])
+				}
 				mu.Lock()
 				if firstReplacement == nil {
 					firstReplacement = request
@@ -87,7 +102,8 @@ func testCodexUsageReplay(t *testing.T, token bool) {
 		}
 	}))
 	defer upstream.Close()
-	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("account-a", 0), testAccount("account-b", 20)})
+	srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("account-a", 0), testAccount("account-b", 20)})
+	enableFast = func() { srv.fastMode.set(fastModeOn) }
 	home, cwd := t.TempDir(), t.TempDir()
 	config := fmt.Sprintf(`model = "gpt-5.4"
 model_provider = "balancer"
@@ -209,7 +225,11 @@ requires_openai_auth = false
 	if firstReplacement["previous_response_id"] != nil && firstReplacement["previous_response_id"] != "" {
 		t.Fatal("old response ID reached replacement's first request")
 	}
-	if id := replay["previous_response_id"]; id != nil && id != "" && (id != "resp-account-b" || firstReplacement["generate"] != false) {
+	replayResponseID := "resp-account-b"
+	if forceFast {
+		replayResponseID = "resp-account-a"
+	}
+	if id := replay["previous_response_id"]; id != nil && id != "" && (id != replayResponseID || firstReplacement["generate"] != false) {
 		t.Fatal("replay references a response outside the replacement socket")
 	}
 	metadata, _ := replay["client_metadata"].(map[string]any)

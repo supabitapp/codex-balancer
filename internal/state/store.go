@@ -14,7 +14,7 @@ import (
 
 const (
 	ApplicationID = 0x43425853
-	schemaVersion = 3
+	schemaVersion = 4
 )
 
 const currentSchema = `CREATE TABLE accounts (
@@ -54,7 +54,13 @@ CREATE TABLE response_usage (
 	account_id TEXT REFERENCES accounts(account_id) ON DELETE SET NULL
 ) STRICT;
 CREATE INDEX response_usage_at ON response_usage (at_ns);
-CREATE INDEX response_usage_api_key ON response_usage (api_key_name);`
+CREATE INDEX response_usage_api_key ON response_usage (api_key_name);` + settingsSchema
+
+const settingsSchema = `CREATE TABLE settings (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	fast_mode TEXT NOT NULL CHECK (fast_mode IN ('default', 'on', 'off'))
+) STRICT;
+INSERT INTO settings (id, fast_mode) VALUES (1, 'default');`
 
 type Store struct {
 	db   *sql.DB
@@ -207,7 +213,13 @@ func (s *Store) initialize() error {
 		version = 2
 	}
 	if version == 2 {
-		return s.migrateRoutesToOwnerTombstones()
+		if err := s.migrateRoutesToOwnerTombstones(); err != nil {
+			return err
+		}
+		version = 3
+	}
+	if version == 3 {
+		return s.migrateSettings()
 	}
 	if version != schemaVersion {
 		return fmt.Errorf("state schema %d is unsupported; expected %d", version, schemaVersion)
@@ -250,7 +262,7 @@ func (s *Store) migrateRoutesToOwnerTombstones() error {
 	CREATE INDEX routes_account ON routes (account_id);`); err != nil {
 		return fmt.Errorf("migrate routes to owner tombstones: %w", err)
 	}
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := tx.Exec("PRAGMA user_version = 3"); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -593,4 +605,30 @@ func decodeTime(value int64) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(0, value)
+}
+
+func (s *Store) migrateSettings() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(settingsSchema); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 4"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) FastMode() (string, error) {
+	var mode string
+	err := s.db.QueryRow("SELECT fast_mode FROM settings WHERE id = 1").Scan(&mode)
+	return mode, err
+}
+
+func (s *Store) SetFastMode(mode string) error {
+	_, err := s.db.Exec("UPDATE settings SET fast_mode = ? WHERE id = 1", mode)
+	return err
 }

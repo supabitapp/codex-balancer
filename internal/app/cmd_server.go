@@ -118,6 +118,10 @@ func serverCmd(args []string) error {
 		admission:    newAdmissionGate(maxActiveProxyRequests),
 		resources:    newResourceMonitor(),
 	}
+	if err := srv.reloadSettings(); err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+	go srv.watchSettings(ctx)
 	pool.watch(ctx, func(change poolChange) {
 		log.Info("accounts updated", "added", change.added, "removed", change.removed, "updated", change.updated)
 		stats.note("accounts updated", "", fmt.Sprintf("%d added, %d removed, %d updated", change.added, change.removed, change.updated))

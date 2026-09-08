@@ -199,6 +199,42 @@ policy because the reset discards cache affinity.
 The claim and live-socket registries live in memory. Server restart discards
 them. Codex reconnects, and the server rebuilds affinity from SQLite routes.
 
+## Global fast mode
+
+The global `fast-mode` setting has three values:
+
+- `default`: forward the client's service tier unchanged (the initial setting).
+- `on`: force `service_tier: "priority"` on every `response.create`.
+- `off`: force `service_tier: "default"` on every `response.create`.
+
+```sh
+codex-balancer settings set fast-mode on
+codex-balancer settings set fast-mode off
+codex-balancer settings set fast-mode default
+codex-balancer settings get fast-mode
+codex-balancer settings list -json
+codex-balancer settings set -state /path/to/state.db fast-mode on
+```
+
+Settings persist in SQLite across restarts. Running servers poll them every
+500 ms. The CLI reports the saved setting; it does not acknowledge that a
+server has applied it. The dashboard shows the server's applied policy as
+Client preference, Force fast, or Force standard.
+
+A policy change activates the new value and asks all existing WebSockets to
+close with `1012`. Connections still completing their handshake also retire
+if they began under the old policy. Repeating the same value causes no restart.
+The relay preserves provisional owners before closing, and accepted routes
+remain in SQLite. Reconnection retains the account under the normal affinity
+rules, including model/tier eligibility and portable-input checks. Anonymous
+connections have no retained owner.
+
+The override runs before model selection and request usage tracking, preserving
+all other request fields. It is independent of account routing priority.
+Turning it off forces standard service; choosing `default` restores the
+client's preference. Disconnecting can interrupt in-flight work; the client
+owns reconnect and replay, as with other service restarts.
+
 ## WebSocket rollover
 
 [OpenAI caps each Responses WebSocket connection at 60 minutes](https://developers.openai.com/api/docs/guides/websocket-mode#connection-behavior-and-limits).

@@ -42,7 +42,7 @@ func TestStateStoreCreatesOnlyMinimalSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	wantTables := []string{"accounts", "api_keys", "response_usage", "routes"}
+	wantTables := []string{"accounts", "api_keys", "response_usage", "routes", "settings"}
 	if !reflect.DeepEqual(tables, wantTables) {
 		t.Fatalf("tables = %v, want %v", tables, wantTables)
 	}
@@ -387,7 +387,7 @@ func TestStateStoreMigratesUsageAccountAttribution(t *testing.T) {
 	if _, err := store.db.Exec(`ALTER TABLE response_usage DROP COLUMN account_id`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`PRAGMA user_version = 1`); err != nil {
+	if _, err := store.db.Exec(`DROP TABLE settings; PRAGMA user_version = 1`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

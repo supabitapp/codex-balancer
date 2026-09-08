@@ -30,6 +30,8 @@ type responsesWebSocketRelay struct {
 	pendingBytes  int
 	pinned        bool
 	socketID      uint64
+	fastMode      fastMode
+	policyChanged <-chan struct{}
 }
 
 type websocketInvalidation struct {
@@ -37,7 +39,7 @@ type websocketInvalidation struct {
 	reason  string
 }
 
-func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *http.Request, initial *websocketDial, route websocketRoute, apiKey apiKeyIdentity) *responsesWebSocketRelay {
+func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *http.Request, initial *websocketDial, route websocketRoute, apiKey apiKeyIdentity, mode fastMode, changed <-chan struct{}) *responsesWebSocketRelay {
 	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -45,6 +47,8 @@ func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *
 	ctx, cancel := context.WithCancel(ctx)
 	return &responsesWebSocketRelay{
 		server:        s,
+		fastMode:      mode,
+		policyChanged: changed,
 		downstream:    downstream,
 		request:       request,
 		apiKey:        apiKey,
@@ -70,7 +74,13 @@ func (r *responsesWebSocketRelay) run() {
 	}
 	for {
 		select {
+		case <-r.policyChanged:
+			r.restartForFastMode()
+			return
 		case message := <-r.messages:
+			if r.fastModeChanged() {
+				return
+			}
 			if message.downstream {
 				if !r.handleDownstream(message) {
 					return
@@ -195,6 +205,16 @@ func (r *responsesWebSocketRelay) queuePending(message websocketMessage) bool {
 }
 
 func (r *responsesWebSocketRelay) handleResponseCreate(message websocketMessage, event websocketEnvelope) bool {
+	if r.fastModeChanged() {
+		return false
+	}
+	var err error
+	message.data, event.ServiceTier, err = r.fastMode.override(message.data, event.ServiceTier)
+	if err != nil {
+		r.closeDownstream(websocket.StatusInternalError, "could not apply fast mode")
+		return false
+	}
+
 	if !r.current.claim.active() {
 		r.closeDownstream(websocket.StatusServiceRestart, "route owner changed before turn")
 		return false
@@ -212,6 +232,10 @@ func (r *responsesWebSocketRelay) handleResponseCreate(message websocketMessage,
 		return false
 	}
 	if !r.pinned && !r.pin() {
+		return false
+	}
+	// First-turn model selection may have waited for another handshake.
+	if r.fastModeChanged() {
 		return false
 	}
 	if !r.writeUpstream(message) {
@@ -445,4 +469,19 @@ func (r *responsesWebSocketRelay) responseFinished(event websocketEnvelope) {
 		}
 	}
 	r.turns = r.turns[1:]
+}
+
+func (r *responsesWebSocketRelay) restartForFastMode() {
+	r.server.preserveWebSocketRetryOwner(r.current)
+	r.closeDownstream(websocket.StatusServiceRestart, "fast mode changed; reconnect")
+}
+
+func (r *responsesWebSocketRelay) fastModeChanged() bool {
+	select {
+	case <-r.policyChanged:
+		r.restartForFastMode()
+		return true
+	default:
+		return false
+	}
 }

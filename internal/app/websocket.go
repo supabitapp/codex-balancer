@@ -175,6 +175,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mode, changed := s.fastMode.snapshot()
 	route := websocketRouteFrom(r.Header)
 	thread := route.key()
 	s.log.Debug("websocket requested", "thread", thread)
@@ -209,7 +210,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer downstream.CloseNow()
 	downstream.SetReadLimit(maxWebSocketMessage)
 	dial.conn.SetReadLimit(maxWebSocketMessage)
-	s.relayResponsesWebSocket(downstream, r, dial, route, apiKey)
+	newResponsesWebSocketRelay(s, downstream, r, dial, route, apiKey, mode, changed).run()
 }
 
 func websocketHandshake(w http.ResponseWriter, r *http.Request) bool {
@@ -321,10 +322,6 @@ func ensureResponsesWebSocketBeta(headers http.Header) {
 	}
 	headers.Del("OpenAI-Beta")
 	headers.Set("OpenAI-Beta", strings.Join(tokens, ", "))
-}
-
-func (s *server) relayResponsesWebSocket(downstream *websocket.Conn, r *http.Request, initial *websocketDial, route websocketRoute, apiKey apiKeyIdentity) {
-	newResponsesWebSocketRelay(s, downstream, r, initial, route, apiKey).run()
 }
 
 type websocketRejectionKind string

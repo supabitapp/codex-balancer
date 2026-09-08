@@ -27,6 +27,7 @@ func newProxyClient() *http.Client {
 }
 
 type server struct {
+	fastMode         fastModePolicy
 	ctx              context.Context
 	pool             *Pool
 	catalog          *modelCatalog
