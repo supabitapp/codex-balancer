@@ -2,8 +2,8 @@
 
 Open `/admin` to manage fast mode, pause or resume accounts, change routing
 priority, remove accounts, create or revoke API keys, and view connections and
-recent events. The dashboard links to the admin page. Adding an account uses
-the existing `/accounts` sign-in flow.
+recent events. This is a hidden route with no link from the public dashboard.
+Adding an account uses the existing `/accounts` sign-in flow.
 
 ## Set or reset the password
 
