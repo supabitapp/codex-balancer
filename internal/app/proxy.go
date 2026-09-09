@@ -83,18 +83,70 @@ func (s *server) routes() http.Handler {
 	})
 	mux.HandleFunc("GET /accounts", s.accountsPage)
 	mux.HandleFunc("GET /accounts/status", s.accountLoginStatus)
-	mux.HandleFunc("GET /dashboard/assets/admin.css", webAsset("web/admin.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable"))
-	mux.HandleFunc("GET /dashboard/assets/accounts.css", webAsset("web/accounts.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable"))
-	mux.HandleFunc("GET /dashboard/assets/accounts.js", webAsset("web/accounts.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
+	mux.HandleFunc(
+		"GET /dashboard/assets/admin.css",
+		webAsset("web/admin.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable"),
+	)
+	mux.HandleFunc(
+		"GET /dashboard/assets/accounts.css",
+		webAsset(
+			"web/accounts.css",
+			"text/css; charset=utf-8",
+			"public, max-age=31536000, immutable",
+		),
+	)
+	mux.HandleFunc(
+		"GET /dashboard/assets/accounts.js",
+		webAsset(
+			"web/accounts.js",
+			"text/javascript; charset=utf-8",
+			"public, max-age=31536000, immutable",
+		),
+	)
 	mux.HandleFunc("GET /dashboard", s.dashboardPage)
-	mux.HandleFunc("GET /favicon.svg", webAsset("web/favicon.svg", "image/svg+xml", "public, max-age=3600"))
-	mux.HandleFunc("GET /dashboard/assets/dashboard.js", webAsset("web/dashboard.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
-	mux.HandleFunc("GET /dashboard/assets/htmx-2.0.10.min.js", webAsset("web/htmx-2.0.10.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
-	mux.HandleFunc("GET /dashboard/assets/idiomorph-0.7.4.min.js", webAsset("web/idiomorph-0.7.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
-	mux.HandleFunc("GET /dashboard/assets/sse-2.2.4.min.js", webAsset("web/sse-2.2.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"))
+	mux.HandleFunc(
+		"GET /favicon.svg",
+		webAsset("web/favicon.svg", "image/svg+xml", "public, max-age=3600"),
+	)
+	mux.HandleFunc(
+		"GET /dashboard/assets/dashboard.js",
+		webAsset(
+			"web/dashboard.js",
+			"text/javascript; charset=utf-8",
+			"public, max-age=31536000, immutable",
+		),
+	)
+	mux.HandleFunc(
+		"GET /dashboard/assets/htmx-2.0.10.min.js",
+		webAsset(
+			"web/htmx-2.0.10.min.js",
+			"text/javascript; charset=utf-8",
+			"public, max-age=31536000, immutable",
+		),
+	)
+	mux.HandleFunc(
+		"GET /dashboard/assets/idiomorph-0.7.4.min.js",
+		webAsset(
+			"web/idiomorph-0.7.4.min.js",
+			"text/javascript; charset=utf-8",
+			"public, max-age=31536000, immutable",
+		),
+	)
+	mux.HandleFunc(
+		"GET /dashboard/assets/sse-2.2.4.min.js",
+		webAsset(
+			"web/sse-2.2.4.min.js",
+			"text/javascript; charset=utf-8",
+			"public, max-age=31536000, immutable",
+		),
+	)
 	mux.HandleFunc("GET /dashboard/events", s.dashboardEvents)
 	mux.HandleFunc("GET /stats", s.statsJSON)
-	mux.Handle("GET /v1/responses", s.admitted(s.responsesWebSocket))
+	// pi's Codex provider appends /codex/responses to its configured base URL.
+	responses := s.admitted(s.responsesWebSocket)
+	for _, path := range []string{"/v1/responses", "/codex/responses", "/v1/codex/responses"} {
+		mux.Handle("GET "+path, responses)
+	}
 	mux.HandleFunc("GET /v1/models", s.models)
 	return mux
 }
@@ -168,7 +220,10 @@ func responseUsageLimitReached(resp *http.Response) bool {
 }
 
 func workspaceUsageLimitReached(headers http.Header) bool {
-	return strings.HasPrefix(strings.ToLower(headers.Get("x-codex-rate-limit-reached-type")), "workspace_")
+	return strings.HasPrefix(
+		strings.ToLower(headers.Get("x-codex-rate-limit-reached-type")),
+		"workspace_",
+	)
 }
 
 func (s *server) refreshed(account *Account, id string) bool {
@@ -193,8 +248,22 @@ func (s *server) invalidateAccount(account string, reason routingReason) {
 	claims := s.routeClaims.invalidateAccount(account)
 	sockets := s.activeWebSockets.closeAccount(account, string(reason))
 	if len(claims.keys) > 0 && s.pool != nil && s.pool.store != nil {
-		if err := s.pool.store.preserveRouteOwners(invalidatedAt, account, claims.keys); err != nil {
-			s.log.Warn("provisional route owner preservation failed", "account", account, "routing_reason", reason, "routes", claims.keys, "error", err)
+		if err := s.pool.store.preserveRouteOwners(
+			invalidatedAt,
+			account,
+			claims.keys,
+		); err != nil {
+			s.log.Warn(
+				"provisional route owner preservation failed",
+				"account",
+				account,
+				"routing_reason",
+				reason,
+				"routes",
+				claims.keys,
+				"error",
+				err,
+			)
 		}
 	}
 	if claims.claims == 0 && sockets == 0 {

@@ -103,17 +103,28 @@ func testCodexReconnectReplay(t *testing.T, token, forceFast bool) {
 	}))
 	defer upstream.Close()
 	srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("account-a", 0), testAccount("account-b", 20)})
+	key, err := generateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.pool.store.addAPIKey(storedAPIKey{Name: "codex", Secret: key, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	srv.lookupAPIKey = srv.pool.store.apiKeyName
 	enableFast = func() { srv.fastMode.set(fastModeOn) }
 	home, cwd := t.TempDir(), t.TempDir()
 	config := fmt.Sprintf(`model = "gpt-5.4"
 model_provider = "balancer"
+[features]
+# Avoid background marketplace clones racing temporary-home cleanup.
+plugins = false
 [model_providers.balancer]
 name = "OpenAI"
 base_url = %q
-experimental_bearer_token = "synthetic-client-key"
+experimental_bearer_token = %q
 supports_websockets = true
 requires_openai_auth = false
-`, proxy.URL+"/v1")
+`, proxy.URL+"/v1", key)
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}

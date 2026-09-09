@@ -67,10 +67,11 @@ behind a reverse proxy.
   automatic drain, and both precede ordinary priority when choosing a new owner.
   Exhausted, paused, cooling, signed-out, and unknown-quota accounts stay
   unavailable regardless of their mode.
-- New API key secrets appear only in the creation response. Key lists show
-  names, status, dates, and usage, never existing secrets. Revocation rejects
-  new requests using the key; it does not terminate already-authenticated
-  WebSockets.
+- New API key secrets appear only in the creation response and use the
+  [pi-compatible JWT format](README.md#point-pi-at-it). Existing keys remain valid.
+  Key lists show names, status, dates, and usage, never existing secrets.
+  Revocation rejects new requests using the key; it does not terminate
+  already-authenticated WebSockets.
 - The status section refreshes every five seconds. Refresh the page to pick
   up account or key changes made in another browser or through the CLI.
 

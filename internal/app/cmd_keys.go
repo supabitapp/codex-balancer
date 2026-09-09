@@ -1,7 +1,9 @@
 package app
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -110,11 +112,22 @@ func keyNameArg(fs *flag.FlagSet) (string, error) {
 }
 
 func generateAPIKey() (string, error) {
-	raw := make([]byte, 32)
+	// Pi expects a JWT with an account ID. This ID is synthetic and independent
+	// of both the bearer secret and the pool's ChatGPT accounts.
+	raw := make([]byte, 16+32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("generate API key: %w", err)
 	}
-	return "cb_" + base64.RawURLEncoding.EncodeToString(raw), nil
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := fmt.Sprintf(`{"https://api.openai.com/auth":{"chatgpt_account_id":"cb_%x"}}`, raw[:16])
+	unsigned := header + "." + base64.RawURLEncoding.EncodeToString([]byte(payload))
+
+	// Use a disposable per-key signing secret, not a server-wide JWT secret.
+	// Authentication still requires an exact match of the entire stored key;
+	// neither the claims nor the signature are used to authorize requests.
+	mac := hmac.New(sha256.New, raw[16:])
+	mac.Write([]byte(unsigned))
+	return unsigned + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
 func listAPIKeys(store *StateStore, asJSON bool) error {
