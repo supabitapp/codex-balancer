@@ -17,7 +17,7 @@ import (
 const accountsHelp = `Manage the account pool.
 
 Usage:
-  codex-balancer accounts add                 Sign in, disable training, and pool the account
+  codex-balancer accounts add                 Sign in and add the account
   codex-balancer accounts add --device-auth   Do the same with a code on another device
   codex-balancer accounts list                Show pooled accounts
   codex-balancer accounts mode <account> <mode> Set routing to normal or priority
@@ -27,6 +27,9 @@ Flags:
   -state string      state database (default %s)
   -device-auth       sign in with a one-time code, add only
   -json              machine-readable output, list only
+
+Adding a personal account turns off model training for it.
+Business and Enterprise workspaces keep their existing training policy and are not routed.
 `
 
 func printAccountsHelp(w io.Writer) {

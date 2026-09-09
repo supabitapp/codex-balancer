@@ -2,10 +2,15 @@ package app
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAccountLoginPageRendersEmbeddedTemplate(t *testing.T) {
@@ -23,6 +28,73 @@ func TestAccountLoginPageRendersEmbeddedTemplate(t *testing.T) {
 	}
 	if strings.Contains(page.String(), "expires") {
 		t.Fatal("rendered account page contains expiry copy")
+	}
+}
+
+func TestCompleteAccountLoginTrainingPolicy(t *testing.T) {
+	for _, plan := range []string{"business", "enterprise", "pro"} {
+		t.Run(plan, func(t *testing.T) {
+			store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			pool, err := loadPool(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := testAccountWithPlan("account-a", 0, plan).persisted()
+			tokens, err := json.Marshal(tokenResponse{
+				IDToken:      source.IDToken,
+				AccessToken:  source.AccessToken,
+				RefreshToken: source.RefreshToken,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			issuer := "https://auth.example.com"
+			settingsCalls := 0
+			client := &http.Client{Transport: accountSettingsRoundTrip(func(request *http.Request) (*http.Response, error) {
+				var body string
+				switch request.URL.Scheme + "://" + request.URL.Host + request.URL.Path {
+				case issuer + "/api/accounts/deviceauth/token":
+					body = `{"authorization_code":"code","code_verifier":"verifier"}`
+				case issuer + "/oauth/token":
+					body = string(tokens)
+				case accountSettingsEndpoint:
+					settingsCalls++
+					return &http.Response{StatusCode: http.StatusForbidden, Status: "403 Forbidden", Body: http.NoBody}, nil
+				default:
+					t.Fatalf("unexpected request: %s", request.URL)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			device := deviceAuthorization{authID: "auth-id", userCode: "ABCD-EFGH"}
+			s := server{
+				pool: pool, client: client, stats: newStatsWithPrices(priceSnapshot{}),
+				logins: accountLoginStore{active: &accountLogin{device: device}},
+			}
+			s.completeAccountLogin(context.Background(), issuer, device)
+			response := httptest.NewRecorder()
+			s.accountLoginStatus(response, httptest.NewRequest(http.MethodGet, "/accounts/status", nil))
+			reloaded, err := loadPool(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			account := reloaded.find("account-a")
+			if plan == "pro" {
+				if response.Code != http.StatusGone || settingsCalls != 1 || account != nil {
+					t.Fatalf("status = %d, settings calls = %d, account saved = %t", response.Code, settingsCalls, account != nil)
+				}
+				return
+			}
+			if response.Code != http.StatusOK || settingsCalls != 0 || account == nil {
+				t.Fatalf("status = %d, settings calls = %d, account saved = %t", response.Code, settingsCalls, account != nil)
+			}
+			if got := account.status(time.Now()); got != accountNotRouted {
+				t.Fatalf("account status = %s, want %s", got, accountNotRouted)
+			}
+		})
 	}
 }
 

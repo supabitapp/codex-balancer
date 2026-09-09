@@ -23,7 +23,8 @@ Enter this one-time code (expires in %d minutes):
 
 %s
 
-Adding this account turns off model training for it.
+Adding a personal account turns off model training for it.
+Business and Enterprise workspaces keep their existing training policy.
 
 Waiting for sign-in...
 `

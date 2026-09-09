@@ -28,6 +28,19 @@ func connectAccount(ctx context.Context, client *http.Client, tokens tokenRespon
 }
 
 func disableTraining(ctx context.Context, client *http.Client, account *Account) error {
+	account.mu.Lock()
+	token := account.AccessToken
+	claims := claimsFromToken(account.IDToken)
+	account.mu.Unlock()
+	if token == "" || claims.Auth.AccountID == "" {
+		return errors.New("disable training: account credentials are incomplete")
+	}
+	// Business and Enterprise data is excluded from training by default.
+	// These workspaces do not need the personal-account training toggle.
+	if managedWorkspacePlan(claims.Auth.Plan) {
+		return nil
+	}
+
 	endpoint, err := url.Parse(accountSettingsEndpoint)
 	if err != nil {
 		return err
@@ -37,14 +50,6 @@ func disableTraining(ctx context.Context, client *http.Client, account *Account)
 	query.Set("value", "false")
 	endpoint.RawQuery = query.Encode()
 
-	account.mu.Lock()
-	token := account.AccessToken
-	accountID := claimsFromToken(account.IDToken).Auth.AccountID
-	account.mu.Unlock()
-	if token == "" || accountID == "" {
-		return errors.New("disable training: account credentials are incomplete")
-	}
-
 	requestContext, cancel := context.WithTimeout(ctx, accountSettingsTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestContext, http.MethodPatch, endpoint.String(), nil)
@@ -53,7 +58,7 @@ func disableTraining(ctx context.Context, client *http.Client, account *Account)
 	}
 	request.Header.Set("Accept", "*/*")
 	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("chatgpt-account-id", accountID)
+	request.Header.Set("chatgpt-account-id", claims.Auth.AccountID)
 
 	response, err := client.Do(request)
 	if err != nil {

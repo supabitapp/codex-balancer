@@ -41,8 +41,10 @@ codex-balancer accounts mode you@example.com priority
 codex-balancer accounts mode you@example.com normal
 ```
 
-Adding an account turns off ChatGPT model training for that account before it
-enters the pool.
+Adding a personal account turns off ChatGPT model training for that account
+before it enters the pool. Business and Enterprise workspaces skip this setting
+request because their data is excluded from training by default; their existing
+training policy is left unchanged. They are displayed but excluded from routing.
 
 Use the CLI to manage client API keys:
 

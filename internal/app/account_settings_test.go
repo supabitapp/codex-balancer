@@ -49,16 +49,79 @@ func TestConnectAccountDisablesTraining(t *testing.T) {
 }
 
 func TestConnectAccountRejectsTrainingSettingFailure(t *testing.T) {
-	source := testAccount("account-a", 0).persisted()
-	client := &http.Client{Transport: accountSettingsRoundTrip(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusForbidden, Status: "403 Forbidden", Body: http.NoBody}, nil
-	})}
-	_, err := connectAccount(context.Background(), client, tokenResponse{
-		IDToken:      source.IDToken,
-		AccessToken:  source.AccessToken,
-		RefreshToken: source.RefreshToken,
-	})
-	if err == nil || !strings.Contains(err.Error(), "account settings returned 403 Forbidden") {
-		t.Fatalf("error = %v", err)
+	for _, plan := range []string{"free", "go", "plus", "pro", "prolite", "", "unknown"} {
+		t.Run(plan, func(t *testing.T) {
+			source := testAccountWithPlan("account-a", 0, plan).persisted()
+			calls := 0
+			client := &http.Client{Transport: accountSettingsRoundTrip(func(*http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: http.StatusForbidden, Status: "403 Forbidden", Body: http.NoBody}, nil
+			})}
+			account, err := connectAccount(context.Background(), client, tokenResponse{
+				IDToken:      source.IDToken,
+				AccessToken:  source.AccessToken,
+				RefreshToken: source.RefreshToken,
+			})
+			if err == nil || !strings.Contains(err.Error(), "account settings returned 403 Forbidden") {
+				t.Fatalf("error = %v", err)
+			}
+			if calls != 1 || account != nil {
+				t.Fatalf("calls = %d, account returned = %t", calls, account != nil)
+			}
+		})
+	}
+}
+
+func TestConnectAccountSkipsTrainingSettingForManagedWorkspaces(t *testing.T) {
+	for _, plan := range []string{"business", "enterprise", " Business ", "ENTERPRISE"} {
+		t.Run(plan, func(t *testing.T) {
+			source := testAccountWithPlan("workspace", 0, plan).persisted()
+			client := &http.Client{Transport: accountSettingsRoundTrip(func(*http.Request) (*http.Response, error) {
+				t.Error("managed workspace must not request the personal training setting")
+				return &http.Response{StatusCode: http.StatusForbidden, Status: "403 Forbidden", Body: http.NoBody}, nil
+			})}
+			account, err := connectAccount(context.Background(), client, tokenResponse{
+				IDToken:      source.IDToken,
+				AccessToken:  source.AccessToken,
+				RefreshToken: source.RefreshToken,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := account.persisted()
+			if state.IDToken != source.IDToken || state.AccessToken != source.AccessToken || state.RefreshToken != source.RefreshToken || state.LastRefresh.IsZero() {
+				t.Fatal("connected account did not retain credentials and refresh time")
+			}
+			if account.routingCandidate().routingEnabled() {
+				t.Fatal("managed workspace must remain excluded from routing")
+			}
+		})
+	}
+}
+
+func TestConnectAccountRejectsIncompleteCredentials(t *testing.T) {
+	for _, plan := range []string{"pro", "business", "enterprise"} {
+		for _, missing := range []string{"access token", "account ID"} {
+			t.Run(plan+"/"+missing, func(t *testing.T) {
+				source := testAccountWithPlan("account-a", 0, plan).persisted()
+				if missing == "access token" {
+					source.AccessToken = ""
+				} else {
+					source.IDToken = testAccountWithPlan("", 0, plan).persisted().IDToken
+				}
+				client := &http.Client{Transport: accountSettingsRoundTrip(func(*http.Request) (*http.Response, error) {
+					t.Error("incomplete credentials must not make a settings request")
+					return &http.Response{StatusCode: http.StatusNoContent, Status: "204 No Content", Body: http.NoBody}, nil
+				})}
+				account, err := connectAccount(context.Background(), client, tokenResponse{
+					IDToken:      source.IDToken,
+					AccessToken:  source.AccessToken,
+					RefreshToken: source.RefreshToken,
+				})
+				if err == nil || !strings.Contains(err.Error(), "account credentials are incomplete") || account != nil {
+					t.Fatalf("error = %v, account returned = %t", err, account != nil)
+				}
+			})
+		}
 	}
 }
