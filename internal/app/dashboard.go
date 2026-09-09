@@ -377,7 +377,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			name = "account " + strconv.Itoa(i+1)
 		}
 		names[account.ID] = name
-		if managedWorkspacePlan(account.Plan) {
+		if !routablePlan(account.Plan) {
 			workspaces = append(workspaces, newDashboardWorkspaceView(now, name, account))
 			continue
 		}
@@ -767,7 +767,12 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 func dashboardAccountStatusInfo(now time.Time, account accountStatsResponse) string {
 	switch account.Status {
 	case accountNotRouted:
-		return "Business and Enterprise workspaces are displayed here but excluded from routing."
+		return "This workspace plan is displayed here but excluded from routing."
+	case accountCooling:
+		if account.SpendControl != nil && account.SpendControl.Reached {
+			return "Spend limit reached; routing resumes after usage polling reports available capacity."
+		}
+		return ""
 	case accountPriority:
 		if account.RoutingMode == routingModePriority {
 			return "Manual priority for new connections."

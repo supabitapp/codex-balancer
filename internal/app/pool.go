@@ -262,7 +262,7 @@ func (a *Account) routingCandidate() routingCandidate {
 			details:   append([]resetCredit(nil), a.resetCredits.details...),
 		},
 		spendControl: cloneSpendControl(a.spendControl),
-		spent:        a.spent,
+		spent:        a.spent || spendLimitReached(a.spendControl),
 		pressure:     a.pressure(),
 		lastUsed:     a.lastUsed,
 		mode:         a.RoutingMode.normalized(),
@@ -290,7 +290,7 @@ func (c routingCandidate) status(now time.Time) accountStatus {
 }
 
 func (c routingCandidate) routingEnabled() bool {
-	return !managedWorkspacePlan(c.plan)
+	return routablePlan(c.plan)
 }
 
 func (c routingCandidate) quotaKnown() bool {

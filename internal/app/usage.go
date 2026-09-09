@@ -45,6 +45,10 @@ type spendControlLimit struct {
 	ResetAt           int64    `json:"reset_at"`
 }
 
+func spendLimitReached(control *spendControlPayload) bool {
+	return control != nil && control.Reached
+}
+
 func cloneSpendControl(value *spendControlPayload) *spendControlPayload {
 	if value == nil {
 		return nil
@@ -293,7 +297,12 @@ func (s *server) recoverUsageLimit(ctx context.Context, account *Account, reques
 	if account.restoreFromUsageAfter(requestSent) {
 		return true
 	}
-	if !account.routingCandidate().spent {
+	candidate := account.routingCandidate()
+	// Rate-limit reset credits cannot restore a workspace spending allowance.
+	if spendLimitReached(candidate.spendControl) {
+		return false
+	}
+	if !candidate.spent {
 		return true
 	}
 	result, creditID, err := s.consumeExpiringResetCredit(ctx, account, time.Now())
@@ -340,7 +349,7 @@ func (a *Account) adopt(fetchedAt time.Time, planType string, primary, secondary
 	if banked != nil && (!a.resetCredits.known || a.resetCredits.count != *banked) {
 		a.resetCredits = resetCreditState{known: true, count: *banked}
 	}
-	if (a.primary.known() || a.secondary.known()) && a.pressure() < 100 {
+	if (a.primary.known() || a.secondary.known()) && a.pressure() < 100 && !spendLimitReached(a.spendControl) {
 		a.spent = false
 		if a.Reauth == "" {
 			a.cooldown = time.Time{}
@@ -363,7 +372,7 @@ func (a *Account) pollsDue(now time.Time, every time.Duration) (usage, resetCred
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	usageEvery := every
-	if a.spent || now.Before(a.cooldown) || a.pressure() >= 95 {
+	if a.spent || spendLimitReached(a.spendControl) || now.Before(a.cooldown) || a.pressure() >= 95 {
 		usageEvery = min(usageEvery, urgentUsageRefreshInterval)
 	}
 	usage = a.usageFetchedAt.IsZero() || now.Sub(a.usageFetchedAt) >= usageEvery

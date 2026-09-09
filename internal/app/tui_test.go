@@ -73,6 +73,17 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 	}
 }
 
+func TestDashboardTitleIncludesSelfServeBusinessProlite(t *testing.T) {
+	dashboard := dashboard{pool: &Pool{accounts: []*Account{
+		testAccountWithPlan("self-serve", 2, "self_serve_business_prolite"),
+		testAccountWithPlan("business", 0, "business"),
+		testAccountWithPlan("enterprise", 0, "enterprise"),
+	}}}
+	if got := dashboard.title(); got != "week 98%" {
+		t.Fatalf("title = %q, want only the routable plan's quota", got)
+	}
+}
+
 func TestAccountTableShowsRoutedValue(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)

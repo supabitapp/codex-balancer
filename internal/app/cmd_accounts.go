@@ -29,7 +29,8 @@ Flags:
   -json              machine-readable output, list only
 
 Adding a personal account turns off model training for it.
-Business and Enterprise workspaces keep their existing training policy and are not routed.
+Business and Enterprise workspaces keep their existing training policy.
+Self-serve Business Pro Lite can route; other Business/Enterprise workspaces are display-only.
 `
 
 func printAccountsHelp(w io.Writer) {

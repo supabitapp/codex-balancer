@@ -489,18 +489,26 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	}
 }
 
-func TestDashboardSeparatesSelfServeBusinessProlite(t *testing.T) {
+func TestDashboardIncludesSelfServeBusinessProliteInRouting(t *testing.T) {
 	const plan = "self_serve_business_prolite"
 	server := &server{
-		pool:  &Pool{accounts: []*Account{testAccountWithPlan("workspace", 0, plan)}},
+		pool:  &Pool{accounts: []*Account{testAccountWithPlan("workspace", 2, plan)}},
 		stats: newStatsWithPrices(priceSnapshot{}),
 	}
 	view := server.currentDashboard(time.Now())
-	if len(view.Accounts) != 0 || len(view.Workspaces) != 1 {
-		t.Fatalf("accounts = %+v, workspaces = %+v, want only one managed workspace", view.Accounts, view.Workspaces)
+	if len(view.Accounts) != 1 || len(view.Workspaces) != 0 {
+		t.Fatalf("accounts = %+v, workspaces = %+v, want one routable account", view.Accounts, view.Workspaces)
 	}
-	if workspace := view.Workspaces[0]; workspace.Plan != plan || workspace.Status != accountNotRouted {
-		t.Fatalf("workspace = %+v, want %s excluded from routing", workspace, plan)
+	if account := view.Accounts[0]; account.Plan != plan || account.Status != accountLive || account.Weekly != "98" {
+		t.Fatalf("account = %+v, want live %s with 98 percent remaining", account, plan)
+	}
+	if len(view.Summary) != 1 || view.Summary[0] != (dashboardCount{Count: 1, Label: "live"}) {
+		t.Fatalf("routable summary = %+v", view.Summary)
+	}
+	server.pool.all()[0].spendControl = &spendControlPayload{Reached: true}
+	view = server.currentDashboard(time.Now())
+	if account := view.Accounts[0]; account.Status != accountCooling || !strings.Contains(account.StatusInfo, "Spend limit reached") {
+		t.Fatalf("account = %+v, want the spend limit explained despite remaining quota", account)
 	}
 }
 

@@ -44,7 +44,9 @@ codex-balancer accounts mode you@example.com normal
 Adding a personal account turns off ChatGPT model training for that account
 before it enters the pool. Business and Enterprise workspaces skip this setting
 request because their data is excluded from training by default; their existing
-training policy is left unchanged. They are displayed but excluded from routing.
+training policy is left unchanged. Self-serve Business Pro Lite
+(`self_serve_business_prolite`) accounts route using their per-account quota.
+Other Business and Enterprise workspaces are displayed but excluded from routing.
 
 Use the CLI to manage client API keys:
 

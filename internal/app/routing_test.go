@@ -62,6 +62,7 @@ func TestPoolRouteFallsBackOnlyWhenTheOwnerCannotContinue(t *testing.T) {
 		removed bool
 	}{
 		{name: "spent owner cannot serve this quota window", mutate: func(account *Account) { account.spent = true }},
+		{name: "owner reached its spend limit", mutate: func(account *Account) { account.spendControl = &spendControlPayload{Reached: true} }},
 		{name: "paused owner was removed from routing by the operator", mutate: func(account *Account) { account.Paused = true }},
 		{name: "signed-out owner cannot authenticate", mutate: func(account *Account) { account.Reauth = "reauth required" }},
 		{name: "removed owner no longer exists", removed: true},
@@ -108,38 +109,62 @@ func TestPoolRouteHonorsSkip(t *testing.T) {
 }
 
 func TestPoolRouteSkipsUnavailableAccounts(t *testing.T) {
-	a := testAccount("account-a", 10)
-	b := testAccount("account-b", 20)
-	p := &Pool{accounts: []*Account{a, b}}
-
 	tests := []struct {
 		name   string
 		mutate func(*Account)
 	}{
 		{name: "paused", mutate: func(account *Account) { account.Paused = true }},
 		{name: "spent", mutate: func(account *Account) { account.spent = true }},
+		{name: "spend limit", mutate: func(account *Account) { account.spendControl = &spendControlPayload{Reached: true} }},
 		{name: "cooling", mutate: func(account *Account) { account.cooldown = time.Now().Add(time.Hour) }},
 		{name: "reauth", mutate: func(account *Account) { account.Reauth = "reauth required" }},
 		{name: "checking", mutate: func(account *Account) { account.primary = window{}; account.secondary = window{} }},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			a.Paused = false
-			a.spent = false
-			a.cooldown = time.Time{}
-			a.Reauth = ""
-			a.primary = window{usedPercent: 10, seenAt: time.Now()}
-			a.secondary = window{usedPercent: 10, seenAt: time.Now()}
-			test.mutate(a)
-			if got := p.route(nil, nil).account; got != b {
-				t.Fatalf("account = %s, want account-b", got.id())
+	for _, plan := range []string{"pro", "self_serve_business_prolite"} {
+		for _, test := range tests {
+			t.Run(plan+"/"+test.name, func(t *testing.T) {
+				a := testAccountWithPlan("account-a", 10, plan)
+				b := testAccount("account-b", 20)
+				p := &Pool{accounts: []*Account{a, b}}
+				test.mutate(a)
+				if got := p.route(nil, nil).account; got != b {
+					t.Fatalf("account = %v, want account-b", got)
+				}
+			})
+		}
+	}
+}
+
+func TestPoolRoutesSelfServeBusinessProlite(t *testing.T) {
+	for _, plan := range []string{"self_serve_business_prolite", " SELF_SERVE_BUSINESS_PROLITE "} {
+		t.Run(plan, func(t *testing.T) {
+			business := testAccountWithPlan("business", 2, plan)
+			personal := testAccount("personal", 20)
+			pool := &Pool{accounts: []*Account{business, personal}}
+			if got := business.status(time.Now()); got != accountLive {
+				t.Fatalf("status = %s, want live", got)
+			}
+			if got := pool.route(nil, nil).account; got != business {
+				t.Fatalf("account = %v, want the roomier Business account", got)
+			}
+			personal.RoutingMode = routingModePriority
+			if got := pool.route(nil, nil).account; got != personal {
+				t.Fatal("fresh placement must still honor manual priority")
+			}
+			if got := pool.route([]string{business.id()}, nil).account; got != business {
+				t.Fatal("healthy Business owner must retain affinity despite another account's priority")
+			}
+			business.spendControl = &spendControlPayload{Reached: true}
+			decision := pool.route([]string{business.id()}, nil)
+			if decision.account != personal || !decision.moved() || decision.blocked != "" {
+				t.Fatalf("decision = %+v, want replacement when the Business spend limit is reached", decision)
 			}
 		})
 	}
 }
 
-func TestPoolRouteExcludesManagedWorkspacePlans(t *testing.T) {
-	for _, plan := range []string{"business", "enterprise", "self_serve_business_prolite"} {
+func TestPoolRouteExcludesDisplayOnlyWorkspacePlans(t *testing.T) {
+	for _, plan := range []string{"business", "enterprise"} {
 		t.Run(plan, func(t *testing.T) {
 			workspace := testAccountWithPlan("workspace", 0, plan)
 			routable := testAccount("routable", 20)

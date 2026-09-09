@@ -139,7 +139,7 @@ func (d dashboard) View() tea.View {
 func (d dashboard) title() string {
 	total := 0.0
 	for _, account := range d.pool.all() {
-		if account.paused() || managedWorkspacePlan(account.plan()) {
+		if account.paused() || !routablePlan(account.plan()) {
 			continue
 		}
 		primary, secondary, _, reauth := account.health()

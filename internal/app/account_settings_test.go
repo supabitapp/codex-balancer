@@ -101,8 +101,9 @@ func TestConnectAccountSkipsTrainingSettingForManagedWorkspaces(t *testing.T) {
 			if state.IDToken != source.IDToken || state.AccessToken != source.AccessToken || state.RefreshToken != source.RefreshToken || state.LastRefresh.IsZero() {
 				t.Fatal("connected account did not retain credentials and refresh time")
 			}
-			if account.routingCandidate().routingEnabled() {
-				t.Fatal("managed workspace must remain excluded from routing")
+			wantRouting := strings.EqualFold(strings.TrimSpace(plan), "self_serve_business_prolite")
+			if got := account.routingCandidate().routingEnabled(); got != wantRouting {
+				t.Fatalf("routing enabled = %t, want %t without changing the training exemption", got, wantRouting)
 			}
 		})
 	}

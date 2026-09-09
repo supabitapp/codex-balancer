@@ -96,8 +96,12 @@ func TestCompleteAccountLoginTrainingPolicy(t *testing.T) {
 			if response.Code != http.StatusOK || settingsCalls != 0 || account == nil {
 				t.Fatalf("status = %d, settings calls = %d, account saved = %t", response.Code, settingsCalls, account != nil)
 			}
-			if got := account.status(time.Now()); got != accountNotRouted {
-				t.Fatalf("account status = %s, want %s", got, accountNotRouted)
+			wantStatus := accountNotRouted
+			if plan == "self_serve_business_prolite" {
+				wantStatus = accountChecking
+			}
+			if got := account.status(time.Now()); got != wantStatus {
+				t.Fatalf("account status = %s, want %s", got, wantStatus)
 			}
 		})
 	}

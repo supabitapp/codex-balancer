@@ -145,6 +145,12 @@ func managedWorkspacePlan(plan string) bool {
 	}
 }
 
+func routablePlan(plan string) bool {
+	// Self-serve Business Pro Lite exposes per-account quota and can route.
+	// Keep its training exemption separate from workspace routing policy.
+	return !managedWorkspacePlan(plan) || strings.EqualFold(strings.TrimSpace(plan), "self_serve_business_prolite")
+}
+
 func (a *Account) pressure() float64 {
 	return math.Max(a.primary.usedPercent, a.secondary.usedPercent)
 }
@@ -166,7 +172,7 @@ func (a *Account) markSpent() bool {
 func (a *Account) restoreFromUsageAfter(t time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.pressure() >= 100 {
+	if a.pressure() >= 100 || spendLimitReached(a.spendControl) {
 		return false
 	}
 	known := false

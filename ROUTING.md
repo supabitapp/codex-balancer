@@ -38,6 +38,18 @@ server considers accounts in this order:
 6. For a peak-usage difference of one percentage point or less, choose the
    oldest last-used timestamp, then account ID.
 
+Self-serve Business Pro Lite (`self_serve_business_prolite`) participates in
+normal per-account routing once quota is known, while keeping its managed-plan
+training exemption. Other Business and Enterprise workspace plans remain
+excluded from routing.
+
+A reported `spend_control.reached` makes an account unavailable for fresh and
+retained routing even if its rate-limit windows have capacity. A pinned socket
+retires before forwarding the next portable turn; reconnect follows the usual
+replacement and full-replay rules. Rate-limit reset credits cannot clear a
+spending limit. Usage polling returns the account to routing after the spend
+limit clears and rate-limit capacity is available.
+
 The model endpoint returns the union of known account catalogs.
 
 Upstream gates each model on a minimum client version, so the catalog follows
