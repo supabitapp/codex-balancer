@@ -20,7 +20,7 @@ Usage:
   codex-balancer accounts add                 Sign in and add the account
   codex-balancer accounts add --device-auth   Do the same with a code on another device
   codex-balancer accounts list                Show pooled accounts
-  codex-balancer accounts mode <account> <mode> Set routing to normal or priority
+  codex-balancer accounts mode <account> <mode> Set routing to normal, priority, or draining
   codex-balancer accounts rm <email>          Drop an account
 
 Flags:
@@ -69,7 +69,7 @@ func accountsCmd(args []string) error {
 		return listAccounts(pool, *asJSON)
 	case "mode":
 		if fs.NArg() != 2 {
-			return errors.New("accounts mode needs an account and one of: normal, priority")
+			return errors.New("accounts mode needs an account and one of: normal, priority, draining")
 		}
 		account, err := pool.resolve(fs.Arg(0))
 		if err != nil {
@@ -169,10 +169,7 @@ func routing(a *Account) string {
 	if candidate.paused {
 		return "paused"
 	}
-	if candidate.mode == routingModePriority {
-		return string(routingModePriority)
-	}
-	return string(routingModeNormal)
+	return string(candidate.mode)
 }
 
 func tokenStatus(a *Account) string {

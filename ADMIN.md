@@ -1,7 +1,7 @@
 # Browser admin
 
 Open `/admin` to manage fast mode, pause or resume accounts, change routing
-priority, remove accounts, create or revoke API keys, and view connections and
+mode, remove accounts, create or revoke API keys, and view connections and
 recent events. This is a hidden route with no link from the public dashboard.
 Adding an account uses the existing `/accounts` sign-in flow.
 
@@ -59,7 +59,14 @@ behind a reverse proxy.
   ownership under the normal routing rules. Repeating a mode does not restart
   connections.
 - Pause and removal retire an account's existing sockets immediately. Resume
-  and routing priority changes use the same pool operations as the TUI/CLI.
+  and routing mode changes use the same pool operations as the TUI/CLI.
+- Routing modes are Normal, Priority, and Draining. Draining prefers the account
+  for new placements only; existing conversations keep their owners, and fast
+  mode is unchanged. Normal automatically drains below 5% remaining in either
+  quota window. Priority opts out of automatic draining. Manual drain precedes
+  automatic drain, and both precede ordinary priority when choosing a new owner.
+  Exhausted, paused, cooling, signed-out, and unknown-quota accounts stay
+  unavailable regardless of their mode.
 - New API key secrets appear only in the creation response. Key lists show
   names, status, dates, and usage, never existing secrets. Revocation rejects
   new requests using the key; it does not terminate already-authenticated

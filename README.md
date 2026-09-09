@@ -28,7 +28,8 @@ The server runs at http://127.0.0.1:8317
 - `/stats` — JSON stats of the server
 - `/accounts` — add an account. On a real server, send this to your friends so they join the pool without exposing credentials.
 
-The TUI also allows you to put a `pause` or `priority` on some accounts.
+The TUI also lets you pause accounts or cycle their routing mode through
+`normal`, `priority`, and `draining`.
 
 ## CLI
 
@@ -38,8 +39,14 @@ There is a CLI to manage the accounts
 codex-balancer accounts add                 # sign in through a local browser
 codex-balancer accounts list
 codex-balancer accounts mode you@example.com priority
+codex-balancer accounts mode you@example.com draining
 codex-balancer accounts mode you@example.com normal
 ```
+
+Draining prioritizes an account for new placements without moving existing
+conversations or changing fast mode. Normal-mode accounts automatically drain
+when either quota window has less than 5% remaining; priority mode opts out of
+automatic draining. See [Routing](ROUTING.md#draining) for ordering and limits.
 
 Adding a personal account turns off ChatGPT model training for that account
 before it enters the pool. Business and Enterprise workspaces skip this setting

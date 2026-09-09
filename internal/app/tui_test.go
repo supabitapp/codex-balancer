@@ -55,6 +55,7 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 		text   string
 	}{
 		{routingModePriority, accountPriority, "priority"},
+		{routingModeDraining, accountDraining, "draining"},
 		{routingModeNormal, accountLive, "live"},
 	} {
 		dashboard.Update(press)

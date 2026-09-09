@@ -420,13 +420,14 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		})
 	}
 
-	summary := make([]dashboardCount, 0, 6)
+	summary := make([]dashboardCount, 0, 7)
 	for _, item := range []struct {
 		status accountStatus
 		label  string
 	}{
 		{accountLive, "live"},
 		{accountPriority, "priority"},
+		{accountDraining, "draining"},
 		{accountChecking, "checking"},
 		{accountCooling, "cooling"},
 		{accountPaused, "paused"},
@@ -767,6 +768,8 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 		return dashboardStatusView{Mark: "●", Label: "live"}
 	case accountPriority:
 		return dashboardStatusView{Mark: "◆", Label: "priority"}
+	case accountDraining:
+		return dashboardStatusView{Mark: "▼", Label: "draining"}
 	default:
 		return dashboardStatusView{Label: string(status)}
 	}
@@ -774,6 +777,12 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 
 func dashboardAccountStatusInfo(now time.Time, account accountStatsResponse) string {
 	switch account.Status {
+	case accountDraining:
+		reason := "A rate-limit window has less than 5% remaining."
+		if account.RoutingMode == routingModeDraining {
+			reason = "Manual draining."
+		}
+		return reason + " Prioritized for new placements only. Existing conversations keep their owners; the global fast-mode policy is unchanged."
 	case accountNotRouted:
 		return "This workspace plan is displayed here but excluded from routing."
 	case accountCooling:

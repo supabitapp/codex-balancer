@@ -31,11 +31,14 @@ server considers accounts in this order:
    carries the requested model and service tier, exclude the accounts that lack
    it. When no available account carries it, keep every candidate and let
    upstream answer for the model.
-3. Prefer manual priority.
-4. Prefer an account with a reset credit that expires within 24 hours, ordered
+3. Prefer draining accounts: manual drain before automatic drain, then the
+   most-used account. Within one percentage point, prefer the earliest known
+   reset of a most-used window, then account ID.
+4. Prefer manual priority when no draining account is available.
+5. Prefer an account with a reset credit that expires within 24 hours, ordered
    by expiration time.
-5. Choose the account with the lowest peak usage across its rate-limit windows.
-6. For a peak-usage difference of one percentage point or less, choose the
+6. Choose the account with the lowest peak usage across its rate-limit windows.
+7. For a peak-usage difference of one percentage point or less, choose the
    oldest last-used timestamp, then account ID.
 
 Self-serve Business Pro Lite (`self_serve_business_prolite`) participates in
@@ -62,6 +65,32 @@ For an identified route, a handshake leaves the last-used timestamp unchanged.
 `response.created` updates it. An anonymous socket has no thread or session
 key, so its handshake updates the timestamp and spreads connection bursts
 across accounts.
+
+## Draining
+
+Draining concentrates new placements on an account rather than spreading its
+remaining quota across the pool. It is a routing preference, not server shutdown
+or a request to stop accepting work.
+
+- `normal` automatically drains when the highest used percentage across known
+  quota windows exceeds 95%. Exactly 5% remaining does not trigger draining.
+- `draining` manually enables the preference regardless of remaining quota.
+  The saved mode stays set across quota exhaustion and reset until changed.
+- `priority` opts out of automatic draining and retains ordinary manual
+  priority behind eligible draining accounts.
+- Paused, spent, spend-limited, cooling, signed-out, unknown-quota, and
+  non-routable accounts cannot receive fresh work even when manually draining.
+- Draining applies only when choosing a new owner. It does not displace accepted
+  or provisional owners, bypass a retained owner's temporary unavailability,
+  force a reconnect, or replay a request. Existing replacement eligibility and
+  full-replay requirements still apply when an owner cannot continue.
+- Draining never changes the service tier. The client's tier and global
+  fast-mode policy work exactly as before.
+
+Use `codex-balancer accounts mode <account> draining`, the admin Routing
+selector, or the TUI's `r` cycle. Change to `normal` to restore automatic mode,
+or `priority` to opt out of automatic draining. Stats show `status: draining`
+for eligible manual and automatic drain; `routing_mode` remains the saved mode.
 
 ## Provisional claims
 
@@ -114,7 +143,7 @@ The server records the account from each `response.created` event. A
 
 ### Relay and ownership
 
-- A healthy retained account outranks manual priority, reset credits, quota
+- A healthy retained account outranks draining, manual priority, reset credits, quota
   pressure, and last-used order.
 - Child threads inherit the session account. A thread's accepted route outranks
   a newer sibling route.
@@ -207,6 +236,10 @@ accepted switches.
 The `routes` table and account `last_used_at` values hold routing state across
 restarts. Schema migrations preserve both. Any route reset needs a migration
 policy because the reset discards cache affinity.
+
+The drain-mode schema migration expands the allowed account routing modes
+without rebuilding the account table. Existing normal/priority modes, routes,
+usage attribution, credentials, and settings are preserved.
 
 The claim and live-socket registries live in memory. Server restart discards
 them. Codex reconnects, and the server rebuilds affinity from SQLite routes.

@@ -181,13 +181,13 @@ func TestPoolRouteExcludesDisplayOnlyWorkspacePlans(t *testing.T) {
 	}
 }
 
-func TestPoolRouteChoosesRoomierAccountWhenAnotherIsNearlySpent(t *testing.T) {
+func TestPoolRouteDrainsNearlySpentAccountBeforeRoomierAccount(t *testing.T) {
 	roomier := testAccount("account-roomier", 10)
 	nearlySpent := testAccount("account-nearly-spent", 99)
 	p := &Pool{accounts: []*Account{roomier, nearlySpent}}
 
-	if got := p.route(nil, nil).account; got != roomier {
-		t.Fatalf("account = %s, want account-roomier", got.id())
+	if got := p.route(nil, nil).account; got != nearlySpent {
+		t.Fatalf("account = %s, want account-nearly-spent", got.id())
 	}
 }
 

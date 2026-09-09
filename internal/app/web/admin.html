@@ -57,14 +57,14 @@
 {{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}"><input type="hidden" name="credit" value="{{.ResetCreditID}}"><button type="submit" aria-label="Use banked reset for {{.Name}}">Reset</button></form>{{end}}</div></td><td>
 <form class="controls" action="/admin/accounts/mode" method="post" hx-post="/admin/accounts/mode" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
 {{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}">
-<select name="mode" aria-label="Routing for {{.Name}}"><option value="normal" {{if eq .Mode "normal"}}selected{{end}}>Normal</option><option value="priority" {{if eq .Mode "priority"}}selected{{end}}>Priority</option></select><button type="submit">Save</button></form>
+<select name="mode" aria-label="Routing for {{.Name}}"><option value="normal" {{if eq .Mode "normal"}}selected{{end}}>Normal</option><option value="priority" {{if eq .Mode "priority"}}selected{{end}}>Priority</option><option value="draining" {{if eq .Mode "draining"}}selected{{end}}>Draining</option></select><button type="submit">Save</button></form>
 </td><td><div class="controls">
 <form action="/admin/accounts/pause" method="post" hx-post="/admin/accounts/pause" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
 {{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}"><input type="hidden" name="paused" value="{{if .Paused}}false{{else}}true{{end}}"><button type="submit">{{if .Paused}}Resume{{else}}Pause{{end}}</button></form>
 
 <form action="/admin/accounts/remove" method="post" hx-post="/admin/accounts/remove" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button" hx-confirm="Remove {{.Name}} from the pool? Existing connections will restart.">
 {{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}"><button class="danger" type="submit">Remove</button></form></div></td></tr>{{end}}
-</tbody></table></div>{{else}}<p class="muted">No accounts yet. Add one to start routing requests.</p>{{end}}</section>{{end}}
+</tbody></table></div><p class="muted">Draining takes new placements first without moving existing conversations or changing fast mode. Normal automatically drains below 5% remaining in either quota window; Priority opts out of automatic draining.</p>{{else}}<p class="muted">No accounts yet. Add one to start routing requests.</p>{{end}}</section>{{end}}
 
 {{define "keys-panel"}}<section id="keys-panel">
 <h2>API keys</h2>

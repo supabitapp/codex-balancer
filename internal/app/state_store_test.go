@@ -159,7 +159,8 @@ func TestStateStoreMigratesRoutesToOwnerTombstones(t *testing.T) {
 	legacySchema := fmt.Sprintf(`PRAGMA application_id = %d;
 		PRAGMA user_version = 2;
 		PRAGMA foreign_keys = ON;
-		CREATE TABLE accounts (account_id TEXT PRIMARY KEY) STRICT;
+		CREATE TABLE accounts (account_id TEXT PRIMARY KEY,
+			routing_mode TEXT NOT NULL DEFAULT 'normal' CHECK (routing_mode IN ('normal', 'priority'))) STRICT;
 		CREATE TABLE routes (
 			key TEXT PRIMARY KEY CHECK (length(key) > 0),
 			account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
