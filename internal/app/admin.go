@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"html/template"
 	"net/http"
 	"strings"
@@ -17,12 +18,14 @@ type adminLoginView struct {
 }
 
 type adminAccountView struct {
-	ID     string
-	Name   string
-	Plan   string
-	Status string
-	Paused bool
-	Mode   string
+	ID            string
+	Name          string
+	Plan          string
+	Status        string
+	Paused        bool
+	Mode          string
+	ResetCreditID string
+	Banked        string
 }
 
 type adminKeyView struct {
@@ -105,7 +108,18 @@ func (s *server) renderAdmin(w http.ResponseWriter, r *http.Request, session adm
 	view.ModeLabel = view.Mode.label()
 	for _, account := range s.pool.sorted() {
 		candidate := account.routingCandidate()
-		view.Accounts = append(view.Accounts, adminAccountView{ID: account.id(), Name: label(account), Plan: account.plan(), Status: dashboardStatus(candidate.status(time.Now())).Label, Paused: candidate.paused, Mode: string(candidate.mode)})
+		row := adminAccountView{ID: account.id(), Name: label(account), Plan: account.plan(), Status: dashboardStatus(candidate.status(time.Now())).Label, Paused: candidate.paused, Mode: string(candidate.mode)}
+		row.Banked = "—"
+		if candidate.resetCredits.known {
+			row.Banked = dashboardNumber(candidate.resetCredits.count)
+		}
+		for _, credit := range candidate.resetCredits.details {
+			if credit.ID != "" && credit.available() && (credit.ExpiresAt == nil || credit.ExpiresAt.After(time.Now())) {
+				row.ResetCreditID = credit.ID
+				break
+			}
+		}
+		view.Accounts = append(view.Accounts, row)
 	}
 	keys, err := s.pool.store.readAPIKeys()
 	if err != nil {
@@ -156,7 +170,7 @@ func (s *server) adminSettings(w http.ResponseWriter, r *http.Request, session a
 
 func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, session adminSession) {
 	action := r.PathValue("action")
-	if action != "pause" && action != "mode" && action != "remove" {
+	if action != "pause" && action != "mode" && action != "remove" && action != "reset" {
 		http.NotFound(w, r)
 		return
 	}
@@ -168,6 +182,9 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 	var err error
 	notice := ""
 	switch action {
+	case "reset":
+		s.adminBankedReset(w, r, session, account)
+		return
 	case "pause":
 		value := r.PostForm.Get("paused")
 		if value != "true" && value != "false" {
@@ -254,4 +271,43 @@ func (s *server) adminKeyAction(w http.ResponseWriter, r *http.Request, session 
 	}
 	s.stats.note("admin key "+action, "", name)
 	s.renderAdmin(w, r, session, "keys-panel", notice, secret, http.StatusOK)
+}
+
+func (s *server) adminBankedReset(w http.ResponseWriter, r *http.Request, session adminSession, account *Account) {
+	creditID := r.PostForm.Get("credit")
+	if creditID == "" {
+		s.renderAdmin(w, r, session, "accounts-panel", "Choose an available banked reset.", "", http.StatusUnprocessableEntity)
+		return
+	}
+	account.resetMu.Lock()
+	defer account.resetMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	result, selected, err := s.consumeResetCredit(ctx, account, func(credits []resetCredit) (resetCredit, bool) {
+		for _, credit := range credits {
+			if credit.ID == creditID && credit.available() && (credit.ExpiresAt == nil || credit.ExpiresAt.After(time.Now())) {
+				return credit, true
+			}
+		}
+		return resetCredit{}, false
+	})
+	if err != nil {
+		s.log.Warn("admin banked reset failed", "account", account.id(), "error", err)
+		s.renderAdmin(w, r, session, "accounts-panel", "Could not confirm the banked reset. Refresh before trying again.", "", http.StatusBadGateway)
+		return
+	}
+	notice, status := "Banked reset applied.", http.StatusOK
+	switch {
+	case selected == "", result.Code == "no_credit", result.Code == "already_redeemed":
+		notice, status = "That banked reset is no longer available.", http.StatusConflict
+	case result.Code == "nothing_to_reset":
+		notice = "The account has no rate limits to reset."
+	}
+	s.stats.note("admin account reset", account.id(), notice)
+	usageErr := s.pollUsage(ctx, account)
+	creditsErr := s.pollResetCredits(ctx, account)
+	if usageErr != nil || creditsErr != nil {
+		notice += " Could not refresh account data; it will update on the next successful poll."
+	}
+	s.renderAdmin(w, r, session, "accounts-panel", notice, "", status)
 }

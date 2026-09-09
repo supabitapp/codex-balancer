@@ -243,6 +243,12 @@ func expiringResetCredit(credits []resetCredit, now time.Time) (resetCredit, boo
 }
 
 func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Account, now time.Time) (consumeResetCreditResponse, string, error) {
+	return s.consumeResetCredit(ctx, account, func(credits []resetCredit) (resetCredit, bool) {
+		return expiringResetCredit(credits, now)
+	})
+}
+
+func (s *server) consumeResetCredit(ctx context.Context, account *Account, choose func([]resetCredit) (resetCredit, bool)) (consumeResetCreditResponse, string, error) {
 	resp, err := s.doAccountRequest(ctx, account, http.MethodGet, accountAPIBaseURL+"/rate-limit-reset-credits", nil)
 	if err != nil {
 		return consumeResetCreditResponse{}, "", err
@@ -258,7 +264,7 @@ func (s *server) consumeExpiringResetCredit(ctx context.Context, account *Accoun
 	}
 	fetchedAt := time.Now()
 	account.adoptResetCredits(fetchedAt, payload.AvailableCount, payload.Credits)
-	credit, ok := expiringResetCredit(payload.Credits, now)
+	credit, ok := choose(payload.Credits)
 	if !ok {
 		return consumeResetCreditResponse{}, "", nil
 	}

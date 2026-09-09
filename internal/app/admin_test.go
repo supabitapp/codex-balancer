@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -136,7 +137,7 @@ func TestAdminAuthAndCookies(t *testing.T) {
 			t.Fatalf("unprotected %s: %d", path, got)
 		}
 	}
-	for _, path := range []string{"/admin/settings", "/admin/accounts/pause", "/admin/accounts/remove", "/admin/accounts/mode", "/admin/keys/add", "/admin/keys/revoke", "/admin/logout"} {
+	for _, path := range []string{"/admin/settings", "/admin/accounts/reset", "/admin/accounts/pause", "/admin/accounts/remove", "/admin/accounts/mode", "/admin/keys/add", "/admin/keys/revoke", "/admin/logout"} {
 		if got := adminRequest(h, "POST", path, nil).Code; got != 303 {
 			t.Fatalf("unprotected %s: %d", path, got)
 		}
@@ -394,5 +395,92 @@ func TestAdminPasswordPromptDoesNotPrintPassword(t *testing.T) {
 	err := changeAdminPassword(srv.pool.store, func() ([]byte, error) { return []byte(testAdminPassword), nil }, &out)
 	if err != nil || strings.Contains(out.String(), testAdminPassword) {
 		t.Fatal("password prompt exposed password")
+	}
+}
+
+func TestAdminBankedReset(t *testing.T) {
+	for _, tc := range []struct {
+		name, code                 string
+		upstreamStatus, wantStatus int
+		available                  bool
+	}{
+		{"success", "reset", 200, 200, true},
+		{"nothing to reset", "nothing_to_reset", 200, 200, true},
+		{"already redeemed", "already_redeemed", 200, 409, true},
+		{"unavailable", "", 200, 409, false},
+		{"upstream failure", "", 500, 502, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := testAccount("account-a", 100)
+			expires := time.Now().Add(30 * 24 * time.Hour)
+			credit := resetCredit{ID: "credit-a", ResetType: "codex_rate_limits", Status: "available", ExpiresAt: &expires}
+			account.adoptResetCredits(time.Now(), 1, []resetCredit{credit})
+			consumed, refreshed := 0, false
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "GET /rate-limit-reset-credits":
+					payload := resetCreditsPayload{}
+					if tc.available && consumed == 0 {
+						payload.AvailableCount = 1
+						payload.Credits = []resetCredit{credit}
+					}
+					json.NewEncoder(w).Encode(payload)
+				case "POST /rate-limit-reset-credits/consume":
+					consumed++
+					var body consumeResetCreditRequest
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					if body.CreditID != credit.ID || body.RedeemRequestID != credit.ID {
+						t.Errorf("unexpected redemption: %+v", body)
+					}
+					w.WriteHeader(tc.upstreamStatus)
+					json.NewEncoder(w).Encode(consumeResetCreditResponse{Code: tc.code, WindowsReset: 2})
+				case "GET /usage":
+					refreshed = true
+					w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":0},"secondary_window":{"used_percent":0}}}`))
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer upstream.Close()
+			old := accountAPIBaseURL
+			accountAPIBaseURL = upstream.URL
+			defer func() { accountAPIBaseURL = old }()
+			srv := newTestServer(t, []*Account{account})
+			enableTestAdmin(t, srv)
+			h := srv.routes()
+			cookie, csrf := loginTestAdmin(t, h)
+			page := adminRequest(h, "GET", "/admin", nil, cookie)
+			if !strings.Contains(page.Body.String(), "Use banked reset") {
+				t.Fatal("missing reset control")
+			}
+			form := url.Values{"account": {account.id()}, "credit": {credit.ID}}
+			if got := adminRequest(h, "POST", "/admin/accounts/reset", form, cookie).Code; got != 403 || consumed != 0 {
+				t.Fatal("reset accepted without CSRF")
+			}
+			form.Set("csrf", csrf)
+			response := adminRequest(h, "POST", "/admin/accounts/reset", form, cookie)
+			if response.Code != tc.wantStatus {
+				t.Fatalf("status %d: %s", response.Code, response.Body.String())
+			}
+			wantConsumed := 0
+			if tc.available {
+				wantConsumed = 1
+			}
+			if consumed != wantConsumed {
+				t.Fatalf("consumed %d credits", consumed)
+			}
+			if tc.upstreamStatus == 200 && !refreshed {
+				t.Fatal("usage not refreshed")
+			}
+			if tc.code == "reset" {
+				response = adminRequest(h, "POST", "/admin/accounts/reset", form, cookie)
+				if response.Code != 409 || consumed != 1 {
+					t.Fatal("stale submission consumed another credit")
+				}
+			}
+		})
 	}
 }
