@@ -59,6 +59,8 @@
 {{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}">
 <select name="mode" aria-label="Routing for {{.Name}}"><option value="normal" {{if eq .Mode "normal"}}selected{{end}}>Normal</option><option value="priority" {{if eq .Mode "priority"}}selected{{end}}>Priority</option><option value="draining" {{if eq .Mode "draining"}}selected{{end}}>Draining</option></select><button type="submit">Save</button></form>
 </td><td><div class="controls">
+<form action="/admin/accounts/refresh" method="post" hx-post="/admin/accounts/refresh" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+{{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}"><button type="submit" aria-label="Refresh quota and banked credits for {{.Name}}">Refresh</button></form>
 <form action="/admin/accounts/pause" method="post" hx-post="/admin/accounts/pause" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
 {{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}"><input type="hidden" name="paused" value="{{if .Paused}}false{{else}}true{{end}}"><button type="submit">{{if .Paused}}Resume{{else}}Pause{{end}}</button></form>
 

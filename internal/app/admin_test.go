@@ -137,7 +137,7 @@ func TestAdminAuthAndCookies(t *testing.T) {
 			t.Fatalf("unprotected %s: %d", path, got)
 		}
 	}
-	for _, path := range []string{"/admin/settings", "/admin/accounts/reset", "/admin/accounts/pause", "/admin/accounts/remove", "/admin/accounts/mode", "/admin/keys/add", "/admin/keys/revoke", "/admin/logout"} {
+	for _, path := range []string{"/admin/settings", "/admin/accounts/reset", "/admin/accounts/refresh", "/admin/accounts/pause", "/admin/accounts/remove", "/admin/accounts/mode", "/admin/keys/add", "/admin/keys/revoke", "/admin/logout"} {
 		if got := adminRequest(h, "POST", path, nil).Code; got != 303 {
 			t.Fatalf("unprotected %s: %d", path, got)
 		}
@@ -496,6 +496,75 @@ func TestAdminBankedReset(t *testing.T) {
 				if response.Code != 409 || consumed != 1 {
 					t.Fatal("stale submission consumed another credit")
 				}
+			}
+		})
+	}
+}
+
+func TestAdminAccountRefresh(t *testing.T) {
+	for _, failPath := range []string{"", "/usage", "/rate-limit-reset-credits"} {
+		t.Run("failure="+failPath, func(t *testing.T) {
+			account := testAccount("account-a", 100)
+			usageCalls, creditCalls := 0, 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "GET /usage":
+					usageCalls++
+				case "GET /rate-limit-reset-credits":
+					creditCalls++
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(404)
+					return
+				}
+				if r.URL.Path == failPath {
+					w.WriteHeader(500)
+					return
+				}
+				if r.URL.Path == "/usage" {
+					w.Write([]byte(`{"rate_limit":{"primary_window":{"used_percent":20},"secondary_window":{"used_percent":30}}}`))
+				} else {
+					w.Write([]byte(`{"available_count":2}`))
+				}
+			}))
+			defer upstream.Close()
+			old := accountAPIBaseURL
+			accountAPIBaseURL = upstream.URL
+			defer func() { accountAPIBaseURL = old }()
+			srv := newTestServer(t, []*Account{account})
+			enableTestAdmin(t, srv)
+			h := srv.routes()
+			cookie, csrf := loginTestAdmin(t, h)
+			page := adminRequest(h, "GET", "/admin", nil, cookie)
+			if !strings.Contains(page.Body.String(), "Refresh quota and banked credits for") {
+				t.Fatal("missing refresh control")
+			}
+			form := url.Values{"account": {account.id()}}
+			if got := adminRequest(h, "POST", "/admin/accounts/refresh", form, cookie).Code; got != 403 || usageCalls != 0 || creditCalls != 0 {
+				t.Fatal("refresh accepted without CSRF")
+			}
+			form.Set("csrf", csrf)
+			request := httptest.NewRequest("POST", "https://balancer.test/admin/accounts/refresh", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			request.Header.Set("HX-Request", "true")
+			request.AddCookie(cookie)
+			response := httptest.NewRecorder()
+			h.ServeHTTP(response, request)
+			wantStatus, wantNotice := 200, "Quota and banked credits refreshed"
+			if failPath != "" {
+				wantStatus, wantNotice = 502, "Could not refresh all account data"
+			}
+			if response.Code != wantStatus || !strings.Contains(response.Body.String(), wantNotice) || strings.Contains(response.Body.String(), "<!doctype") {
+				t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+			}
+			if usageCalls != 1 || creditCalls != 1 {
+				t.Fatalf("usage calls=%d, credit calls=%d", usageCalls, creditCalls)
+			}
+			if failPath != "/usage" && (account.primary.usedPercent != 20 || account.secondary.usedPercent != 30) {
+				t.Fatal("quota not updated")
+			}
+			if failPath != "/rate-limit-reset-credits" && account.resetCredits.count != 2 {
+				t.Fatal("banked credits not updated")
 			}
 		})
 	}

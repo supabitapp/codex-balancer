@@ -170,7 +170,7 @@ func (s *server) adminSettings(w http.ResponseWriter, r *http.Request, session a
 
 func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, session adminSession) {
 	action := r.PathValue("action")
-	if action != "pause" && action != "mode" && action != "remove" && action != "reset" {
+	if action != "pause" && action != "mode" && action != "remove" && action != "reset" && action != "refresh" {
 		http.NotFound(w, r)
 		return
 	}
@@ -182,6 +182,9 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 	var err error
 	notice := ""
 	switch action {
+	case "refresh":
+		s.adminRefreshAccount(w, r, session, account)
+		return
 	case "reset":
 		s.adminBankedReset(w, r, session, account)
 		return
@@ -271,6 +274,20 @@ func (s *server) adminKeyAction(w http.ResponseWriter, r *http.Request, session 
 	}
 	s.stats.note("admin key "+action, "", name)
 	s.renderAdmin(w, r, session, "keys-panel", notice, secret, http.StatusOK)
+}
+
+func (s *server) adminRefreshAccount(w http.ResponseWriter, r *http.Request, session adminSession, account *Account) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	usageErr := s.pollUsage(ctx, account)
+	creditsErr := s.pollResetCredits(ctx, account)
+	notice, status := "Quota and banked credits refreshed for "+label(account)+".", http.StatusOK
+	if usageErr != nil || creditsErr != nil {
+		s.log.Warn("admin account refresh failed", "account", account.id(), "usage_error", usageErr, "credits_error", creditsErr)
+		notice, status = "Could not refresh all account data. Try again.", http.StatusBadGateway
+	}
+	s.stats.note("admin account refresh", account.id(), notice)
+	s.renderAdmin(w, r, session, "accounts-panel", notice, "", status)
 }
 
 func (s *server) adminBankedReset(w http.ResponseWriter, r *http.Request, session adminSession, account *Account) {
