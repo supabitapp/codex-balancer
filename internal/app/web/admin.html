@@ -42,7 +42,7 @@
 {{template "csrf" .CSRF}}
 <label for="fast-mode">Fast mode</label>
 <div class="controls"><select id="fast-mode" name="fast-mode">
-<option value="default" {{if eq .Mode "default"}}selected{{end}}>Client preference</option>
+<option value="default" {{if eq .Mode "default"}}selected{{end}}>Default</option>
 <option value="on" {{if eq .Mode "on"}}selected{{end}}>Force fast</option>
 <option value="off" {{if eq .Mode "off"}}selected{{end}}>Force standard</option>
 </select><button type="submit">Save fast mode</button></div>

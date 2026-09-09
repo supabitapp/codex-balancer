@@ -672,7 +672,7 @@ func TestDashboardOverview(t *testing.T) {
 	server := &server{pool: &Pool{}, stats: stats}
 	view := server.currentDashboard(now)
 	wantValues := map[string]string{
-		"fast mode":     "Client preference",
+		"fast mode":     "Default",
 		"active WS":     "3",
 		"CPU":           "--",
 		"RAM":           "--",

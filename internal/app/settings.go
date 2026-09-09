@@ -27,7 +27,7 @@ func (m fastMode) label() string {
 	case fastModeOff:
 		return "Force standard"
 	default:
-		return "Client preference"
+		return "Default"
 	}
 }
 
