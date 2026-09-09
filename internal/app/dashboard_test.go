@@ -489,6 +489,21 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	}
 }
 
+func TestDashboardSeparatesSelfServeBusinessProlite(t *testing.T) {
+	const plan = "self_serve_business_prolite"
+	server := &server{
+		pool:  &Pool{accounts: []*Account{testAccountWithPlan("workspace", 0, plan)}},
+		stats: newStatsWithPrices(priceSnapshot{}),
+	}
+	view := server.currentDashboard(time.Now())
+	if len(view.Accounts) != 0 || len(view.Workspaces) != 1 {
+		t.Fatalf("accounts = %+v, workspaces = %+v, want only one managed workspace", view.Accounts, view.Workspaces)
+	}
+	if workspace := view.Workspaces[0]; workspace.Plan != plan || workspace.Status != accountNotRouted {
+		t.Fatalf("workspace = %+v, want %s excluded from routing", workspace, plan)
+	}
+}
+
 func TestDashboardSeparatesManagedWorkspacesAndShowsSpendControl(t *testing.T) {
 	now := time.Date(2026, time.August, 28, 14, 0, 0, 0, time.UTC)
 	usedPercent := 48.0

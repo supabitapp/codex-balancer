@@ -138,7 +138,7 @@ func creditCycleStart(now time.Time, windows ...window) (time.Time, bool) {
 
 func managedWorkspacePlan(plan string) bool {
 	switch strings.ToLower(strings.TrimSpace(plan)) {
-	case "business", "enterprise":
+	case "business", "enterprise", "self_serve_business_prolite":
 		return true
 	default:
 		return false

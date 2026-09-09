@@ -51,7 +51,7 @@ func TestConnectAccountDisablesTraining(t *testing.T) {
 }
 
 func TestConnectAccountRejectsTrainingSettingFailure(t *testing.T) {
-	for _, plan := range []string{"free", "go", "plus", "pro", "prolite", "team", "", "unknown"} {
+	for _, plan := range []string{"free", "go", "plus", "pro", "prolite", "team", "", "unknown", "self_serve_business_unknown"} {
 		t.Run(plan, func(t *testing.T) {
 			source := testAccountWithPlan("account-a", 0, plan).persisted()
 			calls := 0
@@ -82,7 +82,7 @@ func TestConnectAccountRejectsTrainingSettingFailure(t *testing.T) {
 }
 
 func TestConnectAccountSkipsTrainingSettingForManagedWorkspaces(t *testing.T) {
-	for _, plan := range []string{"business", "enterprise", " Business ", "ENTERPRISE"} {
+	for _, plan := range []string{"business", "enterprise", "self_serve_business_prolite", " Business ", "ENTERPRISE", " SELF_SERVE_BUSINESS_PROLITE "} {
 		t.Run(plan, func(t *testing.T) {
 			source := testAccountWithPlan("workspace", 0, plan).persisted()
 			client := &http.Client{Transport: accountSettingsRoundTrip(func(*http.Request) (*http.Response, error) {
@@ -109,7 +109,7 @@ func TestConnectAccountSkipsTrainingSettingForManagedWorkspaces(t *testing.T) {
 }
 
 func TestConnectAccountRejectsIncompleteCredentials(t *testing.T) {
-	for _, plan := range []string{"pro", "business", "enterprise"} {
+	for _, plan := range []string{"pro", "business", "enterprise", "self_serve_business_prolite"} {
 		for _, missing := range []string{"access token", "account ID"} {
 			t.Run(plan+"/"+missing, func(t *testing.T) {
 				source := testAccountWithPlan("account-a", 0, plan).persisted()

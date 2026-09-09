@@ -33,7 +33,7 @@ func TestAccountLoginPageRendersEmbeddedTemplate(t *testing.T) {
 }
 
 func TestCompleteAccountLoginTrainingPolicy(t *testing.T) {
-	for _, plan := range []string{"business", "enterprise", "pro", "team", ""} {
+	for _, plan := range []string{"business", "enterprise", "self_serve_business_prolite", "pro", "team", ""} {
 		t.Run(plan, func(t *testing.T) {
 			store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
 			if err != nil {
@@ -83,7 +83,7 @@ func TestCompleteAccountLoginTrainingPolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 			account := reloaded.find("account-a")
-			if plan != "business" && plan != "enterprise" {
+			if plan != "business" && plan != "enterprise" && plan != "self_serve_business_prolite" {
 				if response.Code != http.StatusGone || settingsCalls != 1 || account != nil {
 					t.Fatalf("status = %d, settings calls = %d, account saved = %t", response.Code, settingsCalls, account != nil)
 				}

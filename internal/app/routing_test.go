@@ -139,7 +139,7 @@ func TestPoolRouteSkipsUnavailableAccounts(t *testing.T) {
 }
 
 func TestPoolRouteExcludesManagedWorkspacePlans(t *testing.T) {
-	for _, plan := range []string{"business", "enterprise"} {
+	for _, plan := range []string{"business", "enterprise", "self_serve_business_prolite"} {
 		t.Run(plan, func(t *testing.T) {
 			workspace := testAccountWithPlan("workspace", 0, plan)
 			routable := testAccount("routable", 20)
