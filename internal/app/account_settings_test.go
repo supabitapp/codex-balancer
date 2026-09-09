@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -49,21 +51,28 @@ func TestConnectAccountDisablesTraining(t *testing.T) {
 }
 
 func TestConnectAccountRejectsTrainingSettingFailure(t *testing.T) {
-	for _, plan := range []string{"free", "go", "plus", "pro", "prolite", "", "unknown"} {
+	for _, plan := range []string{"free", "go", "plus", "pro", "prolite", "team", "", "unknown"} {
 		t.Run(plan, func(t *testing.T) {
 			source := testAccountWithPlan("account-a", 0, plan).persisted()
 			calls := 0
 			client := &http.Client{Transport: accountSettingsRoundTrip(func(*http.Request) (*http.Response, error) {
 				calls++
-				return &http.Response{StatusCode: http.StatusForbidden, Status: "403 Forbidden", Body: http.NoBody}, nil
+				return &http.Response{
+					StatusCode: http.StatusForbidden,
+					Status:     "403 Forbidden",
+					Body:       io.NopCloser(strings.NewReader("sensitive upstream response")),
+				}, nil
 			})}
 			account, err := connectAccount(context.Background(), client, tokenResponse{
 				IDToken:      source.IDToken,
 				AccessToken:  source.AccessToken,
 				RefreshToken: source.RefreshToken,
 			})
-			if err == nil || !strings.Contains(err.Error(), "account settings returned 403 Forbidden") {
-				t.Fatalf("error = %v", err)
+			// Only the status and plan belong in this diagnostic, not credentials,
+			// account identifiers, or the upstream response body.
+			want := fmt.Sprintf("disable training: account settings returned 403 Forbidden (ID token plan: %q)", plan)
+			if err == nil || err.Error() != want {
+				t.Fatalf("error = %v, want %s", err, want)
 			}
 			if calls != 1 || account != nil {
 				t.Fatalf("calls = %d, account returned = %t", calls, account != nil)

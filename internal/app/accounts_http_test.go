@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +33,7 @@ func TestAccountLoginPageRendersEmbeddedTemplate(t *testing.T) {
 }
 
 func TestCompleteAccountLoginTrainingPolicy(t *testing.T) {
-	for _, plan := range []string{"business", "enterprise", "pro"} {
+	for _, plan := range []string{"business", "enterprise", "pro", "team", ""} {
 		t.Run(plan, func(t *testing.T) {
 			store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
 			if err != nil {
@@ -82,9 +83,13 @@ func TestCompleteAccountLoginTrainingPolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 			account := reloaded.find("account-a")
-			if plan == "pro" {
+			if plan != "business" && plan != "enterprise" {
 				if response.Code != http.StatusGone || settingsCalls != 1 || account != nil {
 					t.Fatalf("status = %d, settings calls = %d, account saved = %t", response.Code, settingsCalls, account != nil)
+				}
+				want := fmt.Sprintf("disable training: account settings returned 403 Forbidden (ID token plan: %q)", plan)
+				if len(s.stats.events) != 1 || s.stats.events[0].Kind != "account login failed" || s.stats.events[0].Detail != want || s.stats.events[0].Account != "" {
+					t.Fatalf("events = %+v, want one login failure with only status and plan", s.stats.events)
 				}
 				return
 			}

@@ -66,7 +66,7 @@ func disableTraining(ctx context.Context, client *http.Client, account *Account)
 	}
 	defer response.Body.Close()
 	if response.StatusCode/100 != 2 {
-		return fmt.Errorf("disable training: account settings returned %s", response.Status)
+		return fmt.Errorf("disable training: account settings returned %s (ID token plan: %q)", response.Status, claims.Auth.Plan)
 	}
 	return nil
 }
