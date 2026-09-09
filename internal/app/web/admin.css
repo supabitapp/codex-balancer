@@ -28,3 +28,16 @@ th, td { padding: .75rem .5rem; vertical-align: middle }
 button:disabled { opacity: .5; cursor: wait }
 @media (prefers-color-scheme: dark) { .danger { color: #ff9592 } }
 @media (max-width: 600px) { body { padding: .75rem } section { padding: 1rem } .section-title { align-items: baseline; flex-wrap: wrap } }
+
+.accounts-table { table-layout: auto }
+.accounts-table th { color: var(--text-muted, #666); font-size: .75rem; font-weight: 500; text-align: left }
+.accounts-table td { border-bottom: 1px solid var(--border, #ddd) }
+.accounts-table tr:nth-child(even) { background: transparent }
+.accounts-table .controls { flex-wrap: nowrap; gap: .375rem }
+.accounts-table form { flex-shrink: 0 }
+.accounts-table button, .accounts-table select { font: inherit; line-height: 1.25; padding: .4rem .6rem; margin: 0; border: 1px solid var(--border, #ddd); border-radius: .375rem; background: var(--background-body, #fff) }
+.accounts-table button:hover { background: var(--background, #eee) }
+.accounts-table select { padding-right: 1.5rem }
+.accounts-table .danger { border-color: transparent; background: transparent }
+.accounts-table .banked-controls { gap: .625rem }
+.accounts-table .banked-controls span { min-width: 1ch; font-variant-numeric: tabular-nums }

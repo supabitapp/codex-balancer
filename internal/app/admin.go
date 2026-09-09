@@ -108,7 +108,7 @@ func (s *server) renderAdmin(w http.ResponseWriter, r *http.Request, session adm
 	view.ModeLabel = view.Mode.label()
 	for _, account := range s.pool.sorted() {
 		candidate := account.routingCandidate()
-		row := adminAccountView{ID: account.id(), Name: label(account), Plan: account.plan(), Status: dashboardStatus(candidate.status(time.Now())).Label, Paused: candidate.paused, Mode: string(candidate.mode)}
+		row := adminAccountView{ID: account.id(), Name: label(account), Plan: dashboardPlan(account.plan()), Status: dashboardStatus(candidate.status(time.Now())).Label, Paused: candidate.paused, Mode: string(candidate.mode)}
 		row.Banked = "—"
 		if candidate.resetCredits.known {
 			row.Banked = dashboardNumber(candidate.resetCredits.count)

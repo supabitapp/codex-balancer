@@ -453,7 +453,7 @@ func TestAdminBankedReset(t *testing.T) {
 			h := srv.routes()
 			cookie, csrf := loginTestAdmin(t, h)
 			page := adminRequest(h, "GET", "/admin", nil, cookie)
-			if !strings.Contains(page.Body.String(), "Use banked reset") {
+			if !strings.Contains(page.Body.String(), "Use banked reset for") {
 				t.Fatal("missing reset control")
 			}
 			form := url.Values{"account": {account.id()}, "credit": {credit.ID}}
