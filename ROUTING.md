@@ -219,7 +219,7 @@ codex-balancer settings set -state /path/to/state.db fast-mode on
 Settings persist in SQLite across restarts. Running servers poll them every
 500 ms. The CLI reports the saved setting; it does not acknowledge that a
 server has applied it. The dashboard shows the server's applied policy as
-Default, Force fast, or Force standard.
+default, force fast, or force standard.
 
 A policy change activates the new value and asks all existing WebSockets to
 close with `1012`. Connections still completing their handshake also retire

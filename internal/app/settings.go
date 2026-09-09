@@ -23,11 +23,22 @@ func (m fastMode) valid() bool {
 func (m fastMode) label() string {
 	switch m {
 	case fastModeOn:
-		return "Force fast"
+		return "force fast"
 	case fastModeOff:
-		return "Force standard"
+		return "force standard"
 	default:
-		return "Default"
+		return "default"
+	}
+}
+
+func (m fastMode) description() string {
+	switch m {
+	case fastModeOn:
+		return "Forces fast mode for all requests, overriding the client's preference."
+	case fastModeOff:
+		return "Forces standard mode for all requests, overriding the client's preference."
+	default:
+		return "Uses the client's fast mode preference for each request."
 	}
 }
 
