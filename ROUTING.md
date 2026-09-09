@@ -32,8 +32,9 @@ server considers accounts in this order:
    it. When no available account carries it, keep every candidate and let
    upstream answer for the model.
 3. Prefer draining accounts: manual drain before automatic drain, then the
-   most-used account. Within one percentage point, prefer the earliest known
-   reset of a most-used window, then account ID.
+   most-used account. Among accounts within one percentage point of the highest
+   usage in that drain category, prefer the earliest known reset of a most-used
+   window, then account ID.
 4. Prefer manual priority when no draining account is available.
 5. Prefer an account with a reset credit that expires within 24 hours, ordered
    by expiration time.

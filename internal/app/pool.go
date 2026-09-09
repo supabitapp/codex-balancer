@@ -224,14 +224,38 @@ func (p *Pool) route(owners []string, skip map[string]bool) routingDecision {
 			}
 		}
 	}
-	var best *routingCandidate
+	var best, drain *routingCandidate
 	for i := range decision.candidates {
 		candidate := &decision.candidates[i]
 		if skip[candidate.id] || !candidate.available(now) {
 			continue
 		}
+		if candidate.draining() {
+			if drain == nil ||
+				(candidate.mode == routingModeDraining && drain.mode != routingModeDraining) ||
+				(candidate.mode == drain.mode && candidate.pressure > drain.pressure) {
+				drain = candidate
+			}
+			continue
+		}
 		if best == nil || candidate.routesBefore(*best, now) {
 			best = candidate
+		}
+	}
+	if drain != nil {
+		// Anchor every drain tie to the maximum pressure in the winning mode.
+		best = drain
+		for i := range decision.candidates {
+			candidate := &decision.candidates[i]
+			if skip[candidate.id] || !candidate.available(now) {
+				continue
+			}
+			if !candidate.draining() || candidate.mode != drain.mode || drain.pressure-candidate.pressure > 1 {
+				continue
+			}
+			if candidate.drainResetsBefore(*best) {
+				best = candidate
+			}
 		}
 	}
 	if best != nil {
@@ -312,15 +336,7 @@ func (c routingCandidate) draining() bool {
 	}
 }
 
-func (c routingCandidate) drainsBefore(other routingCandidate) bool {
-	manual := c.mode == routingModeDraining
-	otherManual := other.mode == routingModeDraining
-	if manual != otherManual {
-		return manual
-	}
-	if math.Abs(c.pressure-other.pressure) > 1 {
-		return c.pressure > other.pressure
-	}
+func (c routingCandidate) drainResetsBefore(other routingCandidate) bool {
 	reset, otherReset := c.drainReset(), other.drainReset()
 	if !reset.Equal(otherReset) {
 		if reset.IsZero() {
@@ -364,13 +380,6 @@ func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool)
 
 func (c routingCandidate) routesBefore(other routingCandidate, now time.Time) bool {
 	// This ranking is only used for fresh placement, after retained owners.
-	draining, otherDraining := c.draining(), other.draining()
-	if draining != otherDraining {
-		return draining
-	}
-	if draining {
-		return c.drainsBefore(other)
-	}
 	manualPriority := c.mode == routingModePriority
 	otherManualPriority := other.mode == routingModePriority
 	if manualPriority != otherManualPriority {

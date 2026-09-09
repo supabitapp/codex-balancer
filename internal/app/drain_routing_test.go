@@ -80,6 +80,52 @@ func TestPoolDrainTiesUsePressureResetAndID(t *testing.T) {
 	}
 }
 
+func TestPoolDrainTieBandIsIndependentOfAccountOrder(t *testing.T) {
+	for _, mode := range []routingMode{routingModeNormal, routingModeDraining} {
+		t.Run(string(mode), func(t *testing.T) {
+			now := time.Now()
+			a, b, c := testAccount("a", 99), testAccount("b", 98), testAccount("c", 97)
+			other := testAccount("other", 99)
+			if mode == routingModeNormal {
+				other.RoutingMode = routingModePriority
+			}
+			for i, account := range []*Account{a, b, c} {
+				account.RoutingMode = mode
+				if mode == routingModeDraining {
+					setTestAccountUsage(account, float64(50-i))
+				}
+				reset := now.Add(time.Duration(3-i) * time.Hour)
+				account.primary.resetsAt, account.secondary.resetsAt = reset, reset
+			}
+			for _, order := range [][]*Account{
+				{a, b, c}, {a, c, b}, {b, a, c},
+				{b, c, a}, {c, a, b}, {c, b, a},
+			} {
+				t.Run(order[0].id()+order[1].id()+order[2].id(), func(t *testing.T) {
+					pool := &Pool{accounts: append(order, other)}
+					if got := pool.route(nil, nil).account; got != b {
+						t.Fatalf("account = %s, want b: earliest reset within one point of the maximum usage", got.id())
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestPoolDrainTieBandExcludesUnavailableAndSkippedAccounts(t *testing.T) {
+	for _, skipped := range []bool{false, true} {
+		now := time.Now()
+		highest, a, b := testAccount("highest", 99), testAccount("a", 97), testAccount("b", 96)
+		highest.Paused = !skipped
+		a.primary.resetsAt, a.secondary.resetsAt = now.Add(2*time.Hour), now.Add(2*time.Hour)
+		b.primary.resetsAt, b.secondary.resetsAt = now.Add(time.Hour), now.Add(time.Hour)
+		pool := &Pool{accounts: []*Account{highest, a, b}}
+		if got := pool.route(nil, map[string]bool{highest.id(): skipped}).account; got != b {
+			t.Fatalf("skipped=%t: account = %s, want b within the eligible maximum's tie band", skipped, got.id())
+		}
+	}
+}
+
 func TestDrainingPreservesRetainedOwners(t *testing.T) {
 	for _, mode := range []routingMode{routingModeNormal, routingModeDraining} {
 		t.Run(string(mode), func(t *testing.T) {
