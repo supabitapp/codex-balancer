@@ -139,7 +139,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </tr></thead>
 <tbody>{{range .Accounts}}<tr id="{{.DOMID}}">
 <td>{{.Name}}</td>
-<td class="dim">{{.Plan}}</td>
+<td class="dim">{{dashboardPlan .Plan}}</td>
 {{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span id="{{.DOMID}}-status" class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span id="{{.DOMID}}-banked" class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
@@ -166,7 +166,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 </tr></thead>
 <tbody>{{range .Workspaces}}<tr id="{{.DOMID}}">
 <td>{{.Name}}</td>
-<td class="dim">{{.Plan}}</td>
+<td class="dim">{{dashboardPlan .Plan}}</td>
 {{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span id="{{.DOMID}}-status" class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
 <td>{{.Limit}}</td>
 <td>{{.Used}}</td>

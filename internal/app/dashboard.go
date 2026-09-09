@@ -36,6 +36,7 @@ func webTemplate(name string) *template.Template {
 var dashboardTemplate = template.Must(webTemplate("dashboard").Funcs(template.FuncMap{
 	"dashboardAssetURL": dashboardAssetURL,
 	"dashboardStatus":   dashboardStatus,
+	"dashboardPlan":     dashboardPlan,
 }).ParseFS(dashboardFiles, "web/dashboard.html"))
 
 var dashboardUpdateTemplates = []string{
@@ -741,6 +742,13 @@ func dashboardResetInfo(now time.Time, credits []resetCreditStatsResponse) strin
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func dashboardPlan(plan string) string {
+	if plan == "self_serve_business_prolite" {
+		return "business_prolite"
+	}
+	return plan
 }
 
 func dashboardStatus(status accountStatus) dashboardStatusView {

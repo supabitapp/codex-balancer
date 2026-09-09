@@ -489,6 +489,54 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	}
 }
 
+func TestDashboardPlanLeavesOtherPlansUnchanged(t *testing.T) {
+	for _, plan := range []string{"pro", "prolite", "business", "enterprise", "self_serve_business_unknown", ""} {
+		if got := dashboardPlan(plan); got != plan {
+			t.Errorf("dashboardPlan(%q) = %q, want unchanged", plan, got)
+		}
+	}
+}
+
+func TestDashboardShortensPlanLabelOnlyInPresentation(t *testing.T) {
+	const plan = "self_serve_business_prolite"
+	account := testAccountWithPlan("business", 2, plan)
+	s := &server{
+		pool:  &Pool{accounts: []*Account{account}},
+		stats: newStatsWithPrices(priceSnapshot{}),
+	}
+	now := time.Now()
+	view := s.currentDashboard(now)
+	page, err := renderDashboard("page", view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := renderDashboardChanges(view, make(map[string][]byte))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, payload := range map[string][]byte{"page": page, "stream": stream} {
+		if !bytes.Contains(payload, []byte(`<td class="dim">business_prolite</td>`)) || bytes.Contains(payload, []byte(plan)) {
+			t.Errorf("%s must display the shortened plan label", name)
+		}
+	}
+	if view.Accounts[0].Plan != plan || s.currentStats(now).Accounts[0].Plan != plan || account.plan() != plan {
+		t.Error("dashboard rendering changed the underlying plan value")
+	}
+	var admin bytes.Buffer
+	if err := adminTemplate.ExecuteTemplate(&admin, "accounts-panel", adminView{
+		Accounts: []adminAccountView{{Plan: account.plan()}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(admin.String(), "<small>"+plan+"</small>") {
+		t.Error("admin must retain the full plan label")
+	}
+	tui := dashboard{pool: s.pool, stats: s.stats, width: 160}
+	if !strings.Contains(tui.accounts(1), fit(plan, 4)) {
+		t.Error("TUI must continue using the original plan value")
+	}
+}
+
 func TestDashboardIncludesSelfServeBusinessProliteInRouting(t *testing.T) {
 	const plan = "self_serve_business_prolite"
 	server := &server{
