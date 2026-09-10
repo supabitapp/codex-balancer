@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +31,7 @@ func TestAccountLoginPageRendersEmbeddedTemplate(t *testing.T) {
 	}
 }
 
-func TestCompleteAccountLoginTrainingPolicy(t *testing.T) {
+func TestCompleteAccountLoginDoesNotChangeAccountSettings(t *testing.T) {
 	for _, plan := range []string{"business", "enterprise", "self_serve_business_prolite", "pro", "team", ""} {
 		t.Run(plan, func(t *testing.T) {
 			store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
@@ -54,17 +53,15 @@ func TestCompleteAccountLoginTrainingPolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 			issuer := "https://auth.example.com"
-			settingsCalls := 0
-			client := &http.Client{Transport: accountSettingsRoundTrip(func(request *http.Request) (*http.Response, error) {
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				calls++
 				var body string
 				switch request.URL.Scheme + "://" + request.URL.Host + request.URL.Path {
 				case issuer + "/api/accounts/deviceauth/token":
 					body = `{"authorization_code":"code","code_verifier":"verifier"}`
 				case issuer + "/oauth/token":
 					body = string(tokens)
-				case accountSettingsEndpoint:
-					settingsCalls++
-					return &http.Response{StatusCode: http.StatusForbidden, Status: "403 Forbidden", Body: http.NoBody}, nil
 				default:
 					t.Fatalf("unexpected request: %s", request.URL)
 				}
@@ -83,22 +80,19 @@ func TestCompleteAccountLoginTrainingPolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 			account := reloaded.find("account-a")
-			if plan != "business" && plan != "enterprise" && plan != "self_serve_business_prolite" {
-				if response.Code != http.StatusGone || settingsCalls != 1 || account != nil {
-					t.Fatalf("status = %d, settings calls = %d, account saved = %t", response.Code, settingsCalls, account != nil)
-				}
-				want := fmt.Sprintf("disable training: account settings returned 403 Forbidden (ID token plan: %q)", plan)
-				if len(s.stats.events) != 1 || s.stats.events[0].Kind != "account login failed" || s.stats.events[0].Detail != want || s.stats.events[0].Account != "" {
-					t.Fatalf("events = %+v, want one login failure with only status and plan", s.stats.events)
-				}
-				return
+			if response.Code != http.StatusOK || calls != 2 || account == nil {
+				t.Fatalf("status = %d, requests = %d, account saved = %t", response.Code, calls, account != nil)
 			}
-			if response.Code != http.StatusOK || settingsCalls != 0 || account == nil {
-				t.Fatalf("status = %d, settings calls = %d, account saved = %t", response.Code, settingsCalls, account != nil)
+			state := account.persisted()
+			if state.IDToken != source.IDToken || state.AccessToken != source.AccessToken || state.RefreshToken != source.RefreshToken || state.LastRefresh.IsZero() {
+				t.Fatal("saved account did not retain credentials and refresh time")
 			}
-			wantStatus := accountNotRouted
-			if plan == "self_serve_business_prolite" {
-				wantStatus = accountChecking
+			if len(s.stats.events) != 1 || s.stats.events[0].Kind != "account added" || s.stats.events[0].Account != "account-a" {
+				t.Fatalf("events = %+v, want one account added event", s.stats.events)
+			}
+			wantStatus := accountChecking
+			if plan == "business" || plan == "enterprise" {
+				wantStatus = accountNotRouted
 			}
 			if got := account.status(time.Now()); got != wantStatus {
 				t.Fatalf("account status = %s, want %s", got, wantStatus)

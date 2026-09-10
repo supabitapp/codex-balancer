@@ -28,8 +28,6 @@ Flags:
   -device-auth       sign in with a one-time code, add only
   -json              machine-readable output, list only
 
-Adding a personal account turns off model training for it.
-Business and Enterprise workspaces keep their existing training policy.
 Self-serve Business Pro Lite can route; other Business/Enterprise workspaces are display-only.
 `
 

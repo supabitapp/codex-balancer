@@ -23,9 +23,6 @@ Enter this one-time code (expires in %d minutes):
 
 %s
 
-Adding a personal account turns off model training for it.
-Business and Enterprise workspaces keep their existing training policy.
-
 Waiting for sign-in...
 `
 
@@ -79,7 +76,7 @@ func completeDeviceAuthorization(ctx context.Context, hc *http.Client, issuer st
 	if err != nil {
 		return nil, fmt.Errorf("device code exchange failed: %w", err)
 	}
-	return connectAccount(ctx, hc, tokens)
+	return connectAccount(tokens)
 }
 
 func deviceAuthIssuer(issuer string) string {

@@ -99,7 +99,7 @@ func TestSpendLimitCannotUseRateLimitReset(t *testing.T) {
 			account := testAccountWithPlan("business", 2, "self_serve_business_prolite")
 			account.spendControl = &spendControlPayload{Reached: true}
 			adoptTestResetCredit(account, time.Now().Add(time.Hour))
-			s := &server{client: &http.Client{Transport: accountSettingsRoundTrip(func(*http.Request) (*http.Response, error) {
+			s := &server{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 				t.Fatal("rate-limit reset requests must not try to recover a reached spend limit")
 				return nil, nil
 			})}}

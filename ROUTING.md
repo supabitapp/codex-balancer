@@ -39,9 +39,8 @@ server considers accounts in this order:
    oldest last-used timestamp, then account ID.
 
 Self-serve Business Pro Lite (`self_serve_business_prolite`) participates in
-normal per-account routing once quota is known, while keeping its managed-plan
-training exemption. Other Business and Enterprise workspace plans remain
-excluded from routing.
+normal per-account routing once quota is known. Other Business and Enterprise
+workspace plans remain excluded from routing.
 
 A reported `spend_control.reached` makes an account unavailable for fresh and
 retained routing even if its rate-limit windows have capacity. A pinned socket

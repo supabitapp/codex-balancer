@@ -136,19 +136,13 @@ func creditCycleStart(now time.Time, windows ...window) (time.Time, bool) {
 	return start, true
 }
 
-func managedWorkspacePlan(plan string) bool {
-	switch strings.ToLower(strings.TrimSpace(plan)) {
-	case "business", "enterprise", "self_serve_business_prolite":
-		return true
-	default:
-		return false
-	}
-}
-
 func routablePlan(plan string) bool {
-	// Self-serve Business Pro Lite exposes per-account quota and can route.
-	// Keep its training exemption separate from workspace routing policy.
-	return !managedWorkspacePlan(plan) || strings.EqualFold(strings.TrimSpace(plan), "self_serve_business_prolite")
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case "business", "enterprise":
+		return false
+	default:
+		return true
+	}
 }
 
 func (a *Account) pressure() float64 {
