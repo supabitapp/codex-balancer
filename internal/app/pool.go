@@ -17,7 +17,6 @@ const (
 	minCooldown       = 30 * time.Second
 	maxCooldown       = time.Hour
 	resetPriorityLead = 24 * time.Hour
-	drainBelowPercent = 5.0
 )
 
 type Pool struct {
@@ -150,8 +149,8 @@ func (p *Pool) cycleRoutingMode(a *Account) (routingMode, error) {
 }
 
 func (p *Pool) setRoutingMode(a *Account, mode routingMode) error {
-	if !mode.valid() {
-		return fmt.Errorf("unknown routing mode %q; use normal, priority, or draining", mode)
+	if mode != routingModeNormal && mode != routingModePriority {
+		return fmt.Errorf("unknown routing mode %q; use normal or priority", mode)
 	}
 	_, err := p.updateRoutingMode(a, func(routingMode) routingMode { return mode })
 	return err
@@ -224,38 +223,14 @@ func (p *Pool) route(owners []string, skip map[string]bool) routingDecision {
 			}
 		}
 	}
-	var best, drain *routingCandidate
+	var best *routingCandidate
 	for i := range decision.candidates {
 		candidate := &decision.candidates[i]
 		if skip[candidate.id] || !candidate.available(now) {
 			continue
 		}
-		if candidate.draining() {
-			if drain == nil ||
-				(candidate.mode == routingModeDraining && drain.mode != routingModeDraining) ||
-				(candidate.mode == drain.mode && candidate.pressure > drain.pressure) {
-				drain = candidate
-			}
-			continue
-		}
 		if best == nil || candidate.routesBefore(*best, now) {
 			best = candidate
-		}
-	}
-	if drain != nil {
-		// Anchor every drain tie to the maximum pressure in the winning mode.
-		best = drain
-		for i := range decision.candidates {
-			candidate := &decision.candidates[i]
-			if skip[candidate.id] || !candidate.available(now) {
-				continue
-			}
-			if !candidate.draining() || candidate.mode != drain.mode || drain.pressure-candidate.pressure > 1 {
-				continue
-			}
-			if candidate.drainResetsBefore(*best) {
-				best = candidate
-			}
 		}
 	}
 	if best != nil {
@@ -304,9 +279,6 @@ func (c routingCandidate) status(now time.Time) accountStatus {
 	}
 	status := accountStatusAt(c.paused, c.reauth, c.cooldown, c.spent, c.quotaKnown(), now)
 	if status == accountLive {
-		if c.draining() {
-			return accountDraining
-		}
 		if c.mode == routingModePriority {
 			return accountPriority
 		}
@@ -325,44 +297,6 @@ func (c routingCandidate) quotaKnown() bool {
 	return c.primary.known() || c.secondary.known()
 }
 
-func (c routingCandidate) draining() bool {
-	switch c.mode {
-	case routingModeDraining:
-		return true
-	case routingModePriority:
-		return false
-	default:
-		return c.quotaKnown() && c.pressure > 100-drainBelowPercent
-	}
-}
-
-func (c routingCandidate) drainResetsBefore(other routingCandidate) bool {
-	reset, otherReset := c.drainReset(), other.drainReset()
-	if !reset.Equal(otherReset) {
-		if reset.IsZero() {
-			return false
-		}
-		if otherReset.IsZero() {
-			return true
-		}
-		return reset.Before(otherReset)
-	}
-	return c.id < other.id
-}
-
-func (c routingCandidate) drainReset() time.Time {
-	var reset time.Time
-	for _, window := range []window{c.primary, c.secondary} {
-		if !window.known() || window.usedPercent != c.pressure || window.resetsAt.IsZero() {
-			continue
-		}
-		if reset.IsZero() || window.resetsAt.Before(reset) {
-			reset = window.resetsAt
-		}
-	}
-	return reset
-}
-
 func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool) {
 	remaining, known := remainingPercent(longestWindow(c.primary, c.secondary))
 	if !known {
@@ -379,7 +313,6 @@ func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool)
 }
 
 func (c routingCandidate) routesBefore(other routingCandidate, now time.Time) bool {
-	// This ranking is only used for fresh placement, after retained owners.
 	manualPriority := c.mode == routingModePriority
 	otherManualPriority := other.mode == routingModePriority
 	if manualPriority != otherManualPriority {

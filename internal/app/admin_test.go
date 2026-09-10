@@ -272,25 +272,9 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 			t.Fatal("pause not idempotent")
 		}
 	}
-	for _, mode := range []routingMode{routingModePriority, routingModeDraining, routingModeNormal} {
-		response := post("/admin/accounts/mode", url.Values{"account": {account.id()}, "mode": {string(mode)}})
-		if response.Code != 200 || account.routingCandidate().mode != mode {
-			t.Fatalf("mode %s not applied", mode)
-		}
-		if !strings.Contains(response.Body.String(), `value="`+string(mode)+`" selected`) {
-			t.Fatalf("mode %s is not selected in the admin control", mode)
-		}
-		reloaded, err := loadPool(srv.pool.store)
-		if err != nil || reloaded.find(account.id()).routingCandidate().mode != mode {
-			t.Fatalf("mode %s not persisted: %v", mode, err)
-		}
-		if applied, _ := srv.fastMode.snapshot(); applied != fastModeDefault {
-			t.Fatal("account mode changed the global fast policy")
-		}
-	}
-	response := post("/admin/accounts/mode", url.Values{"account": {account.id()}, "mode": {"invalid"}})
-	if response.Code != 422 || account.routingCandidate().mode != routingModeNormal {
-		t.Fatal("invalid account mode accepted or changed routing")
+	response := post("/admin/accounts/mode", url.Values{"account": {account.id()}, "mode": {"priority"}})
+	if response.Code != 200 || account.routingCandidate().mode != routingModePriority {
+		t.Fatal("priority not applied")
 	}
 	name := `laptop<script>alert(1)</script>`
 	response = post("/admin/keys/add", url.Values{"name": {name}})

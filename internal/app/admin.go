@@ -205,8 +205,8 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 		}
 	case "mode":
 		mode := routingMode(r.PostForm.Get("mode"))
-		if !mode.valid() {
-			s.renderAdmin(w, r, session, "accounts-panel", "Choose normal, priority, or draining.", "", http.StatusUnprocessableEntity)
+		if mode != routingModeNormal && mode != routingModePriority {
+			s.renderAdmin(w, r, session, "accounts-panel", "Choose normal or priority routing.", "", http.StatusUnprocessableEntity)
 			return
 		}
 		err = s.pool.setRoutingMode(account, mode)

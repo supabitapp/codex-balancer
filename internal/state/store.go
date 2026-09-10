@@ -14,7 +14,7 @@ import (
 
 const (
 	ApplicationID = 0x43425853
-	schemaVersion = 6
+	schemaVersion = 7
 )
 
 const currentSchema = `CREATE TABLE accounts (
@@ -23,7 +23,7 @@ const currentSchema = `CREATE TABLE accounts (
 	access_token TEXT NOT NULL,
 	refresh_token TEXT NOT NULL,
 	paused INTEGER NOT NULL CHECK (paused IN (0, 1)),
-	routing_mode TEXT NOT NULL CHECK (routing_mode IN ('normal', 'priority', 'draining')),
+	routing_mode TEXT NOT NULL CHECK (routing_mode IN ('normal', 'priority')),
 	last_refresh_ns INTEGER NOT NULL,
 	last_used_at_ns INTEGER NOT NULL,
 	reauth TEXT NOT NULL
@@ -230,8 +230,8 @@ func (s *Store) initialize() error {
 		}
 		version = 5
 	}
-	if version == 5 {
-		return s.migrateDrainingMode()
+	if version == 5 || version == 6 {
+		return s.migrateRoutingModes()
 	}
 	if version != schemaVersion {
 		return fmt.Errorf("state schema %d is unsupported; expected %d", version, schemaVersion)
