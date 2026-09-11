@@ -302,7 +302,7 @@ func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool)
 	if !known {
 		return routingPriority{}, false
 	}
-	credit, ok := nextExpiringResetCredit(c.resetCredits.details, now, resetPriorityLead)
+	credit, ok := expiringResetCredit(c.resetCredits.details, now)
 	if !ok {
 		return routingPriority{}, false
 	}

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -78,6 +79,7 @@ func newResponsesWebSocketDialer(s *server, request *http.Request, route websock
 }
 
 func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error) {
+	poolResetTried := false
 	for attempt := 0; ; attempt++ {
 		selection := d.server.claimAccount(d.route, d.durable, d.model, d.serviceTier, d.skip, attempt)
 		if d.replacing != nil {
@@ -89,6 +91,12 @@ func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error
 		}
 		account := decision.account
 		if account == nil {
+			if !poolResetTried {
+				poolResetTried = true
+				if d.recoverPool(decision.candidates) {
+					continue
+				}
+			}
 			return nil, nil, errNoAccountAvailable
 		}
 		if decision.moved() && strings.TrimSpace(d.request.Header.Get(codexTurnStateKey)) != "" {
@@ -130,6 +138,23 @@ func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error
 			attempt--
 		}
 	}
+}
+
+func (d *responsesWebSocketDialer) recoverPool(candidates []routingCandidate) bool {
+	excluded := maps.Clone(d.resetRetried)
+	allowed := d.server.allowedAccounts(d.model, d.serviceTier)
+	for _, candidate := range candidates {
+		if !accountAllowed(allowed, candidate.id) || d.skip[candidate.id] && !candidate.spent {
+			excluded[candidate.id] = true
+		}
+	}
+	recovered := d.server.recoverPoolUsageLimit(d.request.Context(), excluded)
+	if recovered == nil || excluded[recovered.id()] {
+		return false
+	}
+	delete(d.skip, recovered.id())
+	d.resetRetried[recovered.id()] = true
+	return true
 }
 
 func (d *responsesWebSocketDialer) refreshBeforeDial(account *Account, retained bool) (bool, error) {
@@ -272,7 +297,12 @@ func (d *responsesWebSocketDialer) rejectAccount(result upstreamWebSocketDial, a
 			if account.markSpent() {
 				d.server.log.Info("account stopped accepting new websockets", "account", id, "source", "handshake", "thread", d.thread, "status", status)
 			}
-			if !workspaceUsageLimitReached(response.Header) && !d.resetRetried[id] && d.server.recoverUsageLimit(d.request.Context(), account, result.sent) {
+			if workspaceUsageLimitReached(response.Header) {
+				d.resetRetried[id] = true
+			}
+			// Once the pool is exhausted, let the fallback compare reset expiry
+			// across every account instead of spending this account's credit.
+			if !d.resetRetried[id] && d.server.pool.route(nil, nil).account != nil && d.server.recoverUsageLimit(d.request.Context(), account, result.sent) {
 				d.resetRetried[id] = true
 				closeWebSocketResponse(response)
 				return true

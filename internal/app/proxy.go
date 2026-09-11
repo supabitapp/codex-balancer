@@ -47,6 +47,7 @@ type server struct {
 	dashboardStreams atomic.Int64
 	dashboardUpdates dashboardBroadcaster
 	routeOwnership   sync.Mutex
+	poolResetMu      sync.Mutex
 	routeClaims      routeClaimRegistry
 	activeWebSockets activeWebSocketRegistry
 }

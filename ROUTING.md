@@ -57,6 +57,14 @@ refreshes the catalog at once. An older client neither refreshes it nor
 withdraws the models a newer client uses; every entry carries its own
 `minimal_client_version` for the client to filter on.
 
+When no account is available, quota polling and new connection attempts recover
+an exhausted account using the usable reset credit that expires soonest across
+the pool. This fallback also considers credits expiring more than 24 hours away;
+credits without an expiration come last. Paused, signed-out, and non-routable
+accounts are excluded, and temporary cooldowns alone do not spend a reset.
+Recovery runs one account at a time and refreshes its quota before routing
+resumes. If a reset fails to restore capacity, the next eligible account is tried.
+
 For an identified route, a handshake leaves the last-used timestamp unchanged.
 `response.created` updates it. An anonymous socket has no thread or session
 key, so its handshake updates the timestamp and spreads connection bursts
