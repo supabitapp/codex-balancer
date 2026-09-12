@@ -38,8 +38,7 @@ type Account struct {
 	accountState
 	mu                  sync.Mutex
 	resetMu             sync.Mutex
-	inflight            chan struct{}
-	lastRefresh         error
+	inflight            *accountRefresh
 	rejectedAccessToken authorizationRevision
 
 	cooldown       time.Time
@@ -239,7 +238,6 @@ func (a *Account) applyPersisted(next accountState) bool {
 		a.LastRefresh = next.LastRefresh
 		if credentialsChanged {
 			next.Reauth = ""
-			a.lastRefresh = nil
 		}
 		if accessTokenChanged {
 			a.rejectedAccessToken = authorizationRevision{}
@@ -374,31 +372,9 @@ var permanentRefreshFailures = []string{
 	"invalid_grant",
 }
 
-func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(accountState) (accountState, error)) error {
-	a.mu.Lock()
-	if wait := a.inflight; wait != nil {
-		a.mu.Unlock()
-		select {
-		case <-wait:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		return a.lastRefresh
-	}
-	if a.Reauth != "" {
-		err := fmt.Errorf("account %s needs reauth: %s", claimsFromToken(a.IDToken).Auth.AccountID, a.Reauth)
-		a.mu.Unlock()
-		return err
-	}
-	done := make(chan struct{})
-	a.inflight = done
-	state := a.accountState
-	token := a.RefreshToken
-	a.mu.Unlock()
-
-	tokens, permanent, err := exchangeRefreshToken(ctx, hc, token)
+func (a *Account) finishRefresh(ctx context.Context, persist func(context.Context, accountState) (accountState, error), state accountState, tokens tokenResponse, permanent bool, err error) (error, error) {
+	token := state.RefreshToken
+	var completionErr error
 	next := state
 	if err == nil {
 		if tokens.AccessToken != "" {
@@ -413,12 +389,14 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(acc
 		next.LastRefresh = time.Now()
 		next.Reauth = ""
 		if persist != nil {
-			next, err = persist(next)
+			next, err = persist(ctx, next)
+			completionErr = err
 		}
 	} else if permanent {
 		next.Reauth = err.Error()
 		if persist != nil {
-			if persisted, persistErr := persist(next); persistErr != nil {
+			if persisted, persistErr := persist(ctx, next); persistErr != nil {
+				completionErr = persistErr
 				err = errors.Join(err, persistErr)
 			} else {
 				next = persisted
@@ -430,10 +408,9 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(acc
 	superseded := a.RefreshToken != token && a.RefreshToken != next.RefreshToken
 	if superseded {
 		err = nil
+		completionErr = nil
 		permanent = false
 	}
-	a.inflight = nil
-	a.lastRefresh = err
 	if !superseded {
 		switch {
 		case err != nil && permanent:
@@ -447,8 +424,7 @@ func (a *Account) refresh(ctx context.Context, hc *http.Client, persist func(acc
 		}
 	}
 	a.mu.Unlock()
-	close(done)
-	return err
+	return err, completionErr
 }
 
 func exchangeRefreshToken(ctx context.Context, hc *http.Client, token string) (tokenResponse, bool, error) {

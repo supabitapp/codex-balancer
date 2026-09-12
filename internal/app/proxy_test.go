@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-func TestResponsesRejectsHTTP(t *testing.T) {
+func TestResponsesHTTPRequiresJSONBody(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	response := httptest.NewRecorder()
 	new(server).routes().ServeHTTP(response, request)
-	if response.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
 }
 

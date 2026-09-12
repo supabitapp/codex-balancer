@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 )
 
 const maxActiveProxyRequests = 128
@@ -69,6 +70,11 @@ func (s *server) admitted(next http.HandlerFunc) http.Handler {
 			return
 		}
 		if !s.admission.acquire() {
+			if r.Method == http.MethodPost {
+				// Reject without draining an HTTP inference body from a slow sender.
+				w.Header().Set("Connection", "close")
+				http.NewResponseController(w).SetWriteDeadline(time.Now().Add(httpResponseIOWait))
+			}
 			w.Header().Set("Retry-After", "1")
 			writeError(w, http.StatusServiceUnavailable, "server busy")
 			return

@@ -17,8 +17,10 @@ Codex CLI sets the lifecycle that the balancer matches:
   `previous_response_id` state and sends full input. Codex replays the request.
   The balancer closes the socket and waits for the client.
 
-Inference uses only `GET /v1/responses` as a WebSocket endpoint. The balancer
-does not expose an HTTP Responses fallback or a second account-specific route.
+Inference uses upstream WebSockets. Clients can use `GET /v1/responses`
+(and the GET aliases `/codex/responses`, `/v1/codex/responses`) or stateless
+HTTP `POST /v1/responses`. Both transports use the same relay and account
+routing policy; there is no account-specific route.
 
 ## Fresh placement
 
@@ -151,7 +153,20 @@ refuses both values during an account move.
 ## Account login, logout, and removal
 
 Token refresh for the same account updates credentials while preserving
-accepted routes, provisional claims, and live sockets.
+accepted routes, provisional claims, and live sockets. Concurrent callers share
+one exchange, but each can cancel its own wait. The exchange has a server-owned
+30-second deadline: canceling one waiter cannot abort another's refresh. The last
+waiter leaving, or server shutdown, cancels the network exchange, not persistence
+of a result already decoded. Persistence, publication and owner notification have
+a separate 30-second completion budget. A later caller waits for an abandoned
+operation to finish before starting another exchange; existing credential-
+persistence ordering is preserved.
+
+The server registers each refresh operation before launching it and owns it
+through completion, even after every request waiter has left. Permanent refresh
+failure invalidation belongs to that completion callback, not to a waiter or a
+later watcher reload. Connection callbacks run after releasing the account, pool
+and routing-ownership locks. Failed completion is logged once without credentials.
 
 The following transitions invalidate an account:
 
@@ -307,6 +322,105 @@ balancer does not add a second reconnect path.
 - For an account-specific setup failure, try another eligible account if the
   retained owner cannot continue and no provisional claim conflicts.
 - The balancer does not replay in-flight work.
+
+## HTTP execution and errors
+
+HTTP adapts one request to one upstream WebSocket and one `response.create`.
+It does not relay through a public endpoint, share a busy conversation socket,
+or replay an in-flight generation. SSE and JSON are downstream serializers;
+account setup, provisional claims, first-turn model checks, acceptance at
+`response.created`, quota observation, retry-owner preservation, switch logs,
+active-connection invalidation and API-key usage accounting are the same relay
+operations used by WebSocket clients. HTTP-backed upstream sockets appear in
+connection statistics and retire on pause, removal, sign-out and fast-mode
+changes too.
+
+Affinity keeps the existing thread precedence (`thread-id`, then
+`x-client-request-id`). Session precedence is `session_id`, `session-id`,
+`x-codex-session-id`, `x-codex-conversation-id`, then the OpenCode fallbacks
+`x-session-affinity` and `x-session-id`. API keys and client account-ID headers
+never choose an account or supply affinity. Requests without these identifiers
+remain anonymous; they do not share a global route. Overlapping identified
+requests join provisional ownership but use independent sockets and turn state.
+
+HTTP uses exact stored bearer-key authentication and one admission slot for the
+entire request, including body read, generation and response writes. Both new
+JWT-shaped keys and legacy keys work; configured no-auth mode is unchanged.
+Only a vetted request-header list is forwarded. Response transport headers are
+removed from SSE events; only `Retry-After` and `X-Request-Id` may become HTTP
+response headers. Pool credentials are redacted from decoded JSON strings in
+upstream error/output data, including alternate JSON escapes. Unrelated strings
+and raw numeric values retain their representation.
+
+The [request-field policy](README.md#http-responses-contract) applies only to
+HTTP. Existing WebSocket messages are not normalized. HTTP has no response-ID
+storage: send complete replayable history on each request. A turn-state token
+still cannot move accounts, in either handshake headers or client metadata.
+
+### Terminal and failure mapping
+
+| Outcome | Before SSE commitment / JSON | After SSE commitment |
+| --- | --- | --- |
+| Missing/invalid/revoked client key | 401 JSON error | Authentication is checked once on entry. |
+| Admission full or draining, no eligible route/retained owner | 503 JSON error, retry hint | Not newly admitted. |
+| Invalid JSON/types/controls or persistence/continuation request | 400 JSON error | Rejected before inference. |
+| Body too large / unsupported encoding or content type | 413 / 415 JSON error | Rejected before inference. |
+| `response.completed` | 200 Responses object or SSE | Forward terminal once, then `[DONE]`, close. |
+| Legacy `response.done` | Normalize to `response.completed` for HTTP only | Same terminal handling. |
+| Valid `response.incomplete` | 200, preserve status, partial output, details and any usage | Forward incomplete once, then `[DONE]`, close; not a transport failure. |
+| `error` / `response.failed` | Non-2xx JSON error with useful code/message/param | Typed error or failed event, then `[DONE]`, close. |
+| Context overflow / invalid request | 400 unless upstream supplies another error status | Preserve error code; no successful completion. |
+| Model unavailable | 404 for `model_not_found`/`model_not_available`, or upstream error status | Preserve error code. No model substitution. |
+| Rate/usage limit | 429 | Preserve typed error; shared quota/cooldown rules apply. |
+| Capacity, connection rollover, upstream credential rejection | 503 | Preserve typed error; client owns retries. |
+| Account invalidation / fast-mode change | 503 | Typed `route_unavailable` / `policy_changed` error. |
+| Account-bound move | 409 JSON error | Typed error, never transmit bound input to replacement. |
+| Malformed/binary frame, missing/oversized output or premature EOF | 502 | Typed error; never synthesize completion. |
+| Upstream handshake or event idle timeout | 504 | Typed `upstream_timeout` error. |
+
+Handshake server errors retain their status, without inference replay. A failed
+upgrade carrying a non-error HTTP status (including 200 or 204) becomes 502, never
+success. Initial setup and first-turn model-preflight failures use the same
+semantic error mapping, preserving error codes and `Retry-After`; a recognized
+403 usage-limit rejection becomes 429. Existing safe account-setup retries and
+same-account credential refresh still apply.
+When WebSocket clients would receive only a reconnect close (capacity or safe
+usage-limit recovery), HTTP clients instead receive the original typed failure.
+Once any SSE event is flushed, the adapter never attempts another HTTP status or
+appends a plain JSON error body. Unknown valid events are forwarded as events;
+normal terminal handling closes promptly even if upstream leaves the socket open.
+
+Limits are 30 seconds to read the body, 90 seconds per upstream handshake/write
+or idle event wait, and 30 seconds per downstream write/flush. Write deadlines
+are not armed while waiting for generation, and successful non-terminal SSE
+flushes clear them between events. Terminal writes keep their deadline through
+net/http's final buffered write. This also supports HTTP/2 hosting without its
+write timer cutting off an otherwise valid idle stream; the current server
+command itself still uses plain HTTP/1, not TLS or h2c. The event queue
+holds one queued frame for HTTP, applying backpressure; JSON retains completed
+items, not deltas or event history. Cancellation interrupts body reads, handshakes,
+refreshes, event waits and writes. The relay closes sockets, joins its readers,
+releases claims and live statistics, then releases admission on every exit.
+
+Shutdown stops admission and allows active requests to drain for up to 10
+seconds, then closes refresh-operation registration and cancels the server
+context (including network exchanges). It joins refresh completion before closing
+SQLite, with up to 30 additional seconds of grace; each operation's own
+completion deadline still applies. The HTTP adapter is tied to the server
+context and the client request. Cancellation/disconnection can
+prevent delivery of a final error; it never turns unfinished inference into a
+successful response. Even an uncommitted JSON request is not replayed by the
+balancer after transmission. Clients decide whether and how to retry full history.
+
+Refresh completion uses cancelable pool/routing-lock acquisition and SQL calls.
+If completion grace expires, shutdown cancels those waits, joins the workers and
+returns an error before closing storage. SQLite retains its five-second busy
+limit; canceled transactions also have a five-second rollback cleanup budget.
+Pending persistence/notification failures during shutdown are reported even if
+they occur before grace expires. A blocked or failing store can therefore cause
+an explicit failed shutdown, not an empty successful drain or a write against a
+closed database. No already-decoded result is discarded merely because its
+request canceled. The same stop/join barrier runs on server startup/error exits.
 
 ### Verifying client recovery
 

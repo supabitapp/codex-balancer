@@ -44,7 +44,7 @@ variable if the database contains no key records.
 Flags:
 `
 
-func serverCmd(args []string) error {
+func serverCmd(args []string) (resultErr error) {
 	fs := flag.NewFlagSet("server", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, serverHelp)
@@ -118,6 +118,8 @@ func serverCmd(args []string) error {
 		admission:    newAdmissionGate(maxActiveProxyRequests),
 		resources:    newResourceMonitor(),
 	}
+	// Every exit path must join refresh publication before deferred store.Close.
+	defer func() { resultErr = errors.Join(resultErr, srv.stopRefreshes(cancel)) }()
 	if err := srv.reloadSettings(); err != nil {
 		return fmt.Errorf("load settings: %w", err)
 	}
@@ -145,11 +147,12 @@ func serverCmd(args []string) error {
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 	shutdownDone := make(chan struct{})
+	var shutdownErr error
 	var shutdownOnce sync.Once
 	startShutdown := func() {
 		shutdownOnce.Do(func() {
 			go func() {
-				drainServer(httpServer, srv.admission, cancel)
+				shutdownErr = drainServer(httpServer, srv, cancel)
 				close(shutdownDone)
 			}()
 		})
@@ -191,23 +194,39 @@ func serverCmd(args []string) error {
 		startShutdown()
 		err := <-serving
 		<-shutdownDone
-		return err
+		return errors.Join(err, shutdownErr)
 	}
 
 	err = <-serving
 	if signalCtx.Err() != nil {
 		<-shutdownDone
+		err = errors.Join(err, shutdownErr)
 	}
 	return err
 }
 
-func drainServer(httpServer *http.Server, admission *admissionGate, cancel context.CancelFunc) {
+func drainServer(httpServer *http.Server, srv *server, cancel context.CancelFunc) error {
 	shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stop()
-	admission.beginDrain()
+	srv.admission.beginDrain()
 	httpServer.Shutdown(shutdown)
-	admission.wait(shutdown)
+	srv.admission.wait(shutdown)
+	return srv.stopRefreshes(cancel)
+}
+
+func (s *server) stopRefreshes(cancel context.CancelFunc) error {
+	completion, stop := context.WithTimeout(context.Background(), refreshCompletionTimeout)
+	defer stop()
+	return s.stopRefreshesContext(completion, cancel)
+}
+
+func (s *server) stopRefreshesContext(completion context.Context, cancel context.CancelFunc) error {
+	s.refreshes.stop() // close registration before canceling request/network work
 	cancel()
+	if err := s.refreshes.wait(completion); err != nil {
+		return fmt.Errorf("refresh completion shutdown failed: %w", err)
+	}
+	return nil
 }
 
 func defaultLogPath() string {

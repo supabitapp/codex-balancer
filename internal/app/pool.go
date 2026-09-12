@@ -2,6 +2,7 @@ package app
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -21,7 +22,7 @@ const (
 
 type Pool struct {
 	store     *StateStore
-	storageMu sync.Mutex
+	storageMu contextMutex
 	mu        sync.RWMutex
 	accounts  []*Account
 }
@@ -174,9 +175,13 @@ func (p *Pool) updateRoutingMode(a *Account, update func(routingMode) routingMod
 }
 
 func (p *Pool) persistAccountState(state accountState) (accountState, error) {
+	return p.persistAccountStateContext(context.Background(), state)
+}
+
+func (p *Pool) persistAccountStateContext(ctx context.Context, state accountState) (accountState, error) {
 	id := claimsFromToken(state.IDToken).Auth.AccountID
 	var persisted accountState
-	err := p.mutate(func(accounts []*Account) ([]*Account, error) {
+	err := p.mutateContext(ctx, func(accounts []*Account) ([]*Account, error) {
 		i := indexOf(accounts, id)
 		if i < 0 {
 			return nil, fmt.Errorf("no account %q", id)

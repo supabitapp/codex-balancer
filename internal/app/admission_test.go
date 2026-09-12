@@ -95,7 +95,9 @@ func TestDrainServerWaitsBeforeCancelingActiveWork(t *testing.T) {
 	runtimeCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		drainServer(&http.Server{}, gate, cancel)
+		if err := drainServer(&http.Server{}, &server{admission: gate}, cancel); err != nil {
+			t.Error(err)
+		}
 		close(done)
 	}()
 	deadline := time.Now().Add(time.Second)

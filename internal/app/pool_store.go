@@ -30,9 +30,15 @@ func loadPool(store *StateStore) (*Pool, error) {
 }
 
 func (p *Pool) mutate(change func([]*Account) ([]*Account, error)) error {
-	p.storageMu.Lock()
+	return p.mutateContext(context.Background(), change)
+}
+
+func (p *Pool) mutateContext(ctx context.Context, change func([]*Account) ([]*Account, error)) error {
+	if err := p.storageMu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer p.storageMu.Unlock()
-	accounts, err := p.store.mutateAccounts(change)
+	accounts, err := p.store.mutateAccountsContext(ctx, change)
 	if err != nil {
 		return err
 	}

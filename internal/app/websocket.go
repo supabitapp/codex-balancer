@@ -22,6 +22,7 @@ const noAccountAvailableMessage = "WE ARE OUT OF TOKENS 😭 Go out, touch some 
 var (
 	errNoAccountAvailable    = errors.New("no account available")
 	errRouteOwnerUnavailable = errors.New("session account temporarily unavailable; retry")
+	errAccountBoundTurn      = errors.New("account-bound turn cannot move accounts; start a new turn or resume")
 )
 
 type websocketDial struct {
@@ -210,7 +211,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer downstream.CloseNow()
 	downstream.SetReadLimit(maxWebSocketMessage)
 	dial.conn.SetReadLimit(maxWebSocketMessage)
-	newResponsesWebSocketRelay(s, downstream, r, dial, route, apiKey, mode, changed).run()
+	newResponsesWebSocketRelay(s, websocketDownstream{downstream}, r, dial, route, apiKey, mode, changed).run()
 }
 
 func websocketHandshake(w http.ResponseWriter, r *http.Request) bool {
@@ -373,8 +374,12 @@ func (s *server) handleWebSocketRejection(account *Account, kind websocketReject
 	}
 }
 
-func readWebSocketMessages(ctx context.Context, conn *websocket.Conn, downstream bool, messages chan<- websocketMessage) {
+func readWebSocketMessages(ctx context.Context, conn interface {
+	Read(context.Context) (websocket.MessageType, []byte, error)
+}, downstream bool, messages chan<- websocketMessage) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for {
 			kind, data, err := conn.Read(ctx)
 			message := websocketMessage{downstream: downstream, kind: kind, data: data, err: err}
@@ -388,6 +393,7 @@ func readWebSocketMessages(ctx context.Context, conn *websocket.Conn, downstream
 			}
 		}
 	}()
+	return done
 }
 
 func (s *server) websocketOpened(thread string, account *Account) {
@@ -418,7 +424,7 @@ func websocketRequestPortable(event websocketEnvelope) bool {
 
 func websocketRouteFrom(headers http.Header) websocketRoute {
 	return websocketRoute{
-		session: firstWebSocketHeader(headers, "session_id", "session-id", "x-codex-session-id", "x-codex-conversation-id"),
+		session: firstWebSocketHeader(headers, "session_id", "session-id", "x-codex-session-id", "x-codex-conversation-id", "x-session-affinity", "x-session-id"),
 		thread:  firstWebSocketHeader(headers, "thread-id", "x-client-request-id"),
 	}
 }

@@ -365,9 +365,13 @@ func scanAccounts(rows *sql.Rows) ([]Account, error) {
 }
 
 func (s *Store) MutateAccounts(change func([]Account) ([]Account, error)) ([]Account, error) {
+	return s.MutateAccountsContext(context.Background(), change)
+}
+
+func (s *Store) MutateAccountsContext(ctx context.Context, change func([]Account) ([]Account, error)) ([]Account, error) {
 	var accounts []Account
-	err := s.immediate(func(conn *sql.Conn) error {
-		rows, err := conn.QueryContext(context.Background(), `SELECT account_id, id_token, access_token, refresh_token,
+	err := s.immediateContext(ctx, func(conn *sql.Conn) error {
+		rows, err := conn.QueryContext(ctx, `SELECT account_id, id_token, access_token, refresh_token,
 			paused, routing_mode, last_refresh_ns, last_used_at_ns, reauth FROM accounts ORDER BY account_id`)
 		if err != nil {
 			return err
@@ -382,7 +386,7 @@ func (s *Store) MutateAccounts(change func([]Account) ([]Account, error)) ([]Acc
 		}
 		next := make(map[string]bool, len(accounts))
 		for _, account := range accounts {
-			if err := upsertAccount(conn, account); err != nil {
+			if err := upsertAccount(ctx, conn, account); err != nil {
 				return err
 			}
 			next[account.ID] = true
@@ -391,7 +395,7 @@ func (s *Store) MutateAccounts(change func([]Account) ([]Account, error)) ([]Acc
 			if next[account.ID] {
 				continue
 			}
-			if _, err := conn.ExecContext(context.Background(), `DELETE FROM accounts WHERE account_id = ?`, account.ID); err != nil {
+			if _, err := conn.ExecContext(ctx, `DELETE FROM accounts WHERE account_id = ?`, account.ID); err != nil {
 				return err
 			}
 		}
@@ -400,11 +404,11 @@ func (s *Store) MutateAccounts(change func([]Account) ([]Account, error)) ([]Acc
 	return accounts, err
 }
 
-func upsertAccount(exec sqlExecer, account Account) error {
+func upsertAccount(ctx context.Context, exec sqlExecer, account Account) error {
 	if account.ID == "" {
 		return errors.New("account record has no ID")
 	}
-	_, err := exec.ExecContext(context.Background(), `INSERT INTO accounts (
+	_, err := exec.ExecContext(ctx, `INSERT INTO accounts (
 		account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, last_used_at_ns, reauth
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT (account_id) DO UPDATE SET id_token = excluded.id_token, access_token = excluded.access_token,
@@ -432,7 +436,7 @@ func (s *Store) RecordRoute(route Route) error {
 		if changed == 0 {
 			return fmt.Errorf("route account %q does not exist", route.Account)
 		}
-		return upsertRouteOwners(conn, route.At, route.Account, routeKeys(route.Thread, route.Session))
+		return upsertRouteOwners(context.Background(), conn, route.At, route.Account, routeKeys(route.Thread, route.Session))
 	})
 }
 
@@ -440,15 +444,19 @@ func (s *Store) RecordRoute(route Route) error {
 // provisional owner disappeared before upstream accepted the request. Unlike
 // RecordRoute, this intentionally permits an account tombstone.
 func (s *Store) PreserveRouteOwners(at time.Time, account string, keys []string) error {
+	return s.PreserveRouteOwnersContext(context.Background(), at, account, keys)
+}
+
+func (s *Store) PreserveRouteOwnersContext(ctx context.Context, at time.Time, account string, keys []string) error {
 	if at.IsZero() || account == "" {
 		return errors.New("route owner has no time or account")
 	}
-	return s.immediate(func(conn *sql.Conn) error {
-		return upsertRouteOwners(conn, at, account, keys)
+	return s.immediateContext(ctx, func(conn *sql.Conn) error {
+		return upsertRouteOwners(ctx, conn, at, account, keys)
 	})
 }
 
-func upsertRouteOwners(exec sqlExecer, at time.Time, account string, keys []string) error {
+func upsertRouteOwners(ctx context.Context, exec sqlExecer, at time.Time, account string, keys []string) error {
 	seen := make(map[string]bool, len(keys))
 	for _, key := range keys {
 		if key == "" {
@@ -458,7 +466,7 @@ func upsertRouteOwners(exec sqlExecer, at time.Time, account string, keys []stri
 			continue
 		}
 		seen[key] = true
-		if _, err := exec.ExecContext(context.Background(), `INSERT INTO routes (key, account_id, updated_at_ns)
+		if _, err := exec.ExecContext(ctx, `INSERT INTO routes (key, account_id, updated_at_ns)
 			VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET account_id = excluded.account_id,
 			updated_at_ns = excluded.updated_at_ns WHERE excluded.updated_at_ns >= routes.updated_at_ns`,
 			key, account, encodeTime(at)); err != nil {
@@ -576,21 +584,27 @@ func (s *Store) APIKeyUsage() (map[string]Usage, error) {
 }
 
 func (s *Store) immediate(run func(*sql.Conn) error) error {
-	ctx := context.Background()
+	return s.immediateContext(context.Background(), run)
+}
+
+func (s *Store) immediateContext(ctx context.Context, run func(*sql.Conn) error) error {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
 	committed := false
 	defer func() {
 		if !committed {
-			conn.ExecContext(ctx, "ROLLBACK")
+			// Cancellation must not leave a transaction on the pooled connection.
+			rollback, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			conn.ExecContext(rollback, "ROLLBACK")
 		}
 	}()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
 	if err := run(conn); err != nil {
 		return err
 	}

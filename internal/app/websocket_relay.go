@@ -14,7 +14,7 @@ import (
 
 type responsesWebSocketRelay struct {
 	server        *server
-	downstream    *websocket.Conn
+	downstream    responsesDownstream
 	request       *http.Request
 	apiKey        apiKeyIdentity
 	route         websocketRoute
@@ -22,6 +22,7 @@ type responsesWebSocketRelay struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	messages      chan websocketMessage
+	readers       []<-chan struct{}
 	invalidations chan websocketInvalidation
 	liveThreads   map[string]struct{}
 	current       *websocketDial
@@ -32,6 +33,8 @@ type responsesWebSocketRelay struct {
 	socketID      uint64
 	fastMode      fastMode
 	policyChanged <-chan struct{}
+	idleTimeout   time.Duration
+	messageLimit  int64
 }
 
 type websocketInvalidation struct {
@@ -39,14 +42,16 @@ type websocketInvalidation struct {
 	reason  string
 }
 
-func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *http.Request, initial *websocketDial, route websocketRoute, apiKey apiKeyIdentity, mode fastMode, changed <-chan struct{}) *responsesWebSocketRelay {
-	ctx := s.ctx
-	if ctx == nil {
-		ctx = context.Background()
+func newResponsesWebSocketRelay(s *server, downstream responsesDownstream, request *http.Request, initial *websocketDial, route websocketRoute, apiKey apiKeyIdentity, mode fastMode, changed <-chan struct{}) *responsesWebSocketRelay {
+	ctx, cancel := context.WithCancel(request.Context())
+	if s.ctx != nil {
+		stop := context.AfterFunc(s.ctx, cancel)
+		cancelContext := cancel
+		cancel = func() { stop(); cancelContext() }
 	}
-	ctx, cancel := context.WithCancel(ctx)
 	return &responsesWebSocketRelay{
 		server:        s,
+		messageLimit:  maxWebSocketMessage,
 		fastMode:      mode,
 		policyChanged: changed,
 		downstream:    downstream,
@@ -64,7 +69,7 @@ func newResponsesWebSocketRelay(s *server, downstream *websocket.Conn, request *
 }
 
 func (r *responsesWebSocketRelay) run() {
-	readWebSocketMessages(r.ctx, r.downstream, true, r.messages)
+	r.readers = append(r.readers, readWebSocketMessages(r.ctx, r.downstream, true, r.messages))
 	r.socketID = r.registerActiveSocket(r.current.account.id())
 	r.server.websocketOpened(r.thread, r.current.account)
 	defer r.close()
@@ -72,12 +77,25 @@ func (r *responsesWebSocketRelay) run() {
 		r.closeDownstream(websocket.StatusServiceRestart, "account became unavailable during connection setup")
 		return
 	}
+	var idle <-chan time.Time
+	var timer *time.Timer
+	if r.idleTimeout > 0 {
+		timer = time.NewTimer(r.idleTimeout)
+		defer timer.Stop()
+		idle = timer.C
+	}
 	for {
 		select {
+		case <-idle:
+			r.closeDownstream(websocket.StatusServiceRestart, "upstream response timed out")
+			return
 		case <-r.policyChanged:
 			r.restartForFastMode()
 			return
 		case message := <-r.messages:
+			if timer != nil {
+				timer.Reset(r.idleTimeout)
+			}
 			if r.fastModeChanged() {
 				return
 			}
@@ -95,6 +113,7 @@ func (r *responsesWebSocketRelay) run() {
 			r.closeDownstream(websocket.StatusServiceRestart, "account unavailable: "+invalidation.reason)
 			return
 		case <-r.ctx.Done():
+			r.closeDownstream(websocket.StatusServiceRestart, "request canceled or server shutting down")
 			return
 		}
 	}
@@ -112,6 +131,9 @@ func (r *responsesWebSocketRelay) registerActiveSocket(account string) uint64 {
 func (r *responsesWebSocketRelay) close() {
 	r.cancel()
 	r.current.conn.CloseNow()
+	for _, done := range r.readers {
+		<-done
+	}
 	r.current.releaseClaim()
 	r.server.activeWebSockets.remove(r.socketID, r.current.account.id())
 	r.server.websocketClosed(r.thread, r.current.account)
@@ -145,7 +167,7 @@ func (r *responsesWebSocketRelay) switchAccount(next *websocketDial, model, serv
 	if !r.server.activeWebSockets.move(r.socketID, previous.account.id(), r.current.account.id()) {
 		r.socketID = r.registerActiveSocket(r.current.account.id())
 	}
-	r.current.conn.SetReadLimit(maxWebSocketMessage)
+	r.current.conn.SetReadLimit(r.messageLimit)
 	r.server.websocketOpened(r.thread, r.current.account)
 	if !r.server.accountRoutable(r.current.account.id()) || !r.current.claim.active() {
 		r.closeDownstream(websocket.StatusServiceRestart, "account became unavailable during connection setup")
@@ -162,7 +184,9 @@ func (r *responsesWebSocketRelay) switchAccount(next *websocketDial, model, serv
 }
 
 func (r *responsesWebSocketRelay) writeUpstream(message websocketMessage) bool {
-	if err := r.current.conn.Write(r.ctx, message.kind, message.data); err != nil {
+	ctx, cancel := context.WithTimeout(r.ctx, upstreamWait)
+	defer cancel()
+	if err := r.current.conn.Write(ctx, message.kind, message.data); err != nil {
 		r.closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
 		return false
 	}
@@ -261,10 +285,10 @@ func (r *responsesWebSocketRelay) ensureCompatibleAccount(event websocketEnvelop
 	} else {
 		next, failed, err = r.server.dialResponsesWebSocket(r.request, r.route, event.Model, event.ServiceTier)
 	}
-	closeWebSocketResponse(failed)
 	if err != nil || failed != nil {
+		defer closeWebSocketResponse(failed)
 		r.server.log.Warn("model-compatible websocket unavailable", "thread", r.thread, "model", event.Model, "service_tier", event.ServiceTier, "error", err)
-		r.closeDownstream(websocket.StatusTryAgainLater, "no account supports requested model")
+		r.downstream.setupFailed(r.ctx, failed, err)
 		return false
 	}
 	return r.switchAccount(next, event.Model, event.ServiceTier)
@@ -272,7 +296,7 @@ func (r *responsesWebSocketRelay) ensureCompatibleAccount(event websocketEnvelop
 
 func (r *responsesWebSocketRelay) pin() bool {
 	r.pinned = true
-	readWebSocketMessages(r.ctx, r.current.conn, false, r.messages)
+	r.readers = append(r.readers, readWebSocketMessages(r.ctx, r.current.conn, false, r.messages))
 	for _, queued := range r.pending {
 		if !r.writeUpstream(queued) {
 			return false
@@ -306,12 +330,18 @@ func (r *responsesWebSocketRelay) handleUpstream(message websocketMessage) bool 
 		r.closeDownstream(websocket.StatusServiceRestart, "upstream websocket unavailable")
 		return false
 	}
+	var err error
+	message, err = r.downstream.prepare(message)
+	if err != nil {
+		r.closeDownstream(websocket.StatusInternalError, "invalid upstream response")
+		return false
+	}
 	var event websocketEnvelope
 	rejection := websocketRejectionNone
 	parsed := message.kind == websocket.MessageText && json.Unmarshal(message.data, &event) == nil
 	if parsed && websocketRejection(event) == websocketRejectionUnauthorized {
 		r.handleInBandUnauthorized()
-		r.closeDownstream(websocket.StatusServiceRestart, "account rejected websocket request")
+		r.downstream.reject(r.ctx, message, websocket.StatusServiceRestart, "account rejected websocket request")
 		return false
 	}
 	if parsed {
@@ -323,16 +353,19 @@ func (r *responsesWebSocketRelay) handleUpstream(message websocketMessage) bool 
 		}
 		if retryUsage {
 			r.server.preserveWebSocketRetryOwner(r.current)
-			r.closeDownstream(websocket.StatusServiceRestart, "account exhausted; reconnect with full history")
+			r.downstream.reject(r.ctx, message, websocket.StatusServiceRestart, "account exhausted; reconnect with full history")
 			return false
 		}
 		if rejection == websocketRejectionModelCapacity {
 			r.server.preserveWebSocketRetryOwner(r.current)
-			r.closeDownstream(websocket.StatusServiceRestart, "model at capacity")
+			r.downstream.reject(r.ctx, message, websocket.StatusServiceRestart, "model at capacity")
 			return false
 		}
 	}
 	if err := r.downstream.Write(r.ctx, message.kind, message.data); err != nil {
+		if errors.Is(err, errResponseFinished) {
+			return false
+		}
 		r.server.log.Warn("downstream websocket response write failed", "thread", r.thread, "account", r.current.account.id(), "active_turns", len(r.turns), "error", err)
 		return false
 	}
@@ -369,7 +402,7 @@ func (r *responsesWebSocketRelay) handleInBandUnauthorized() {
 	if !account.markRejectedAccessToken(r.current.accessToken) {
 		return
 	}
-	if !r.server.refreshed(account, account.id()) && !account.needsReauth() {
+	if !r.server.refreshedContext(r.ctx, account, account.id()) && !account.needsReauth() {
 		account.clearRejectedAccessToken(r.current.accessToken)
 	}
 }

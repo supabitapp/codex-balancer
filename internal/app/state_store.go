@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/subtle"
 	"database/sql"
 	"errors"
@@ -147,8 +148,12 @@ func accountRecord(account *Account) (statepkg.Account, error) {
 }
 
 func (s *StateStore) mutateAccounts(change func([]*Account) ([]*Account, error)) ([]*Account, error) {
+	return s.mutateAccountsContext(context.Background(), change)
+}
+
+func (s *StateStore) mutateAccountsContext(ctx context.Context, change func([]*Account) ([]*Account, error)) ([]*Account, error) {
 	var updated []*Account
-	_, err := s.raw.MutateAccounts(func(records []statepkg.Account) ([]statepkg.Account, error) {
+	_, err := s.raw.MutateAccountsContext(ctx, func(records []statepkg.Account) ([]statepkg.Account, error) {
 		accounts, err := change(accountsFromRecords(records))
 		if err != nil {
 			return nil, err
@@ -175,7 +180,11 @@ func (s *StateStore) recordRoute(route storedRoute) error {
 }
 
 func (s *StateStore) preserveRouteOwners(at time.Time, account string, keys []string) error {
-	return s.raw.PreserveRouteOwners(at, account, keys)
+	return s.preserveRouteOwnersContext(context.Background(), at, account, keys)
+}
+
+func (s *StateStore) preserveRouteOwnersContext(ctx context.Context, at time.Time, account string, keys []string) error {
+	return s.raw.PreserveRouteOwnersContext(ctx, at, account, keys)
 }
 
 func (s *StateStore) routeOwners(thread, session string) ([]string, error) {

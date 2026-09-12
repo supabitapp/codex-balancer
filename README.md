@@ -6,7 +6,7 @@ _I wrote this README by hand, no LLM :)_
 
 Balancing usage across several ChatGPT Codex accounts.
 
-- Dead simple, 1 single websocket endpoint
+- One Responses endpoint, with HTTP and WebSocket transports
 - 1 single SQLite database
 
 ## Install
@@ -23,7 +23,8 @@ codex-balancer server           # serve the proxy with a TUI at
 
 The server runs at http://127.0.0.1:8317
 
-- `/v1/responses` - the websocket only proxy route (also `/codex/responses` and `/v1/codex/responses` for pi)
+- `/v1/responses` — HTTP `POST` (SSE or JSON) and WebSocket `GET`
+- `/codex/responses` and `/v1/codex/responses` — WebSocket `GET` aliases for pi
 - `/dashboard` — HTML dashboard
 - `/stats` — JSON stats of the server
 - `/accounts` — add an account. On a real server, send this to your friends so they join the pool without exposing credentials.
@@ -134,8 +135,9 @@ pi --provider openai-codex --model gpt-5.6-sol
 Or use `/model` and choose an `openai-codex` model. Leave `transport` at `"auto"`
 (the default), which tries WebSockets first. If you previously set it to `"sse"`
 in `~/.pi/agent/settings.json` or `.pi/settings.json`, change it to `"auto"`.
-The balancer does not support HTTP/SSE responses: a failed WebSocket connection
-followed by an SSE fallback can surface as `405 Method Not Allowed`.
+HTTP Responses is supported at `POST /v1/responses`, not at the Codex aliases.
+Pi's Codex SSE fallback uses those aliases, which remain GET-only; keep this
+provider on `"auto"` rather than forcing `"sse"`.
 
 This redirects **all** `openai-codex` models through the balancer. When migrating
 from a custom `balancer` provider, remove its old block and update any saved
@@ -143,6 +145,104 @@ from a custom `balancer` provider, remove its old block and update any saved
 comes from pi, not discovery from the balancer's `/v1/models` endpoint; refresh
 pi's catalog with `pi update --models`. A listed model still needs an eligible
 account in the pool.
+
+## Point OpenCode at it
+
+Use the standard OpenAI Responses provider with a balancer API key:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openai/gpt-6-astra",
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://codex-balancer.exe.xyz/v1",
+        "apiKey": "{env:CODEX_BALANCER_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Choose a model your pool supports; the balancer never substitutes model names.
+For a local server, use `http://127.0.0.1:8317/v1`. Export
+`CODEX_BALANCER_API_KEY` before starting OpenCode. No experimental WebSocket
+flag, OAuth login, per-model instructions, or disabled title generation is
+needed. An existing ChatGPT OAuth login in OpenCode can redirect requests away
+from this endpoint; disconnect that login and use the balancer key instead.
+
+OpenCode inherits the OpenAI catalog. A `provider.openai.models` list is not
+required. That catalog is **not pool discovery**: model availability and context
+limits can differ from your pool. OpenCode may independently select an unavailable
+small/background model. If necessary, set `"small_model": "openai/gpt-6-astra"`
+(or another pool-supported model) at the top level. Selecting the default model
+does not make every catalog model routable or reconcile catalog limits.
+
+### HTTP Responses contract
+
+`POST /v1/responses` accepts a JSON object with a non-empty string `model`.
+`stream:true` returns incrementally flushed Responses SSE events; omitted or
+false returns a Responses JSON object. Each request has its own upstream Codex
+WebSocket, including overlapping conversation and title requests.
+
+| Request field | HTTP adapter policy |
+| --- | --- |
+| `model` | Required; preserved exactly. Existing pool/model/tier selection applies. |
+| `input` | String becomes one user message; arrays preserve remaining item order and roles. Missing input becomes `[]`. |
+| `instructions`, leading system/developer messages | Explicit instructions first, then the contiguous leading instruction messages, joined with two newlines. Text parts use the same separator. Absent instructions become `""`; no default prompt is invented. Later instruction messages stay in place. Non-text or extra semantic fields on lifted instructions are rejected rather than discarded. |
+| `stream` | Boolean HTTP control, not forwarded upstream. |
+| `store` | Omitted/false becomes false; true is rejected. |
+| `background` | Omitted/false accepted and removed; true is rejected. |
+| `previous_response_id`, `conversation` | Only absent/null accepted. Send full history, including encrypted reasoning and tool results, on every request. Stored item references are rejected. |
+| `max_output_tokens`, `temperature`, `top_p` | Valid positive integer token limits and valid numeric sampling ranges are accepted but omitted for Codex compatibility. They are **not enforced**; do not rely on an output token cap or sampling control. |
+| `type`, `generate`, `response`, `status`, `status_code`, `headers`, `stream_options` | Rejected HTTP/protocol controls. One `response.create` is generated by the adapter. |
+| Tools/calls/results, images, `text` structured output, `reasoning`, `include`, encrypted reasoning, cache keys, metadata | Preserved, including unknown JSON fields and numeric precision. Actual feature support still depends on Codex and the selected model. |
+| `service_tier` | Preserved unless the global fast-mode policy overrides it, before selection and accounting. |
+
+The three compatibility omissions are intentionally narrow: the pinned OpenAI
+SDK can emit them, while Codex's request types have no matching generation
+controls. OpenCode's chat hook removes its output-token limit, but auxiliary
+paths can bypass that hook. Unknown fields are not guessed away or retried with
+different payloads; upstream rejects unsupported semantics normally.
+
+Requests are limited to 8 MiB. Compressed bodies are rejected with 415. JSON
+retention and upstream frames are bounded to 16 MiB; oversized/unfinished output
+fails rather than returning truncated success. JSON uses non-empty terminal
+output, otherwise complete `response.output_item.done` items ordered by
+`output_index`. Empty output with no item events remains empty; unfinished items
+are not converted to empty success. It does not buffer event history. No stored-response retrieval,
+background execution, or HTTP response-ID continuation is implemented.
+
+See [HTTP execution and errors](ROUTING.md#http-execution-and-errors) for failure,
+retry, timeout and shutdown behavior. This is a Codex-backed subset of Responses,
+not a complete implementation of the OpenAI API.
+
+### Hermetic client verification
+
+The opt-in test uses OpenCode's pinned `@ai-sdk/openai` 3.0.88, its existing SDK
+patch, and `ai` 6.0.168 against a local mock upstream. It exercises streaming
+text/reasoning/tool calls, a full-history JSON tool-result turn, and an auxiliary
+structured-output request, plus failures before and after SSE starts. It runs
+the **actual AI SDK adapter**, not the full
+OpenCode application or live ChatGPT inference. Normal Go tests use protocol
+fixtures and require no JavaScript dependencies.
+
+Prepare dependencies outside both repositories (no lifecycle scripts):
+
+```sh
+sdk_dir="$(mktemp -d)"
+npm install --prefix "$sdk_dir" --ignore-scripts --no-audit --no-fund --save-exact \
+  @ai-sdk/openai@3.0.88 ai@6.0.168 zod@4.1.8
+# Use the existing patch from the read-only OpenCode checkout at 95daf90670b7:
+(cd "$sdk_dir/node_modules/@ai-sdk/openai" && \
+  git apply /path/to/opencode/patches/@ai-sdk%2Fopenai@3.0.88.patch)
+CODEX_BALANCER_TEST_SDK="$sdk_dir" go test ./internal/app -run TestHTTPResponsesPinnedSDK -count=1 -v
+```
+
+The test isolates HOME/XDG state and restricts inference fetches to its local
+balancer. It does not install plugins, load personal credentials, or discover
+models over the network.
 
 ## Routing
 

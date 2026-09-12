@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,8 +47,9 @@ type server struct {
 	countries        countryResolver
 	dashboardStreams atomic.Int64
 	dashboardUpdates dashboardBroadcaster
-	routeOwnership   sync.Mutex
+	routeOwnership   contextMutex
 	poolResetMu      sync.Mutex
+	refreshes        refreshOperations
 	routeClaims      routeClaimRegistry
 	activeWebSockets activeWebSocketRegistry
 }
@@ -148,6 +150,7 @@ func (s *server) routes() http.Handler {
 	for _, path := range []string{"/v1/responses", "/codex/responses", "/v1/codex/responses"} {
 		mux.Handle("GET "+path, responses)
 	}
+	mux.Handle("POST /v1/responses", s.admitted(s.responsesHTTP))
 	mux.HandleFunc("GET /v1/models", s.models)
 	return mux
 }
@@ -192,8 +195,10 @@ type responseReasoning struct {
 }
 
 type responseErrorPayload struct {
-	Type string `json:"type"`
-	Code string `json:"code"`
+	Type    string          `json:"type"`
+	Code    string          `json:"code"`
+	Message string          `json:"message,omitempty"`
+	Param   json.RawMessage `json:"param,omitempty"`
 }
 
 func responseError(resp *http.Response) responseErrorPayload {
@@ -228,32 +233,61 @@ func workspaceUsageLimitReached(headers http.Header) bool {
 }
 
 func (s *server) refreshed(account *Account, id string) bool {
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return s.refreshedContext(ctx, account, id)
+}
+
+func (s *server) refreshedContext(ctx context.Context, account *Account, id string) bool {
 	s.log.Debug("refreshing account", "account", id)
-	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
+	ctx, cancel := context.WithTimeout(ctx, refreshTimeout)
 	defer cancel()
-	if err := account.refresh(ctx, s.client, s.pool.persistAccountState); err != nil {
-		s.log.Warn("refresh failed", "account", id, "error", err)
-		if account.needsReauth() {
-			s.invalidateAccount(id, routingReasonOwnerSignedOut)
-		}
+	lifetime := s.ctx
+	if lifetime == nil {
+		lifetime = context.Background()
+	}
+	owner := refreshOwner{
+		lifetime: lifetime, client: s.client, operations: &s.refreshes,
+		persist: s.pool.persistAccountStateContext,
+		completed: func(completion context.Context, err error) error {
+			// Completion, not a surviving waiter or a later pool reload, owns
+			// this notification. No account/pool lock is held here.
+			var notifyErr error
+			if account.needsReauth() {
+				notifyErr = s.invalidateAccountContext(completion, id, routingReasonOwnerSignedOut)
+			}
+			if resultErr := errors.Join(err, notifyErr); resultErr != nil {
+				s.log.Warn("refresh failed", "account", id, "error", resultErr)
+			} else {
+				s.log.Debug("account refreshed", "account", id)
+			}
+			return notifyErr
+		},
+	}
+	if err := account.refreshOwned(ctx, owner); err != nil {
+		s.log.Debug("refresh wait ended", "account", id, "error", err)
 		return false
 	}
-	s.log.Debug("account refreshed", "account", id)
 	return true
 }
 
 func (s *server) invalidateAccount(account string, reason routingReason) {
-	s.routeOwnership.Lock()
-	defer s.routeOwnership.Unlock()
+	_ = s.invalidateAccountContext(context.Background(), account, reason)
+}
+
+func (s *server) invalidateAccountContext(ctx context.Context, account string, reason routingReason) error {
+	if err := s.routeOwnership.LockContext(ctx); err != nil {
+		return err
+	}
 	invalidatedAt := time.Now()
 	claims := s.routeClaims.invalidateAccount(account)
-	sockets := s.activeWebSockets.closeAccount(account, string(reason))
+	callbacks := s.activeWebSockets.detachAccount(account)
+	var persistErr error
 	if len(claims.keys) > 0 && s.pool != nil && s.pool.store != nil {
-		if err := s.pool.store.preserveRouteOwners(
-			invalidatedAt,
-			account,
-			claims.keys,
-		); err != nil {
+		persistErr = s.pool.store.preserveRouteOwnersContext(ctx, invalidatedAt, account, claims.keys)
+		if persistErr != nil {
 			s.log.Warn(
 				"provisional route owner preservation failed",
 				"account",
@@ -263,19 +297,24 @@ func (s *server) invalidateAccount(account string, reason routingReason) {
 				"routes",
 				claims.keys,
 				"error",
-				err,
+				persistErr,
 			)
 		}
 	}
-	if claims.claims == 0 && sockets == 0 {
-		return
+	s.routeOwnership.Unlock()
+	for _, closeSocket := range callbacks {
+		closeSocket(account, string(reason))
+	}
+	if claims.claims == 0 && len(callbacks) == 0 {
+		return persistErr
 	}
 	s.log.Info("account websocket routing invalidated",
 		"account", account,
 		"routing_reason", reason,
 		"provisional_claims", claims.claims,
-		"closed_websockets", sockets,
+		"closed_websockets", len(callbacks),
 	)
+	return persistErr
 }
 
 func copyWebSocketHeaders(dst, src http.Header) {

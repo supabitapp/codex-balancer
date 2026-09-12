@@ -63,7 +63,9 @@ func (r *activeWebSocketRegistry) remove(id uint64, account string) {
 	}
 }
 
-func (r *activeWebSocketRegistry) closeAccount(account, reason string) int {
+// Detach under the routing lock, but invoke callbacks only after its caller
+// releases that lock and finishes owner-barrier persistence.
+func (r *activeWebSocketRegistry) detachAccount(account string) []func(string, string) {
 	r.mu.Lock()
 	accounts := r.byAccount[account]
 	delete(r.byAccount, account)
@@ -72,7 +74,11 @@ func (r *activeWebSocketRegistry) closeAccount(account, reason string) int {
 		callbacks = append(callbacks, closeSocket)
 	}
 	r.mu.Unlock()
+	return callbacks
+}
 
+func (r *activeWebSocketRegistry) closeAccount(account, reason string) int {
+	callbacks := r.detachAccount(account)
 	for _, closeSocket := range callbacks {
 		closeSocket(account, reason)
 	}

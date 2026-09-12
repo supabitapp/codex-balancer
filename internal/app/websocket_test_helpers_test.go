@@ -88,9 +88,9 @@ func newTestServer(t *testing.T, accounts []*Account) *server {
 		state.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { state.Close() })
-	return &server{
-		ctx:      context.Background(),
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := &server{
+		ctx:      ctx,
 		pool:     pool,
 		catalog:  newModelCatalog(),
 		stats:    stats,
@@ -98,6 +98,16 @@ func newTestServer(t *testing.T, accounts []*Account) *server {
 		client:   newProxyClient(),
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+	t.Cleanup(func() {
+		srv.refreshes.mu.Lock()
+		alreadyStopped := srv.refreshes.stopping
+		srv.refreshes.mu.Unlock()
+		if err := srv.stopRefreshes(cancel); err != nil && !alreadyStopped {
+			t.Error(err)
+		}
+		state.Close()
+	})
+	return srv
 }
 
 type websocketTestUpstream struct {

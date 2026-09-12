@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"net/http"
 	"slices"
@@ -13,19 +12,40 @@ import (
 )
 
 type responsesWebSocketDialer struct {
-	server       *server
-	request      *http.Request
-	model        string
-	serviceTier  string
-	upstream     string
-	route        websocketRoute
-	thread       string
-	durable      durableRouteOwners
-	owners       []string
-	replacing    *routeClaimHandle
-	skip         map[string]bool
-	reauthed     map[string]bool
-	resetRetried map[string]bool
+	server        *server
+	request       *http.Request
+	model         string
+	serviceTier   string
+	upstream      string
+	route         websocketRoute
+	thread        string
+	durable       durableRouteOwners
+	owners        []string
+	replacing     *routeClaimHandle
+	skip          map[string]bool
+	reauthed      map[string]bool
+	resetRetried  map[string]bool
+	lastRejection *websocketSetupError
+}
+
+// Keep a structured setup rejection available to HTTP without changing the
+// WebSocket router's error identity or its safe pre-generation retry policy.
+type websocketSetupError struct {
+	cause      error
+	status     int
+	details    responseErrorPayload
+	retryAfter string
+}
+
+func (e *websocketSetupError) Error() string { return e.cause.Error() }
+func (e *websocketSetupError) Unwrap() error { return e.cause }
+
+func (d *responsesWebSocketDialer) unavailable(cause error) error {
+	if d.lastRejection != nil {
+		d.lastRejection.cause = cause
+		return d.lastRejection
+	}
+	return cause
 }
 
 type upstreamWebSocketDial struct {
@@ -81,13 +101,15 @@ func newResponsesWebSocketDialer(s *server, request *http.Request, route websock
 func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error) {
 	poolResetTried := false
 	for attempt := 0; ; attempt++ {
-		selection := d.server.claimAccount(d.route, d.durable, d.model, d.serviceTier, d.skip, attempt)
+		var selection claimedRoutingDecision
 		if d.replacing != nil {
 			selection = d.server.claimReplacement(d.replacing, d.route, d.durable, d.model, d.serviceTier, d.skip, attempt)
+		} else {
+			selection = d.server.claimAccount(d.route, d.durable, d.model, d.serviceTier, d.skip, attempt)
 		}
 		decision := selection.routingDecision
 		if decision.blocked != "" {
-			return nil, nil, errRouteOwnerUnavailable
+			return nil, nil, d.unavailable(errRouteOwnerUnavailable)
 		}
 		account := decision.account
 		if account == nil {
@@ -97,11 +119,11 @@ func (d *responsesWebSocketDialer) dial() (*websocketDial, *http.Response, error
 					continue
 				}
 			}
-			return nil, nil, errNoAccountAvailable
+			return nil, nil, d.unavailable(errNoAccountAvailable)
 		}
 		if decision.moved() && strings.TrimSpace(d.request.Header.Get(codexTurnStateKey)) != "" {
 			selection.claim.release()
-			return nil, nil, errors.New("account-bound turn cannot move accounts; start a new turn or resume")
+			return nil, nil, errAccountBoundTurn
 		}
 		retained := slices.Contains(d.owners, account.id()) || selection.joined
 		if skip, err := d.refreshBeforeDial(account, retained); err != nil {
@@ -163,7 +185,7 @@ func (d *responsesWebSocketDialer) refreshBeforeDial(account *Account, retained 
 		return false, nil
 	}
 	d.reauthed[id] = true
-	if d.server.refreshed(account, id) {
+	if d.server.refreshedContext(d.request.Context(), account, id) {
 		return false, nil
 	}
 	if retained {
@@ -268,7 +290,7 @@ func (d *responsesWebSocketDialer) refreshAfterUnauthorized(response *http.Respo
 	closeWebSocketResponse(response)
 	id := account.id()
 	d.reauthed[id] = true
-	if d.server.refreshed(account, id) {
+	if d.server.refreshedContext(d.request.Context(), account, id) {
 		return nil
 	}
 	if retained {
@@ -291,6 +313,16 @@ func (d *responsesWebSocketDialer) rejectAccount(result upstreamWebSocketDial, a
 	response := result.response
 	status := response.StatusCode
 	id := account.id()
+	details := responseError(response)
+	if details.Code == "" {
+		details.Code = "upstream_rejected"
+		if usageLimit {
+			details.Code = "usage_limit_reached"
+		} else if status == http.StatusTooManyRequests {
+			details.Code = "rate_limit_exceeded"
+		}
+	}
+	d.lastRejection = &websocketSetupError{status: status, details: details, retryAfter: response.Header.Get("Retry-After")}
 	if status == http.StatusTooManyRequests || usageLimit {
 		account.observe(response.Header)
 		if usageLimit {
