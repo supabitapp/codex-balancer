@@ -689,6 +689,8 @@ type statsResponse struct {
 	RateLimits              int64                  `json:"rate_limits"`
 	AverageTTFBMilliseconds float64                `json:"average_ttfb_ms"`
 	MonthlyAPICost          string                 `json:"monthly_api_cost"`
+	MonthlyInputTokens      string                 `json:"monthly_input_tokens"`
+	MonthlyOutputTokens     string                 `json:"monthly_output_tokens"`
 	Accounts                []accountStatsResponse `json:"accounts"`
 }
 
@@ -752,6 +754,8 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		RateLimits:              snapshot.Limited,
 		AverageTTFBMilliseconds: float64(snapshot.TTFB) / float64(time.Millisecond),
 		MonthlyAPICost:          formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses),
+		MonthlyInputTokens:      formatTokenCount(snapshot.MonthlyUsage.InputTokens),
+		MonthlyOutputTokens:     formatTokenCount(snapshot.MonthlyUsage.OutputTokens),
 		Accounts:                make([]accountStatsResponse, 0, s.pool.count()),
 	}
 	for _, account := range s.pool.sorted() {
