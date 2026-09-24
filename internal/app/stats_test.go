@@ -69,6 +69,32 @@ func TestStatsEndpointReportsPriorityRoutingMode(t *testing.T) {
 	}
 }
 
+func TestStatsEndpointReportsTrafficAndResetCountdown(t *testing.T) {
+	now := time.Now()
+	first := testAccount("account-a", 20)
+	first.primary.resetsAt = now.Add(4*24*time.Hour + 23*time.Hour + 20*time.Minute)
+	second := testAccount("account-b", 30)
+	stats := newStatsWithPrices(priceSnapshot{})
+	stats.applyRouted(now, "", "", "account-a", "", "", "", turnMetadata{})
+	stats.applyRouted(now, "", "", "account-b", "", "", "", turnMetadata{})
+	stats.applyRouted(now, "", "", "account-b", "", "", "", turnMetadata{})
+	server := &server{pool: &Pool{accounts: []*Account{first, second}}, stats: stats}
+	request := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	response := httptest.NewRecorder()
+	server.routes().ServeHTTP(response, request)
+	var payload statsResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	accounts := make(map[string]accountStatsResponse, len(payload.Accounts))
+	for _, account := range payload.Accounts {
+		accounts[account.ID] = account
+	}
+	if accounts["account-a"].Traffic24hPercent != 33 || accounts["account-a"].ResetIn != "4d23h" || accounts["account-b"].Traffic24hPercent != 67 || accounts["account-b"].ResetIn != "--" {
+		t.Fatalf("accounts = %+v", accounts)
+	}
+}
+
 func TestSnapshotKeepsThreadsUntilTheirLastLiveReferenceCloses(t *testing.T) {
 	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()

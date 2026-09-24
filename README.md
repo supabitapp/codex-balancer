@@ -24,7 +24,7 @@ The server runs at http://127.0.0.1:8317
 - `/codex/responses` and `/v1/codex/responses` — equivalent HTTP `POST` and WebSocket `GET` aliases for pi
 - `/v1/alpha/search`, `/v1/images/generations` and `/v1/images/edits` — unary `POST` proxies for Codex's standalone web search and image tools, sent with a pool account's credentials
 - `/dashboard` — HTML dashboard
-- `/stats` — JSON stats of the server, including `monthly_api_cost`, the dashboard's estimated API-price value for the current month
+- `/stats` — JSON stats of the server, including the dashboard's estimated monthly API-price value and each account's reset countdown and 24-hour traffic share
 - `/accounts` — add an account. On a real server, send this to your friends so they join the pool without exposing credentials.
 
 The TUI also allows you to put a `pause` or `priority` on some accounts.
