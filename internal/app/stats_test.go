@@ -55,6 +55,7 @@ func TestStatsEndpointReportsPriorityRoutingMode(t *testing.T) {
 	account := testAccount("account-a", 20)
 	account.RoutingMode = routingModePriority
 	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(priceSnapshot{})}
+	server.stats.apiCostNanoDollars = 12_340_000_000
 	request := httptest.NewRequest(http.MethodGet, "/stats", nil)
 	response := httptest.NewRecorder()
 
@@ -63,8 +64,34 @@ func TestStatsEndpointReportsPriorityRoutingMode(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || len(payload.Accounts) != 1 || payload.Accounts[0].Status != accountPriority || payload.Accounts[0].RoutingMode != routingModePriority {
+	if response.Code != http.StatusOK || payload.MonthlyAPICost != "$12.34" || len(payload.Accounts) != 1 || payload.Accounts[0].Status != accountPriority || payload.Accounts[0].RoutingMode != routingModePriority {
 		t.Fatalf("status = %d, payload = %+v", response.Code, payload)
+	}
+}
+
+func TestStatsEndpointReportsTrafficAndResetCountdown(t *testing.T) {
+	now := time.Now()
+	first := testAccount("account-a", 20)
+	first.primary.resetsAt = now.Add(4*24*time.Hour + 23*time.Hour + 20*time.Minute)
+	second := testAccount("account-b", 30)
+	stats := newStatsWithPrices(priceSnapshot{})
+	stats.applyRouted(now, "", "", "account-a", "", "", "", turnMetadata{})
+	stats.applyRouted(now, "", "", "account-b", "", "", "", turnMetadata{})
+	stats.applyRouted(now, "", "", "account-b", "", "", "", turnMetadata{})
+	server := &server{pool: &Pool{accounts: []*Account{first, second}}, stats: stats}
+	request := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	response := httptest.NewRecorder()
+	server.routes().ServeHTTP(response, request)
+	var payload statsResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	accounts := make(map[string]accountStatsResponse, len(payload.Accounts))
+	for _, account := range payload.Accounts {
+		accounts[account.ID] = account
+	}
+	if accounts["account-a"].Traffic24hPercent != 33 || accounts["account-a"].ResetIn != "4d23h" || accounts["account-b"].Traffic24hPercent != 67 || accounts["account-b"].ResetIn != "--" {
+		t.Fatalf("accounts = %+v", accounts)
 	}
 }
 

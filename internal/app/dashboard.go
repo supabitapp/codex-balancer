@@ -381,7 +381,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	s.countries.refresh(snapshot.Threads)
 	stats := s.statsResponseAt(now, snapshot)
 	monthInfo := calendarMonthStart(now).Format("From Jan 2")
-	traffic := trafficPercentages(stats.Accounts)
 	counts := map[accountStatus]int{}
 	names := make(map[string]string, len(stats.Accounts))
 	accounts := make([]dashboardAccountView, 0, len(stats.Accounts))
@@ -406,10 +405,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			banked = dashboardNumber(*account.BankedResets)
 		}
 		bankedInfo := dashboardResetInfo(now, account.ResetCredits)
-		resetIn := "--"
-		if account.ResetAt != nil {
-			resetIn = short(account.ResetAt.Sub(now))
-		}
 		routedValue := "--"
 		routedValueInfo := "No usage routed in this reset window."
 		if account.RoutedCredits != nil && account.RoutedCreditsSince != nil {
@@ -425,11 +420,11 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Weekly:          weekly,
 			Banked:          banked,
 			BankedInfo:      bankedInfo,
-			ResetIn:         resetIn,
+			ResetIn:         account.ResetIn,
 			RoutedValue:     routedValue,
 			RoutedValueInfo: routedValueInfo,
 			OpenWebSockets:  dashboardNumber(account.OpenWebSockets),
-			Traffic:         dashboardNumber(traffic[i]),
+			Traffic:         dashboardNumber(account.Traffic24hPercent),
 			Activity:        sparkline(account.Activity),
 		})
 	}

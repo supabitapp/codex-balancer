@@ -688,6 +688,7 @@ type statsResponse struct {
 	Failovers               int64                  `json:"failovers"`
 	RateLimits              int64                  `json:"rate_limits"`
 	AverageTTFBMilliseconds float64                `json:"average_ttfb_ms"`
+	MonthlyAPICost          string                 `json:"monthly_api_cost"`
 	Accounts                []accountStatsResponse `json:"accounts"`
 }
 
@@ -702,6 +703,7 @@ type accountStatsResponse struct {
 	BankedResets           *int64                        `json:"banked_resets"`
 	ResetCredits           []resetCreditStatsResponse    `json:"reset_credits,omitempty"`
 	ResetAt                *time.Time                    `json:"reset_at"`
+	ResetIn                string                        `json:"reset_in"`
 	RoutedCredits          *float64                      `json:"routed_credits,omitempty"`
 	RoutedCreditsSince     *time.Time                    `json:"routed_credits_since,omitempty"`
 	SpendControl           *spendControlStatsResponse    `json:"spend_control,omitempty"`
@@ -709,6 +711,7 @@ type accountStatsResponse struct {
 	OpenWebSockets         int64                         `json:"open_websockets"`
 	RateLimits             int64                         `json:"rate_limits"`
 	Activity               []int64                       `json:"activity"`
+	Traffic24hPercent      int64                         `json:"traffic_24h_percent"`
 }
 
 type spendControlStatsResponse struct {
@@ -748,6 +751,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		Failovers:               snapshot.Failures,
 		RateLimits:              snapshot.Limited,
 		AverageTTFBMilliseconds: float64(snapshot.TTFB) / float64(time.Millisecond),
+		MonthlyAPICost:          formatAPIPrice(snapshot.APICostNanoDollars, snapshot.UnpricedResponses),
 		Accounts:                make([]accountStatsResponse, 0, s.pool.count()),
 	}
 	for _, account := range s.pool.sorted() {
@@ -775,8 +779,10 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			}
 		}
 		var resetAt *time.Time
+		resetIn := "--"
 		if reset := weekly.resetsAt; reset.After(now) {
 			resetAt = &reset
+			resetIn = short(reset.Sub(now))
 		}
 		var routedCredits *float64
 		var routedCreditsSince *time.Time
@@ -806,6 +812,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			BankedResets:           bankedResets,
 			ResetCredits:           resetCredits,
 			ResetAt:                resetAt,
+			ResetIn:                resetIn,
 			RoutedCredits:          routedCredits,
 			RoutedCreditsSince:     routedCreditsSince,
 			SpendControl:           spendControl,
@@ -814,6 +821,10 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			RateLimits:             traffic.Limited,
 			Activity:               append([]int64{}, traffic.Activity...),
 		})
+	}
+	traffic := trafficPercentages(out.Accounts)
+	for i := range out.Accounts {
+		out.Accounts[i].Traffic24hPercent = traffic[i]
 	}
 	return out
 }
