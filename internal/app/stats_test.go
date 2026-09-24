@@ -55,6 +55,7 @@ func TestStatsEndpointReportsPriorityRoutingMode(t *testing.T) {
 	account := testAccount("account-a", 20)
 	account.RoutingMode = routingModePriority
 	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(priceSnapshot{})}
+	server.stats.apiCostNanoDollars = 12_340_000_000
 	request := httptest.NewRequest(http.MethodGet, "/stats", nil)
 	response := httptest.NewRecorder()
 
@@ -63,7 +64,7 @@ func TestStatsEndpointReportsPriorityRoutingMode(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || len(payload.Accounts) != 1 || payload.Accounts[0].Status != accountPriority || payload.Accounts[0].RoutingMode != routingModePriority {
+	if response.Code != http.StatusOK || payload.MonthlyAPICost != "$12.34" || len(payload.Accounts) != 1 || payload.Accounts[0].Status != accountPriority || payload.Accounts[0].RoutingMode != routingModePriority {
 		t.Fatalf("status = %d, payload = %+v", response.Code, payload)
 	}
 }
