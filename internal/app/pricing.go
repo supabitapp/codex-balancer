@@ -94,7 +94,14 @@ func newPriceSnapshot(models map[string]modelPrice, fetchedAt time.Time) priceSn
 	return priceSnapshot{models: models, modelIDs: modelIDs, fetchedAt: fetchedAt}
 }
 
+var priceModelAliases = map[string]string{
+	"codex-auto-review": "gpt-5.6-luna",
+}
+
 func (s priceSnapshot) estimate(model, serviceTier string, usage responseUsage) (int64, bool) {
+	if alias, ok := priceModelAliases[model]; ok {
+		model = alias
+	}
 	prices, known := s.models[model]
 	if !known {
 		for _, candidate := range s.modelIDs {
