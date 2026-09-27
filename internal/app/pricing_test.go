@@ -64,6 +64,9 @@ const testModelsDevCatalog = `{
 			},
 			"gpt-5.4-mini": {
 				"cost": {"input": 0.75, "output": 4.5, "cache_read": 0.075}
+			},
+			"gpt-5.6-luna": {
+				"cost": {"input": 0.2, "output": 1.2, "cache_read": 0.02, "cache_write": 0.25}
 			}
 		}
 	}
@@ -126,6 +129,16 @@ func TestEstimateAPIPriceUsesLongestModelMatch(t *testing.T) {
 	got, known := testPriceSnapshot(t).estimate("gpt-5.4-mini-2026-08-01", "default", usage)
 	if !known || got != 1_200_000 {
 		t.Fatalf("estimate = %d, %t, want 1200000, true", got, known)
+	}
+}
+
+func TestEstimateAPIPricePricesAutoReviewAsLuna(t *testing.T) {
+	usage := responseUsage{InputTokens: 100_000, OutputTokens: 1_000}
+	usage.InputDetails.CachedTokens = 80_000
+
+	got, known := testPriceSnapshot(t).estimate("codex-auto-review", "default", usage)
+	if !known || got != 6_800_000 {
+		t.Fatalf("estimate = %d, %t, want 6800000, true", got, known)
 	}
 }
 
