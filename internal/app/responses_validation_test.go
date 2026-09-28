@@ -23,7 +23,7 @@ func TestHTTPResponsesValidationDiagnostics(t *testing.T) {
 		{"invalid type", `{"type":"response.created\n"}`, "prepare", "validation_error", "invalid_event_type", "", ""},
 		{"terminal object", `{"type":"response.completed","response":"SENSITIVE_RESPONSE"}`, "prepare", "validation_error", "missing_terminal_response", "", ""},
 		{"terminal status", `{"type":"response.completed","response":{"status":"SENSITIVE_STATUS"}}`, "prepare", "validation_error", "conflicting_terminal_status", "", ""},
-		{"envelope type", `{"type":"response.reasoning_summary_part.done","status":"SENSITIVE_STATUS","part":{"text":"SENSITIVE_TEXT token-a"}}`, "envelope_decode", "json_type_mismatch", "", "status", "string"},
+		{"envelope type", `{"type":"response.reasoning_summary_part.done","status_code":"SENSITIVE_STATUS","part":{"text":"SENSITIVE_TEXT token-a"}}`, "envelope_decode", "json_type_mismatch", "", "status_code", "string"},
 		{"envelope number", `{"type":"response.reasoning_summary_part.done","status":987654321098765432109876543210}`, "envelope_decode", "json_type_mismatch", "", "status", "number"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

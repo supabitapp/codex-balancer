@@ -74,7 +74,7 @@ type websocketEnvelope struct {
 	ServiceTier        string                     `json:"service_tier"`
 	PreviousResponseID string                     `json:"previous_response_id"`
 	ClientMetadata     map[string]string          `json:"client_metadata"`
-	Status             int                        `json:"status"`
+	Status             responseEventStatus        `json:"status"`
 	StatusCode         int                        `json:"status_code"`
 	Headers            map[string]json.RawMessage `json:"headers"`
 	Error              struct {
@@ -335,7 +335,7 @@ func (s *server) websocketClosed(thread string, account *Account) {
 
 func websocketStatus(event websocketEnvelope) int {
 	if event.Status != 0 {
-		return event.Status
+		return int(event.Status)
 	}
 	return event.StatusCode
 }

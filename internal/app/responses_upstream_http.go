@@ -138,7 +138,7 @@ func (s *server) forwardHTTPResponse(peer *httpResponsesDownstream, request *htt
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		failure := readHTTPRejection(ctx, response)
 		var rejected websocketEnvelope
-		rejected.Status = response.StatusCode
+		rejected.Status = responseEventStatus(response.StatusCode)
 		rejected.Error.Code, rejected.Error.Type = failure.Code, failure.Type
 		rejection := websocketRejection(rejected)
 		if rejection != websocketRejectionNone {
