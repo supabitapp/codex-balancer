@@ -179,10 +179,12 @@ func (s *server) forwardHTTPResponse(peer *httpResponsesDownstream, request *htt
 func (s *server) deliverHTTPEvent(peer *httpResponsesDownstream, accounting *responseAccounting, data []byte) error {
 	message, err := peer.prepare(websocketMessage{kind: websocket.MessageText, data: data})
 	if err != nil {
+		observation(accounting.ctx).invalidHTTPEvent(accounting.ctx, "prepare", data, err)
 		return errors.Join(errHTTPInvalidResponse, err)
 	}
 	var event websocketEnvelope
 	if err := json.Unmarshal(message.data, &event); err != nil {
+		observation(accounting.ctx).invalidHTTPEvent(accounting.ctx, "envelope_decode", message.data, err)
 		return errors.Join(errHTTPInvalidResponse, err)
 	}
 	headers := websocketEventHeaders(event.Headers)
