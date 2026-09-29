@@ -1,6 +1,9 @@
 package app
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
 
 // Upstream overloads top-level status: error events use numeric HTTP codes,
 // while response events can use lifecycle strings. The accounting envelope
@@ -15,6 +18,10 @@ func (s *responseEventStatus) UnmarshalJSON(data []byte) error {
 			return err
 		}
 	} else if err := json.Unmarshal(data, &code); err != nil {
+		var mismatch *json.UnmarshalTypeError
+		if errors.As(err, &mismatch) {
+			mismatch.Field = "status"
+		}
 		return err
 	}
 	*s = responseEventStatus(code)
