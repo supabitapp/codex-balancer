@@ -454,7 +454,7 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: resetAt, seenAt: now}
 	other := testAccount("account-b", 20)
 	stats := newStatsWithPrices(testPriceSnapshot(t))
-	stats.applyUsageAt(resetAt.Add(-7*24*time.Hour), "", "account-a", "gpt-5.6-sol", "", "default", responseUsage{InputTokens: 12_345_600})
+	stats.applyUsageAt(calendarMonthStart(now), "", "account-a", "gpt-5.6-sol", "", "default", responseUsage{InputTokens: 12_345_600})
 	stats.applyRouted(now.Add(-25*time.Hour), "", "", "account-a", "", "", "", turnMetadata{})
 	stats.applyRouted(now, "", "", "account-a", "", "", "", turnMetadata{})
 	for range 100 {
@@ -467,12 +467,12 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatalf("accounts = %d, want two", len(view.Accounts))
 	}
 	accountView := view.Accounts[0]
-	wantValueInfo := "Estimated from usage routed here since " + resetAt.Add(-7*24*time.Hour).Format("2 January 2006, 15:04 MST") + " at $0.04 per credit."
-	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.RoutedValue != "$49.38" || accountView.RoutedValueInfo != wantValueInfo || accountView.Traffic != "1" {
+	wantValueInfo := calendarMonthStart(now).Format("From Jan 2") + ". Prices from models.dev, updated " + stats.prices.fetchedAt.In(now.Location()).Format("2 January 2006, 15:04 MST")
+	if accountView.Weekly != "80" || accountView.Banked != "" || accountView.MonthlyBurn != "$123.46" || accountView.MonthlyBurnInfo != wantValueInfo || accountView.Traffic != "1" {
 		t.Fatalf("account values = %+v", accountView)
 	}
-	if view.Accounts[1].RoutedValue != "--" || view.Accounts[1].RoutedValueInfo != "No usage routed in this reset window." {
-		t.Fatalf("unknown credit burn = %+v", view.Accounts[1])
+	if view.Accounts[1].MonthlyBurn != "$0.00" || view.Accounts[1].MonthlyBurnInfo != wantValueInfo {
+		t.Fatalf("unused account burn = %+v", view.Accounts[1])
 	}
 	if view.Accounts[1].Traffic != "99" {
 		t.Fatalf("other account traffic = %q, want 99", view.Accounts[1].Traffic)
@@ -482,12 +482,12 @@ func TestDashboardAccountValuesOmitRedundantUnitsAndZeros(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{"<th>Weekly %</th>", "<th>Burnt since last reset</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">$49.38</span>"} {
+	for _, expected := range []string{"<th>Weekly %</th>", "<th>Burnt this month</th>", "<th>Traffic 24h %</th>", "<th>Activity 24h</th>", ">$123.46</span>"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
 	}
-	for _, removed := range []string{"<th>Turns</th>", "<th>Limits 24h</th>"} {
+	for _, removed := range []string{"<th>Turns</th>", "<th>Limits 24h</th>", "Burnt since last reset"} {
 		if strings.Contains(body, removed) {
 			t.Fatalf("dashboard contains removed column %q", removed)
 		}
@@ -731,6 +731,29 @@ func TestDashboardExplainsManualRoutingStatus(t *testing.T) {
 	view := server.currentDashboard(now)
 	if len(view.Accounts) != 1 || view.Accounts[0].StatusInfo != "Manual priority for new connections." {
 		t.Fatalf("account view = %+v", view.Accounts)
+	}
+}
+
+func TestDashboardMonthlyBurnWithoutResetWindow(t *testing.T) {
+	now := time.Now()
+	account := testAccount("account", 0)
+	account.primary, account.secondary = window{}, window{}
+	stats := newStatsWithPrices(testPriceSnapshot(t))
+	stats.applyUsageAt(calendarMonthStart(now), "", "account", "gpt-5.4-mini", "", "default", responseUsage{InputTokens: 1_000, OutputTokens: 100})
+	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: stats}
+	view := server.currentDashboard(now)
+	if got := view.Accounts[0]; got.MonthlyBurn != "$0.0012" || got.ResetIn != "--" {
+		t.Fatalf("account monthly burn without reset = %+v", got)
+	}
+	for _, metric := range view.Overview {
+		if metric.Name == "USD burnt this month" && metric.Value != view.Accounts[0].MonthlyBurn {
+			t.Fatalf("account burn %q differs from total %q", view.Accounts[0].MonthlyBurn, metric.Value)
+		}
+	}
+	stats.applyUsageAt(now, "", "account", "unknown", "", "default", responseUsage{InputTokens: 100})
+	view = server.currentDashboard(now)
+	if got := view.Accounts[0]; got.MonthlyBurn != "--" || !strings.Contains(got.MonthlyBurnInfo, "Some responses have no available price.") {
+		t.Fatalf("unpriced monthly burn = %+v", got)
 	}
 }
 

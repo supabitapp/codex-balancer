@@ -9,7 +9,6 @@ import (
 const (
 	nanoCreditsPerCredit = 1_000_000_000
 	routedCreditHistory  = 8 * 24 * time.Hour
-	usdPerCodexCredit    = 0.04
 )
 
 type creditRates struct {

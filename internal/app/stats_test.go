@@ -349,6 +349,9 @@ func TestCatalogRefreshRepricesMonthlyUsageWithoutPersistingThreadHistory(t *tes
 	if before.apiCostNanoDollars != 0 || before.unpricedResponses != 1 {
 		t.Fatalf("thread cost before refresh = %d with %d unpriced", before.apiCostNanoDollars, before.unpricedResponses)
 	}
+	if account := stats.snapshot().Accounts["account"]; account.APICostNanoDollars != 0 || account.UnpricedResponses != 1 {
+		t.Fatalf("account cost before refresh = %+v, want one unpriced", account)
+	}
 
 	prices := testPriceSnapshot(t)
 	if err := stats.reprice(prices); err != nil {
@@ -366,6 +369,45 @@ func TestCatalogRefreshRepricesMonthlyUsageWithoutPersistingThreadHistory(t *tes
 	if len(monthly.ModelCosts) != 1 || monthly.ModelCosts[0] != (ModelCostSnapshot{Model: "gpt-5.4", APICostNanoDollars: want}) {
 		t.Fatalf("monthly model costs after refresh = %+v, want gpt-5.4 cost %d", monthly.ModelCosts, want)
 	}
+	if account := monthly.Accounts["account"]; account.APICostNanoDollars != want || account.UnpricedResponses != 0 {
+		t.Fatalf("account cost after refresh = %+v, want %d with none unpriced", account, want)
+	}
+}
+
+func TestMonthlyAccountCostsMatchTotal(t *testing.T) {
+	prices := testPriceSnapshot(t)
+	stats := newStatsWithPrices(prices)
+	now := time.Now()
+	usage := responseUsage{InputTokens: 300_000, OutputTokens: 10_000}
+	usage.InputDetails.CachedTokens = 100_000
+	usage.InputDetails.CacheWriteTokens = 50_000
+	stats.applyUsageAt(calendarMonthStart(now).Add(-time.Second), "", "account-a", "old-unknown", "", "default", usage)
+	stats.applyUsageAt(calendarMonthStart(now), "", "account-a", "gpt-5.6-sol", "", "default", usage)
+	stats.applyUsageAt(now, "", "account-a", "gpt-5.6-sol", "", "priority", usage)
+	stats.applyUsageAt(now, "", "account-b", "gpt-5.4-mini", "", "default", usage)
+	stats.applyUsageAt(now, "", "account-c", "unknown", "", "default", usage)
+	snapshot := stats.snapshot()
+	standard, _ := prices.estimate("gpt-5.6-sol", "default", usage)
+	fast, _ := prices.estimate("gpt-5.6-sol", "priority", usage)
+	mini, _ := prices.estimate("gpt-5.4-mini", "default", usage)
+	for id, want := range map[string]usageCost{
+		"account-a": {apiCostNanoDollars: standard + fast},
+		"account-b": {apiCostNanoDollars: mini},
+		"account-c": {unpricedResponses: 1},
+	} {
+		account := snapshot.Accounts[id]
+		if account.APICostNanoDollars != want.apiCostNanoDollars || account.UnpricedResponses != want.unpricedResponses {
+			t.Fatalf("%s monthly cost = %+v, want %+v", id, account, want)
+		}
+	}
+	var total, unpriced int64
+	for _, account := range snapshot.Accounts {
+		total += account.APICostNanoDollars
+		unpriced += account.UnpricedResponses
+	}
+	if total != snapshot.APICostNanoDollars || unpriced != snapshot.UnpricedResponses {
+		t.Fatalf("account sum = %d with %d unpriced, total = %d with %d unpriced", total, unpriced, snapshot.APICostNanoDollars, snapshot.UnpricedResponses)
+	}
 }
 
 func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
@@ -374,12 +416,13 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	previousMonth := time.Date(2026, time.July, 31, 23, 59, 0, 0, time.UTC)
 	currentMonth := previousMonth.Add(time.Minute)
 	stats.usageMonth = calendarMonth(previousMonth)
-	stats.applyUsageAt(previousMonth, "", "", "old-unknown", "", "default", responseUsage{InputTokens: 1_000})
+	stats.applyUsageAt(previousMonth, "", "old-account", "old-unknown", "", "default", responseUsage{InputTokens: 1_000})
+	stats.applyUsageAt(previousMonth, "", "account", "gpt-5.6-sol", "", "default", responseUsage{InputTokens: 1_000})
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
-	stats.applyUsageAt(currentMonth, "", "", "gpt-5.6-sol", "", "default", usage)
+	stats.applyUsageAt(currentMonth, "", "account", "gpt-5.6-sol", "", "default", usage)
 	unpricedUsage := responseUsage{InputTokens: 400, OutputTokens: 50}
-	stats.applyUsageAt(currentMonth, "", "", "unknown", "", "default", unpricedUsage)
+	stats.applyUsageAt(currentMonth, "", "account", "unknown", "", "default", unpricedUsage)
 	wantUsage := usage
 	wantUsage.InputTokens += unpricedUsage.InputTokens
 	wantUsage.OutputTokens += unpricedUsage.OutputTokens
@@ -401,5 +444,21 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	}
 	if got := stats.monthlyModelCosts["unknown"]; got.apiCostNanoDollars != 0 || got.unpricedResponses != 1 {
 		t.Fatalf("unpriced model cost = %+v, want zero with one unpriced", got)
+	}
+	if got := stats.accounts["account"].monthlyCost; got.apiCostNanoDollars != want || got.unpricedResponses != 1 {
+		t.Fatalf("account monthly cost = %+v, want %d with one unpriced", got, want)
+	}
+	if got := stats.accounts["old-account"].monthlyCost; got != (usageCost{}) {
+		t.Fatalf("inactive account retained previous month's cost: %+v", got)
+	}
+}
+
+func TestMonthlyAccountCostsResetWithoutNewUsage(t *testing.T) {
+	stats := newStatsWithPrices(testPriceSnapshot(t))
+	stats.usageMonth = calendarMonth(time.Now()) - 1
+	stats.account("account").monthlyCost = usageCost{apiCostNanoDollars: 1_000_000_000, unpricedResponses: 1}
+	account := stats.snapshot().Accounts["account"]
+	if account.APICostNanoDollars != 0 || account.UnpricedResponses != 0 {
+		t.Fatalf("account monthly cost after idle rollover = %+v, want zero", account)
 	}
 }

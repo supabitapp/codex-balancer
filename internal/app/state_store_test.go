@@ -317,12 +317,17 @@ func TestPersistentStatsRestoresCurrentMonthWithoutPruningHistory(t *testing.T) 
 	}
 	prices := testPriceSnapshot(t)
 	now := time.Now()
-	old := storedUsage{At: calendarMonthStart(now).Add(-time.Second), Model: "gpt-5.4", Usage: responseUsage{InputTokens: 10_000}}
+	old := storedUsage{At: calendarMonthStart(now).Add(-time.Second), Account: "account-a", Model: "gpt-5.4", Usage: responseUsage{InputTokens: 10_000}}
 	current := storedUsage{At: now, Account: "account-a", Model: "gpt-5.4", ServiceTier: "default", Usage: responseUsage{InputTokens: 1_000, OutputTokens: 100}}
+	early := current
+	early.At = calendarMonthStart(now)
 	if err := store.recordUsage(old); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.recordUsage(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.recordUsage(early); err != nil {
 		t.Fatal(err)
 	}
 
@@ -332,17 +337,22 @@ func TestPersistentStatsRestoresCurrentMonthWithoutPruningHistory(t *testing.T) 
 	}
 	snapshot := stats.snapshot()
 	wantUsage := current.Usage
+	wantUsage.add(early.Usage)
 	wantUsage.TotalTokens = wantUsage.InputTokens + wantUsage.OutputTokens
 	if snapshot.MonthlyUsage != wantUsage {
 		t.Fatalf("monthly usage = %+v, want %+v", snapshot.MonthlyUsage, wantUsage)
 	}
 	wantCost, _ := prices.estimate(current.Model, current.ServiceTier, current.Usage)
+	wantCost *= 2
 	if snapshot.APICostNanoDollars != wantCost {
 		t.Fatalf("monthly cost = %d, want %d", snapshot.APICostNanoDollars, wantCost)
 	}
-	credits, _, known := stats.routedCreditsSince("account-a", now.Add(-time.Hour))
-	if !known || credits != 0.1 {
-		t.Fatalf("restored routed credits = %v, %t, want 0.1", credits, known)
+	if account := snapshot.Accounts["account-a"]; account.APICostNanoDollars != wantCost || account.UnpricedResponses != 0 {
+		t.Fatalf("restored account monthly cost = %+v, want %d with none unpriced", account, wantCost)
+	}
+	credits, _, known := stats.routedCreditsSince("account-a", calendarMonthStart(now))
+	if !known || credits != 0.2 {
+		t.Fatalf("restored routed credits = %v, %t, want 0.2", credits, known)
 	}
 	if err := stats.reprice(prices); err != nil {
 		t.Fatal(err)
@@ -351,8 +361,8 @@ func TestPersistentStatsRestoresCurrentMonthWithoutPruningHistory(t *testing.T) 
 	if err := store.db.QueryRow(`SELECT count(*) FROM response_usage`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 2 {
-		t.Fatalf("retained usage rows = %d, want 2", rows)
+	if rows != 3 {
+		t.Fatalf("retained usage rows = %d, want 3", rows)
 	}
 }
 

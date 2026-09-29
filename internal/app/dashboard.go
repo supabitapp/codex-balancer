@@ -73,8 +73,8 @@ type dashboardAccountView struct {
 	Banked          string
 	BankedInfo      string
 	ResetIn         string
-	RoutedValue     string
-	RoutedValueInfo string
+	MonthlyBurn     string
+	MonthlyBurnInfo string
 	OpenWebSockets  string
 	Traffic         string
 	Activity        string
@@ -381,6 +381,10 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	s.countries.refresh(snapshot.Threads)
 	stats := s.statsResponseAt(now, snapshot)
 	monthInfo := calendarMonthStart(now).Format("From Jan 2")
+	priceInfo := monthInfo
+	if !snapshot.PriceFetchedAt.IsZero() {
+		priceInfo += ". Prices from models.dev, updated " + snapshot.PriceFetchedAt.In(now.Location()).Format("2 January 2006, 15:04 MST")
+	}
 	counts := map[accountStatus]int{}
 	names := make(map[string]string, len(stats.Accounts))
 	accounts := make([]dashboardAccountView, 0, len(stats.Accounts))
@@ -405,11 +409,10 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			banked = dashboardNumber(*account.BankedResets)
 		}
 		bankedInfo := dashboardResetInfo(now, account.ResetCredits)
-		routedValue := "--"
-		routedValueInfo := "No usage routed in this reset window."
-		if account.RoutedCredits != nil && account.RoutedCreditsSince != nil {
-			routedValue = formatCreditValue(*account.RoutedCredits)
-			routedValueInfo = fmt.Sprintf("Estimated from usage routed here since %s at $%.2f per credit.", account.RoutedCreditsSince.In(now.Location()).Format("2 January 2006, 15:04 MST"), usdPerCodexCredit)
+		usage := snapshot.Accounts[account.ID]
+		monthlyBurnInfo := priceInfo
+		if usage.UnpricedResponses > 0 {
+			monthlyBurnInfo = "Some responses have no available price. " + monthlyBurnInfo
 		}
 		accounts = append(accounts, dashboardAccountView{
 			DOMID:           dashboardDOMID("account", account.ID),
@@ -421,8 +424,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Banked:          banked,
 			BankedInfo:      bankedInfo,
 			ResetIn:         account.ResetIn,
-			RoutedValue:     routedValue,
-			RoutedValueInfo: routedValueInfo,
+			MonthlyBurn:     formatAPIPrice(usage.APICostNanoDollars, usage.UnpricedResponses),
+			MonthlyBurnInfo: monthlyBurnInfo,
 			OpenWebSockets:  dashboardNumber(account.OpenWebSockets),
 			Traffic:         dashboardNumber(account.Traffic24hPercent),
 			Activity:        sparkline(account.Activity),
@@ -464,10 +467,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		})
 	}
 
-	priceInfo := monthInfo
-	if !snapshot.PriceFetchedAt.IsZero() {
-		priceInfo += ". Prices from models.dev, updated " + snapshot.PriceFetchedAt.In(now.Location()).Format("2 January 2006, 15:04 MST")
-	}
 	if modelCosts := formatModelCosts(snapshot.ModelCosts); modelCosts != "" {
 		priceInfo = modelCosts + "\n" + priceInfo
 	}
@@ -496,10 +495,6 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		Threads:    threadViews,
 		Events:     events,
 	}
-}
-
-func formatCreditValue(credits float64) string {
-	return fmt.Sprintf("$%.2f", credits*usdPerCodexCredit)
 }
 
 func newDashboardWorkspaceView(now time.Time, name string, account accountStatsResponse) dashboardWorkspaceView {

@@ -84,20 +84,21 @@ func TestDashboardTitleIncludesSelfServeBusinessProlite(t *testing.T) {
 	}
 }
 
-func TestAccountTableShowsRoutedValue(t *testing.T) {
+func TestAccountTableShowsMonthlyBurnWithoutResetWindow(t *testing.T) {
 	now := time.Now()
 	account := testAccount("account-a", 20)
-	account.secondary = window{usedPercent: 20, minutes: 7 * 24 * 60, resetsAt: now.Add(3 * 24 * time.Hour), seenAt: now}
+	account.primary, account.secondary = window{}, window{}
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.applyUsageAt(now, "", "account-a", "gpt-5.6-sol", "", "default", responseUsage{InputTokens: 12_345_600})
 	dashboard := dashboard{
 		pool:  &Pool{accounts: []*Account{account}},
 		stats: stats,
+		snap:  stats.snapshot(),
 		width: 160,
 	}
 
 	rendered := dashboard.accounts(1)
-	for _, expected := range []string{"Burnt since last reset", "$49.38"} {
+	for _, expected := range []string{"Burnt this month", "$123.46"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("account table missing %q:\n%s", expected, rendered)
 		}

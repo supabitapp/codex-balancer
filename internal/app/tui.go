@@ -273,12 +273,12 @@ func (d dashboard) accounts(limit int) string {
 	weeklyW := 6
 	bankedW := 6
 	resetW := 8
-	routedValueW := 22
+	monthlyBurnW := 16
 	wsW := 2
 	trafficW := 7
 	limitsW := 6
 
-	fixedCols := planW + statusW + weeklyW + bankedW + resetW + routedValueW + wsW + trafficW + limitsW + 10*gap + 2
+	fixedCols := planW + statusW + weeklyW + bankedW + resetW + monthlyBurnW + wsW + trafficW + limitsW + 10*gap + 2
 	nameW = min(nameW, max(9, d.width-fixedCols-8))
 	activityW := d.width - fixedCols - nameW
 
@@ -291,7 +291,7 @@ func (d dashboard) accounts(limit int) string {
 		styles.section.Render(fit("Weekly", weeklyW)),
 		styles.section.Render(fit("Banked", bankedW)),
 		styles.section.Render(fit("Reset in", resetW)),
-		styles.section.Render(fit("Burnt since last reset", routedValueW)),
+		styles.section.Render(fit("Burnt this month", monthlyBurnW)),
 		styles.section.Render(fit("WS", wsW)),
 		styles.section.Render(fit("Traffic", trafficW)),
 		styles.section.Render(fit("Limits", limitsW)),
@@ -330,13 +330,10 @@ func (d dashboard) accounts(limit int) string {
 			status = styles.warn.Render(fit("◆ priority", statusW))
 		}
 
-		routedValue := "--"
-		routedValueStyle := styles.dim
-		if start, known := creditCycleStart(now, primary, secondary); known {
-			if routed, _, known := d.stats.routedCreditsSince(a.id(), start); known {
-				routedValue = formatCreditValue(routed)
-				routedValueStyle = styles.num
-			}
+		monthlyBurn := formatAPIPrice(stat.APICostNanoDollars, stat.UnpricedResponses)
+		monthlyBurnStyle := styles.num
+		if stat.UnpricedResponses > 0 {
+			monthlyBurnStyle = styles.dim
 		}
 		websockets := ""
 		if stat.WSOpen > 0 {
@@ -388,7 +385,7 @@ func (d dashboard) accounts(limit int) string {
 			weeklyCell,
 			banked,
 			reset,
-			routedValueStyle.Render(fit(routedValue, routedValueW)),
+			monthlyBurnStyle.Render(fit(monthlyBurn, monthlyBurnW)),
 			styles.good.Render(fit(websockets, wsW)),
 			styles.dim.Render(fit(traffic, trafficW)),
 			styles.bad.Render(fit(limits, limitsW)),
