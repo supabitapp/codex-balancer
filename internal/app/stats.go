@@ -725,6 +725,7 @@ type accountStatsResponse struct {
 	ID                     string                        `json:"id"`
 	Email                  string                        `json:"email,omitempty"`
 	Plan                   string                        `json:"plan"`
+	Subscription           *subscriptionStatsResponse    `json:"subscription,omitempty"`
 	Status                 accountStatus                 `json:"status"`
 	RoutingMode            routingMode                   `json:"routing_mode"`
 	RoutingPriority        *routingPriorityStatsResponse `json:"routing_priority,omitempty"`
@@ -742,6 +743,28 @@ type accountStatsResponse struct {
 	Activity               []int64                       `json:"activity"`
 	Traffic24hPercent      int64                         `json:"traffic_24h_percent"`
 	MonthlyAPICost         string                        `json:"monthly_api_cost"`
+}
+
+// Sign-in claims report the subscription period, not whether it will renew.
+type subscriptionStatsResponse struct {
+	ActiveUntil time.Time  `json:"active_until"`
+	LastChecked *time.Time `json:"last_checked,omitempty"`
+}
+
+func subscriptionStats(claims authClaims, plan string) *subscriptionStatsResponse {
+	// Usage can report a plan change before the next sign-in token refresh.
+	if claims.Auth.Plan != plan || plan == "" || plan == "free" {
+		return nil
+	}
+	until, err := time.Parse(time.RFC3339Nano, claims.Auth.SubscriptionActiveUntil)
+	if err != nil || until.IsZero() {
+		return nil
+	}
+	out := &subscriptionStatsResponse{ActiveUntil: until}
+	if checked, err := time.Parse(time.RFC3339Nano, claims.Auth.SubscriptionLastChecked); err == nil && !checked.IsZero() {
+		out.LastChecked = &checked
+	}
+	return out
 }
 
 type spendControlStatsResponse struct {
@@ -837,6 +860,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			ID:                     claims.Auth.AccountID,
 			Email:                  maskEmail(claims.Email),
 			Plan:                   plan,
+			Subscription:           subscriptionStats(claims, plan),
 			Status:                 status,
 			RoutingMode:            candidate.mode,
 			RoutingPriority:        routingPriority,

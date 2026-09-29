@@ -67,6 +67,7 @@ type dashboardAccountView struct {
 	DOMID           string
 	Name            string
 	Plan            string
+	PlanInfo        string
 	Status          accountStatus
 	StatusInfo      string
 	Weekly          string
@@ -84,6 +85,7 @@ type dashboardWorkspaceView struct {
 	DOMID       string
 	Name        string
 	Plan        string
+	PlanInfo    string
 	Status      accountStatus
 	StatusInfo  string
 	Limit       string
@@ -418,6 +420,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			DOMID:           dashboardDOMID("account", account.ID),
 			Name:            name,
 			Plan:            account.Plan,
+			PlanInfo:        dashboardPlanInfo(now, account.Subscription),
 			Status:          account.Status,
 			StatusInfo:      dashboardAccountStatusInfo(now, account),
 			Weekly:          weekly,
@@ -502,6 +505,7 @@ func newDashboardWorkspaceView(now time.Time, name string, account accountStatsR
 		DOMID:       dashboardDOMID("workspace", account.ID),
 		Name:        name,
 		Plan:        account.Plan,
+		PlanInfo:    dashboardPlanInfo(now, account.Subscription),
 		Status:      account.Status,
 		StatusInfo:  dashboardAccountStatusInfo(now, account),
 		Limit:       "--",
@@ -522,6 +526,17 @@ func newDashboardWorkspaceView(now time.Time, name string, account accountStatsR
 		}
 	}
 	return view
+}
+
+func dashboardPlanInfo(now time.Time, subscription *subscriptionStatsResponse) string {
+	if subscription == nil {
+		return ""
+	}
+	label := "Subscription period ends: "
+	if !subscription.ActiveUntil.After(now) {
+		label = "Last reported subscription period ended: "
+	}
+	return label + subscription.ActiveUntil.In(now.Location()).Format("2 January 2006, 15:04 MST")
 }
 
 func dashboardSpendAmount(value string) string {

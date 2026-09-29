@@ -252,8 +252,10 @@ func (a *Account) applyPersisted(next accountState) bool {
 type authClaims struct {
 	Email string `json:"email"`
 	Auth  struct {
-		AccountID string `json:"chatgpt_account_id"`
-		Plan      string `json:"chatgpt_plan_type"`
+		AccountID               string `json:"chatgpt_account_id"`
+		Plan                    string `json:"chatgpt_plan_type"`
+		SubscriptionActiveUntil string `json:"chatgpt_subscription_active_until"`
+		SubscriptionLastChecked string `json:"chatgpt_subscription_last_checked"`
 	} `json:"https://api.openai.com/auth"`
 }
 
