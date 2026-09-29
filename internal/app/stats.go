@@ -741,6 +741,7 @@ type accountStatsResponse struct {
 	RateLimits             int64                         `json:"rate_limits"`
 	Activity               []int64                       `json:"activity"`
 	Traffic24hPercent      int64                         `json:"traffic_24h_percent"`
+	MonthlyAPICost         string                        `json:"monthly_api_cost"`
 }
 
 type spendControlStatsResponse struct {
@@ -851,6 +852,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			OpenWebSockets:         traffic.WSOpen,
 			RateLimits:             traffic.Limited,
 			Activity:               append([]int64{}, traffic.Activity...),
+			MonthlyAPICost:         formatAPIPrice(traffic.APICostNanoDollars, traffic.UnpricedResponses),
 		})
 	}
 	traffic := trafficPercentages(out.Accounts)

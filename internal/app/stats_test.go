@@ -97,6 +97,35 @@ func TestStatsEndpointReportsTrafficAndResetCountdown(t *testing.T) {
 	}
 }
 
+func TestStatsEndpointReportsMonthlyCostPerAccount(t *testing.T) {
+	now := time.Now()
+	stats := newStatsWithPrices(testPriceSnapshot(t))
+	stats.applyUsageAt(calendarMonthStart(now), "", "account-a", "gpt-5.6-sol", "", "default", responseUsage{InputTokens: 12_345_600})
+	stats.applyUsageAt(now, "", "account-b", "unknown", "", "default", responseUsage{InputTokens: 1_000})
+	server := &server{pool: &Pool{accounts: []*Account{
+		testAccount("account-a", 20),
+		testAccount("account-b", 20),
+		testAccount("account-c", 20),
+	}}, stats: stats}
+	request := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	response := httptest.NewRecorder()
+	server.routes().ServeHTTP(response, request)
+	var payload statsResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	costs := make(map[string]string, len(payload.Accounts))
+	for _, account := range payload.Accounts {
+		costs[account.ID] = account.MonthlyAPICost
+	}
+	if costs["account-a"] != "$123.46" || costs["account-b"] != "--" || costs["account-c"] != "$0.00" {
+		t.Fatalf("monthly account costs = %+v", costs)
+	}
+}
+
 func TestSnapshotKeepsThreadsUntilTheirLastLiveReferenceCloses(t *testing.T) {
 	stats := newStatsWithPrices(priceSnapshot{})
 	now := time.Now()
