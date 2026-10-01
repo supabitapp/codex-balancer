@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -214,8 +213,11 @@ func TestAdminSessionExpiryAndLoginThrottle(t *testing.T) {
 	hash := enableTestAdmin(t, srv)
 	h := srv.routes()
 	now := time.Now()
-	token, session := srv.admin.newSession(hash, now)
-	if _, ok := srv.admin.session(token, hash, session.expires); ok {
+	token, session, err := srv.newAdminSession(hash, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := srv.adminSession(token, hash, session.expires); err != nil || ok {
 		t.Fatal("expired session accepted")
 	}
 	for i := 0; i < 10; i++ {
@@ -444,8 +446,10 @@ func TestAdminSessionDoesNotTrustAPIKeys(t *testing.T) {
 	if response.Code != 303 {
 		t.Fatal("inference key granted admin access")
 	}
-	token, session := srv.admin.newSession(hash, time.Now())
-	srv.admin.sessions[sha256.Sum256([]byte(token))] = adminSession{csrf: session.csrf, credential: hash, expires: time.Now().Add(-time.Second)}
+	token, _, err := srv.newAdminSession(hash, time.Now().Add(-adminSessionTTL-time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
 	request = httptest.NewRequest("GET", "https://balancer.test/admin/events", nil)
 	request.Header.Set("HX-Request", "true")
 	request.AddCookie(&http.Cookie{Name: "__Host-cb-admin", Value: token})
@@ -718,8 +722,48 @@ func TestAdminDashboardUnveilsPrivateData(t *testing.T) {
 		}
 	}
 
-	srv.admin.logout(cookie.Value)
+	if err := srv.endAdminSession(cookie.Value); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := io.Copy(io.Discard, response.Body); err != nil {
 		t.Fatalf("admin stream did not end after logout: %v", err)
+	}
+}
+
+func TestAdminSessionSurvivesRestartAndRenews(t *testing.T) {
+	srv := newTestServer(t, nil)
+	hash := enableTestAdmin(t, srv)
+	cookie, _ := loginTestAdmin(t, srv.routes())
+	if cookie.MaxAge != int(adminSessionTTL.Seconds()) {
+		t.Fatalf("session cookie max age = %d", cookie.MaxAge)
+	}
+	restarted := &server{ctx: srv.ctx, pool: srv.pool, catalog: newModelCatalog(), stats: srv.stats, log: srv.log}
+	page := adminRequest(restarted.routes(), "GET", "/admin", nil, cookie)
+	if page.Code != http.StatusOK {
+		t.Fatalf("session did not survive restart: status=%d", page.Code)
+	}
+	if len(page.Result().Cookies()) != 0 {
+		t.Fatal("fresh session renewed early")
+	}
+
+	id := adminDigest(cookie.Value)
+	if err := srv.pool.store.raw.ExtendAdminSession(id, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	page = adminRequest(restarted.routes(), "GET", "/admin", nil, cookie)
+	renewed := page.Result().Cookies()
+	if page.Code != http.StatusOK || len(renewed) != 1 || renewed[0].Value != cookie.Value || renewed[0].MaxAge != int(adminSessionTTL.Seconds()) {
+		t.Fatalf("session not renewed: status=%d cookies=%v", page.Code, renewed)
+	}
+	session, ok, err := restarted.adminSession(cookie.Value, hash, time.Now())
+	if err != nil || !ok || time.Until(session.expires) < adminSessionTTL-time.Minute {
+		t.Fatalf("stored expiry not extended: %v ok=%t err=%v", session.expires, ok, err)
+	}
+
+	if err := srv.pool.store.raw.SetAdminPasswordHash(hash); err != nil {
+		t.Fatal(err)
+	}
+	if got := adminRequest(restarted.routes(), "GET", "/admin", nil, cookie).Code; got != http.StatusSeeOther {
+		t.Fatalf("session survived password reset: status=%d", got)
 	}
 }

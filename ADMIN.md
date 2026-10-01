@@ -48,8 +48,12 @@ Admin access starts disabled until a password is set. Client inference API
 keys do not grant admin access. Serve the admin interface over HTTPS; plain
 HTTP cookies are allowed only for direct loopback development.
 
-Admin sessions are kept in server memory and expire after 12 hours. Server
-restarts, password resets, and disabling access end existing sessions. Cookies
+Admin sessions are stored in `admin_sessions` in the same database, so they
+survive restarts and deploys and are shared by servers using that database.
+Only a SHA-256 digest of each session token is stored. A session lasts 30 days
+and extends to 30 days again on use once a day has passed, so an admin who
+visits at least monthly stays signed in. Signing out, password resets, and
+disabling access end sessions; at most 128 are kept, dropping the oldest. Cookies
 are host-only, HttpOnly, Secure, and SameSite=Strict in production. Forms use
 CSRF tokens and reject cross-site submissions. Login attempts are limited to
 10 per minute across the server to bound password-hashing work, including

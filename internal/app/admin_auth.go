@@ -12,68 +12,88 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	statepkg "github.com/supabitapp/codex-balancer/internal/state"
 )
 
-const adminSessionTTL = 12 * time.Hour
+const (
+	adminSessionTTL     = 30 * 24 * time.Hour
+	adminSessionRenewal = 24 * time.Hour
+	adminSessionLimit   = 128
+)
 
 type adminSession struct {
-	csrf       string
-	credential string
-	expires    time.Time
+	id      []byte
+	csrf    string
+	expires time.Time
 }
 
 type adminAuth struct {
 	mu            sync.Mutex
-	sessions      map[[32]byte]adminSession
 	loginWindow   time.Time
 	loginAttempts int
 }
 
 func adminRandomToken() string { return rand.Text() }
 
-func (a *adminAuth) newSession(credential string, now time.Time) (string, adminSession) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.sessions == nil {
-		a.sessions = make(map[[32]byte]adminSession)
-	}
-	for id, session := range a.sessions {
-		if !now.Before(session.expires) {
-			delete(a.sessions, id)
-		}
-	}
-	if len(a.sessions) >= 128 {
-		var oldest [32]byte
-		oldestAt := now.Add(adminSessionTTL)
-		for id, session := range a.sessions {
-			if !session.expires.After(oldestAt) {
-				oldest, oldestAt = id, session.expires
-			}
-		}
-		delete(a.sessions, oldest)
-	}
+func adminDigest(value string) []byte {
+	digest := sha256.Sum256([]byte(value))
+	return digest[:]
+}
+
+func (s *server) newAdminSession(credential string, now time.Time) (string, adminSession, error) {
 	token := adminRandomToken()
-	session := adminSession{csrf: adminRandomToken(), credential: credential, expires: now.Add(adminSessionTTL)}
-	a.sessions[sha256.Sum256([]byte(token))] = session
-	return token, session
+	session := adminSession{id: adminDigest(token), csrf: adminRandomToken(), expires: now.Add(adminSessionTTL)}
+	err := s.pool.store.raw.CreateAdminSession(statepkg.AdminSession{
+		ID:         session.id,
+		CSRF:       session.csrf,
+		Credential: adminDigest(credential),
+		ExpiresAt:  session.expires,
+	}, now, adminSessionLimit)
+	return token, session, err
 }
 
-func (a *adminAuth) session(token, credential string, now time.Time) (adminSession, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	id := sha256.Sum256([]byte(token))
-	session, ok := a.sessions[id]
-	if !ok || credential == "" || session.credential != credential || !now.Before(session.expires) {
-		delete(a.sessions, id)
-		return adminSession{}, false
+func (s *server) adminSession(token, credential string, now time.Time) (adminSession, bool, error) {
+	if token == "" || credential == "" {
+		return adminSession{}, false, nil
 	}
-	return session, true
+	id := adminDigest(token)
+	stored, ok, err := s.pool.store.raw.AdminSession(id)
+	if err != nil || !ok {
+		return adminSession{}, false, err
+	}
+	if subtle.ConstantTimeCompare(stored.Credential, adminDigest(credential)) != 1 || !now.Before(stored.ExpiresAt) {
+		return adminSession{}, false, s.pool.store.raw.DeleteAdminSession(id)
+	}
+	return adminSession{id: id, csrf: stored.CSRF, expires: stored.ExpiresAt}, true, nil
 }
 
-func (a *adminAuth) logout(token string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	delete(a.sessions, sha256.Sum256([]byte(token)))
+func (s *server) endAdminSession(token string) error {
+	if token == "" {
+		return nil
+	}
+	return s.pool.store.raw.DeleteAdminSession(adminDigest(token))
+}
+
+func (s *server) renewAdminSession(w http.ResponseWriter, r *http.Request, token string, session *adminSession, now time.Time) error {
+	if session.expires.Sub(now) > adminSessionTTL-adminSessionRenewal {
+		return nil
+	}
+	expires := now.Add(adminSessionTTL)
+	if err := s.pool.store.raw.ExtendAdminSession(session.id, expires); err != nil {
+		return err
+	}
+	session.expires = expires
+	setAdminSessionCookie(w, r, token, expires)
+	return nil
+}
+
+func setAdminSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
+	cookie := adminCookie(r, false)
+	cookie.Value = token
+	cookie.MaxAge = int(adminSessionTTL.Seconds())
+	cookie.Expires = expires
+	http.SetCookie(w, cookie)
 }
 
 // A global bound also limits password-hashing work behind a reverse proxy,
@@ -176,7 +196,13 @@ func (s *server) requireAdmin(next func(http.ResponseWriter, *http.Request, admi
 		if !ok {
 			return
 		}
-		session, ok := s.admin.session(adminCookieValue(r, false), hash, time.Now())
+		now := time.Now()
+		token := adminCookieValue(r, false)
+		session, ok, err := s.adminSession(token, hash, now)
+		if err != nil {
+			s.adminError(w, r, err)
+			return
+		}
 		if !ok {
 			clearAdminCookie(w, r, false)
 			if r.Header.Get("HX-Request") == "true" {
@@ -191,6 +217,10 @@ func (s *server) requireAdmin(next func(http.ResponseWriter, *http.Request, admi
 			http.Error(w, "This form has expired. Reload the admin page and try again.", http.StatusForbidden)
 			return
 		}
+		if err := s.renewAdminSession(w, r, token, &session, now); err != nil {
+			s.adminError(w, r, err)
+			return
+		}
 		next(w, r, session)
 	}
 }
@@ -200,7 +230,7 @@ func (s *server) adminLoginPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := s.admin.session(adminCookieValue(r, false), hash, time.Now()); ok {
+	if _, ok, err := s.adminSession(adminCookieValue(r, false), hash, time.Now()); err == nil && ok {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 		return
 	}
@@ -235,20 +265,26 @@ func (s *server) adminLogin(w http.ResponseWriter, r *http.Request) {
 		s.showAdminLogin(w, r, hash, http.StatusUnauthorized, "Incorrect password.")
 		return
 	}
-	s.admin.logout(adminCookieValue(r, false))
-	token, session := s.admin.newSession(hash, time.Now())
-	cookie := adminCookie(r, false)
-	cookie.Value = token
-	cookie.MaxAge = int(adminSessionTTL.Seconds())
-	cookie.Expires = session.expires
-	http.SetCookie(w, cookie)
+	if err := s.endAdminSession(adminCookieValue(r, false)); err != nil {
+		s.adminError(w, r, err)
+		return
+	}
+	token, session, err := s.newAdminSession(hash, time.Now())
+	if err != nil {
+		s.adminError(w, r, err)
+		return
+	}
+	setAdminSessionCookie(w, r, token, session.expires)
 	clearAdminCookie(w, r, true)
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
 func (s *server) adminLogout(w http.ResponseWriter, r *http.Request, _ adminSession) {
-	s.admin.logout(adminCookieValue(r, false))
 	clearAdminCookie(w, r, false)
+	if err := s.endAdminSession(adminCookieValue(r, false)); err != nil {
+		s.adminError(w, r, err)
+		return
+	}
 	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 }
 

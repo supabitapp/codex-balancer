@@ -42,7 +42,7 @@ func TestStateStoreCreatesOnlyMinimalSchema(t *testing.T) {
 		}
 		tables = append(tables, table)
 	}
-	wantTables := []string{"accounts", "api_keys", "response_usage", "routes", "settings"}
+	wantTables := []string{"accounts", "admin_sessions", "api_keys", "response_usage", "routes", "settings"}
 	if !reflect.DeepEqual(tables, wantTables) {
 		t.Fatalf("tables = %v, want %v", tables, wantTables)
 	}
@@ -52,6 +52,7 @@ func TestStateStoreCreatesOnlyMinimalSchema(t *testing.T) {
 		"api_keys":       {"name", "secret", "created_at_ns", "revoked_at_ns"},
 		"response_usage": {"id", "api_key_name", "at_ns", "model", "service_tier", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens", "account_id"},
 		"routes":         {"key", "account_id", "updated_at_ns"},
+		"admin_sessions": {"id", "csrf", "credential", "expires_at_ns"},
 	}
 	for table, want := range wantColumns {
 		got := tableColumns(t, store, table)

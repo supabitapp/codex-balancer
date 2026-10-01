@@ -176,8 +176,8 @@ func (s *server) adminSessionActive(token string, now time.Time) bool {
 	if err != nil || hash == "" {
 		return false
 	}
-	_, ok := s.admin.session(token, hash, now)
-	return ok
+	_, ok, err := s.adminSession(token, hash, now)
+	return err == nil && ok
 }
 
 func (s *server) adminEvents(w http.ResponseWriter, r *http.Request, session adminSession) {
