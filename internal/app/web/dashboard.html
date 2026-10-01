@@ -132,6 +132,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Status</th>
 <th>Weekly %</th>
 <th>Banked</th>
+<th>Credits</th>
 <th>Reset in</th>
 <th>Burnt this month</th>
 <th>WS</th>
@@ -144,6 +145,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 {{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span id="{{.DOMID}}-status" class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
 <td>{{.Weekly}}</td>
 <td>{{if .BankedInfo}}<span id="{{.DOMID}}-banked" class="has-tooltip" data-tooltip="{{.BankedInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Banked}}</span>{{else}}{{.Banked}}{{end}}</td>
+<td>{{if .CreditsInfo}}<span id="{{.DOMID}}-credits" class="has-tooltip" data-tooltip="{{.CreditsInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Credits}}</span>{{else}}{{.Credits}}{{end}}</td>
 <td class="dim">{{.ResetIn}}</td>
 <td>{{if .MonthlyBurnInfo}}<span id="{{.DOMID}}-monthly-burn" class="has-tooltip" data-tooltip="{{.MonthlyBurnInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.MonthlyBurn}}</span>{{else}}{{.MonthlyBurn}}{{end}}</td>
 <td>{{.OpenWebSockets}}</td>
@@ -160,6 +162,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <th>Plan</th>
 <th>Status</th>
 <th>Credit limit</th>
+<th>Credits</th>
 <th>Used</th>
 <th>Remaining</th>
 <th>Used %</th>
@@ -170,6 +173,7 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
 <td class="dim">{{if .PlanInfo}}<span id="{{.DOMID}}-plan" class="has-tooltip" data-tooltip="{{.PlanInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{dashboardPlan .Plan}}</span>{{else}}{{dashboardPlan .Plan}}{{end}}</td>
 {{$status := dashboardStatus .Status}}<td class="status">{{if .StatusInfo}}<span id="{{.DOMID}}-status" class="has-tooltip" data-tooltip="{{.StatusInfo}}" aria-describedby="dashboard-tooltip" tabindex="0"><span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}</span>{{else}}<span class="status-mark status-{{.Status}}">{{$status.Mark}}</span> {{$status.Label}}{{end}}</td>
 <td>{{.Limit}}</td>
+<td>{{if .CreditsInfo}}<span id="{{.DOMID}}-credits" class="has-tooltip" data-tooltip="{{.CreditsInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Credits}}</span>{{else}}{{.Credits}}{{end}}</td>
 <td>{{.Used}}</td>
 <td>{{.Remaining}}</td>
 <td>{{.UsedPercent}}</td>

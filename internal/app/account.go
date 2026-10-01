@@ -48,6 +48,7 @@ type Account struct {
 	spent          bool
 	resetCredits   resetCreditState
 	spendControl   *spendControlPayload
+	credits        *creditsPayload
 	usageFetchedAt time.Time
 	lastUsed       time.Time
 }

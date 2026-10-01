@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,6 +24,7 @@ func TestUsagePollLimitReachedRemovesAccountFromNewRouting(t *testing.T) {
 		}
 		used := 100.0
 		json.NewEncoder(w).Encode(map[string]any{
+			"credits": map[string]any{"has_credits": true, "balance": "1000"},
 			"rate_limit": map[string]any{
 				"limit_reached":    true,
 				"primary_window":   map[string]any{"used_percent": used, "limit_window_seconds": 300},
@@ -46,6 +48,109 @@ func TestUsagePollLimitReachedRemovesAccountFromNewRouting(t *testing.T) {
 
 	if picked := server.pool.route(nil, nil).account; picked == nil || picked.id() != "account-b" {
 		t.Fatalf("picked = %v, want account-b", picked)
+	}
+}
+
+func TestUsagePollReportsCreditsAcrossAccountViews(t *testing.T) {
+	account := testAccount("account-a", 20)
+	server := newTestServer(t, []*Account{account})
+	var responseBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/usage" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, responseBody)
+	}))
+	defer upstream.Close()
+	oldBaseURL := accountAPIBaseURL
+	accountAPIBaseURL = upstream.URL
+	t.Cleanup(func() { accountAPIBaseURL = oldBaseURL })
+
+	for _, test := range []struct {
+		name    string
+		payload string
+		credits *creditsPayload
+		display string
+		info    string
+	}{
+		{
+			name:    "balance",
+			payload: `{"credits":{"has_credits":true,"unlimited":false,"overage_limit_reached":false,"balance":"62493.5085522500"}}`,
+			credits: &creditsPayload{HasCredits: true, Balance: "62493.5085522500"},
+			display: "62493.51",
+			info:    "Account credit balance: 62493.5085522500",
+		},
+		{
+			name:    "depleted",
+			payload: `{"credits":{"has_credits":false,"balance":"0"}}`,
+			credits: &creditsPayload{Balance: "0"},
+			display: "0",
+			info:    "Account credit balance: 0",
+		},
+		{
+			name:    "unlimited",
+			payload: `{"credits":{"has_credits":true,"unlimited":true,"balance":null}}`,
+			credits: &creditsPayload{HasCredits: true, Unlimited: true},
+			display: "Unlimited",
+			info:    "Unlimited account credits",
+		},
+		{
+			name:    "credit limit reached",
+			payload: `{"credits":{"has_credits":true,"overage_limit_reached":true,"balance":"12.50"}}`,
+			credits: &creditsPayload{HasCredits: true, OverageLimitReached: true, Balance: "12.50"},
+			display: "12.5",
+			info:    "Account credit balance: 12.50\nCredit spending limit reached",
+		},
+		{
+			name:    "null clears previous balance",
+			payload: `{"credits":null}`,
+			display: "--",
+		},
+		{
+			name:    "missing",
+			payload: `{}`,
+			display: "--",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			responseBody = test.payload
+			if err := server.pollUsage(context.Background(), account); err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			server.statsJSON(response, httptest.NewRequest(http.MethodGet, "/stats", nil))
+			var stats statsResponse
+			if err := json.NewDecoder(response.Body).Decode(&stats); err != nil {
+				t.Fatal(err)
+			}
+			if len(stats.Accounts) != 1 || !reflect.DeepEqual(stats.Accounts[0].Credits, test.credits) {
+				t.Fatalf("account stats = %+v, want credits %+v", stats.Accounts, test.credits)
+			}
+			view := server.currentDashboard(time.Now())
+			if len(view.Accounts) != 1 || view.Accounts[0].Credits != test.display || view.Accounts[0].CreditsInfo != test.info {
+				t.Fatalf("dashboard accounts = %+v, want credits %q (%q)", view.Accounts, test.display, test.info)
+			}
+			body, err := renderDashboard("accounts", view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), "<th>Credits</th>") || !strings.Contains(string(body), ">"+test.display+"<") {
+				t.Fatalf("dashboard missing credit balance %q:\n%s", test.display, body)
+			}
+			request := httptest.NewRequest(http.MethodGet, "/admin", nil)
+			request.Header.Set("HX-Request", "true")
+			response = httptest.NewRecorder()
+			server.renderAdmin(response, request, adminSession{}, "accounts-panel", "", "", http.StatusOK)
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "<th>Credits</th>") || !strings.Contains(response.Body.String(), ">"+test.display+"</td>") {
+				t.Fatalf("admin missing credit balance %q:\n%s", test.display, response.Body.String())
+			}
+			terminal := dashboard{pool: server.pool, stats: server.stats, snap: server.stats.snapshot(), width: 160}
+			if body := terminal.accounts(1); !strings.Contains(body, "Credits") || !strings.Contains(body, test.display) {
+				t.Fatalf("terminal missing credit balance %q:\n%s", test.display, body)
+			}
+		})
 	}
 }
 

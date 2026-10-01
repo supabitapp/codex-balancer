@@ -73,6 +73,8 @@ type dashboardAccountView struct {
 	Weekly          string
 	Banked          string
 	BankedInfo      string
+	Credits         string
+	CreditsInfo     string
 	ResetIn         string
 	MonthlyBurn     string
 	MonthlyBurnInfo string
@@ -88,6 +90,8 @@ type dashboardWorkspaceView struct {
 	PlanInfo    string
 	Status      accountStatus
 	StatusInfo  string
+	Credits     string
+	CreditsInfo string
 	Limit       string
 	Used        string
 	Remaining   string
@@ -426,6 +430,8 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			Weekly:          weekly,
 			Banked:          banked,
 			BankedInfo:      bankedInfo,
+			Credits:         dashboardCreditBalance(account.Credits),
+			CreditsInfo:     dashboardCreditInfo(account.Credits),
 			ResetIn:         account.ResetIn,
 			MonthlyBurn:     formatAPIPrice(usage.APICostNanoDollars, usage.UnpricedResponses),
 			MonthlyBurnInfo: monthlyBurnInfo,
@@ -508,6 +514,8 @@ func newDashboardWorkspaceView(now time.Time, name string, account accountStatsR
 		PlanInfo:    dashboardPlanInfo(now, account.Subscription),
 		Status:      account.Status,
 		StatusInfo:  dashboardAccountStatusInfo(now, account),
+		Credits:     dashboardCreditBalance(account.Credits),
+		CreditsInfo: dashboardCreditInfo(account.Credits),
 		Limit:       "--",
 		Used:        "--",
 		Remaining:   "--",
@@ -548,6 +556,32 @@ func dashboardSpendAmount(value string) string {
 		return value
 	}
 	return formatDecimal(parsed)
+}
+
+func dashboardCreditBalance(credits *creditsPayload) string {
+	if credits == nil {
+		return "--"
+	}
+	if credits.Unlimited {
+		return "Unlimited"
+	}
+	return dashboardSpendAmount(credits.Balance)
+}
+
+func dashboardCreditInfo(credits *creditsPayload) string {
+	if credits == nil {
+		return ""
+	}
+	info := "Account credit balance"
+	if credits.Unlimited {
+		info = "Unlimited account credits"
+	} else if credits.Balance != "" {
+		info += ": " + credits.Balance
+	}
+	if credits.OverageLimitReached {
+		info += "\nCredit spending limit reached"
+	}
+	return info
 }
 
 func trafficPercentages(accounts []accountStatsResponse) []int64 {

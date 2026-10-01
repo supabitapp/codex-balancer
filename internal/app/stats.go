@@ -732,6 +732,7 @@ type accountStatsResponse struct {
 	WeeklyRemainingPercent *float64                      `json:"weekly_remaining_percent"`
 	BankedResets           *int64                        `json:"banked_resets"`
 	ResetCredits           []resetCreditStatsResponse    `json:"reset_credits,omitempty"`
+	Credits                *creditsPayload               `json:"credits,omitempty"`
 	ResetAt                *time.Time                    `json:"reset_at"`
 	ResetIn                string                        `json:"reset_in"`
 	RoutedCredits          *float64                      `json:"routed_credits,omitempty"`
@@ -867,6 +868,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			WeeklyRemainingPercent: weeklyRemaining,
 			BankedResets:           bankedResets,
 			ResetCredits:           resetCredits,
+			Credits:                candidate.credits,
 			ResetAt:                resetAt,
 			ResetIn:                resetIn,
 			RoutedCredits:          routedCredits,

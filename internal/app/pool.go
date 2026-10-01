@@ -38,6 +38,7 @@ type routingCandidate struct {
 	secondary    window
 	resetCredits resetCreditState
 	spendControl *spendControlPayload
+	credits      *creditsPayload
 	spent        bool
 	pressure     float64
 	lastUsed     time.Time
@@ -267,6 +268,7 @@ func (a *Account) routingCandidate() routingCandidate {
 			details:   append([]resetCredit(nil), a.resetCredits.details...),
 		},
 		spendControl: cloneSpendControl(a.spendControl),
+		credits:      cloneCredits(a.credits),
 		spent:        a.spent || spendLimitReached(a.spendControl),
 		pressure:     a.pressure(),
 		lastUsed:     a.lastUsed,
