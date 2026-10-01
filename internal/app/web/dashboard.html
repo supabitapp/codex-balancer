@@ -10,12 +10,12 @@
 <link rel="stylesheet" href="{{waterCSSURL}}">
 <link rel="stylesheet" href="{{dashboardAssetURL "dashboard.css"}}">
 {{if .Admin}}<link rel="stylesheet" href="{{dashboardAssetURL "admin.css"}}">
-<script src="{{dashboardAssetURL "admin.js"}}" defer></script>
 {{end}}<script src="{{dashboardAssetURL "dashboard.js"}}" defer></script>
 <script src="/dashboard/assets/htmx-2.0.10.min.js" defer></script>
 <script src="/dashboard/assets/idiomorph-0.7.4.min.js" defer></script>
 <script src="/dashboard/assets/sse-2.2.4.min.js" defer></script>
-</head>
+{{if .Admin}}<script src="{{dashboardAssetURL "admin.js"}}" defer></script>
+{{end}}</head>
 {{if .Admin}}<body class="admin" hx-history="false">
 {{template "admin-header" .}}
 <div hx-ext="sse,morph" sse-connect="/admin/events" sse-swap="dashboard" hx-swap="none">

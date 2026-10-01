@@ -1,6 +1,8 @@
 const notice = document.querySelector("#admin-notice")
 let dismissTimer
 
+Idiomorph.defaults.callbacks.beforeAttributeUpdated = (name, node) => !(name === "style" && node.matches(".menu"))
+
 function clearNotice() {
   clearTimeout(dismissTimer)
   notice.replaceChildren()
@@ -21,6 +23,20 @@ async function copySecret(button) {
   }
 }
 
+function placeMenu(menu) {
+  const trigger = document.querySelector(`[popovertarget="${menu.id}"]`)
+  if (!trigger) return
+  const anchor = trigger.getBoundingClientRect()
+  const below = anchor.bottom < innerHeight * 0.6
+  menu.style.right = `${innerWidth - anchor.right}px`
+  menu.style.top = below ? `${anchor.bottom + 4}px` : "auto"
+  menu.style.bottom = below ? "auto" : `${innerHeight - anchor.top + 4}px`
+}
+
+function placeOpenMenus() {
+  for (const menu of document.querySelectorAll(".menu:popover-open")) placeMenu(menu)
+}
+
 async function checkSession() {
   const response = await fetch("/admin", { method: "HEAD", redirect: "manual", cache: "no-store" })
   if (response.type === "opaqueredirect" || response.status === 503) location.assign("/admin/login")
@@ -30,6 +46,17 @@ notice.addEventListener("click", event => {
   if (event.target.closest(".notice-close")) clearNotice()
   const copy = event.target.closest("[data-copy]")
   if (copy) copySecret(copy)
+})
+
+document.addEventListener("beforetoggle", event => {
+  if (event.newState === "open" && event.target.matches(".menu")) placeMenu(event.target)
+}, true)
+
+addEventListener("scroll", placeOpenMenus, true)
+addEventListener("resize", placeOpenMenus)
+
+document.addEventListener("htmx:beforeRequest", event => {
+  event.detail.elt.closest?.(".menu")?.hidePopover()
 })
 
 document.addEventListener("htmx:afterRequest", event => {

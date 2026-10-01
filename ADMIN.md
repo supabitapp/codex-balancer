@@ -3,8 +3,9 @@
 Open `/admin` for the live dashboard with nothing redacted: full account
 emails and IDs, client IP addresses, API key names on active threads, full
 thread and turn identifiers, and unmasked event details. Admin controls sit
-inline: fast mode in the overview, routing, banked resets, refresh, and removal
-on each account row, and an API keys section to create or revoke keys. This
+inline: fast mode in the overview; a routing dropdown, banked reset, and a
+⋯ menu with refresh and remove on each account row; and an API keys section
+to create or revoke keys. This
 is a hidden route with no link from the public dashboard. Adding an account
 uses the existing `/accounts` sign-in flow.
 
@@ -61,8 +62,8 @@ behind a reverse proxy.
   poll. A changed mode restarts existing WebSockets and preserves account
   ownership under the normal routing rules. Repeating a mode does not restart
   connections.
-- Account routing uses the normal, priority, and paused toggle on each row and
-  saves on click. Paused retires the account's existing sockets immediately;
+- Account routing uses the normal, priority, and paused dropdown on each row
+  and saves on change. Paused retires the account's existing sockets immediately;
   normal or priority resumes routing. Removal also retires existing sockets.
 - New API key secrets appear only in the creation response and use the
   [pi-compatible JWT format](README.md#point-pi-at-it). Existing keys remain valid.

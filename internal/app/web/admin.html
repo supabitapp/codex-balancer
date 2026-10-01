@@ -48,17 +48,20 @@
 <button type="submit" name="fast-mode" value="off" aria-pressed="{{eq .Admin.FastMode "off"}}">standard</button>
 </form>{{end}}
 
-{{define "routing-control"}}<form class="segmented" action="/admin/accounts/mode" method="post" hx-post="/admin/accounts/mode" aria-label="Routing for {{.Row.Name}}">{{template "csrf" .CSRF}}<input type="hidden" name="account" value="{{.Row.ID}}">
-<button type="submit" name="mode" value="normal" aria-pressed="{{eq .Row.Mode "normal"}}">normal</button>
-<button type="submit" name="mode" value="priority" aria-pressed="{{eq .Row.Mode "priority"}}">priority</button>
-<button type="submit" name="mode" value="paused" aria-pressed="{{eq .Row.Mode "paused"}}">paused</button>
+{{define "routing-control"}}<form class="routing" action="/admin/accounts/mode" method="post" hx-post="/admin/accounts/mode" hx-trigger="change" hx-disabled-elt="find select">{{template "csrf" .CSRF}}<input type="hidden" name="account" value="{{.Row.ID}}">
+<select name="mode" data-mode="{{.Row.Mode}}" aria-label="Routing for {{.Row.Name}}">
+<option value="normal"{{if eq .Row.Mode "normal"}} selected{{end}}>normal</option>
+<option value="priority"{{if eq .Row.Mode "priority"}} selected{{end}}>priority</option>
+<option value="paused"{{if eq .Row.Mode "paused"}} selected{{end}}>paused</option>
+</select><noscript><button class="action" type="submit">save</button></noscript>
 </form>{{end}}
 
 {{define "banked-reset-control"}}<form class="inline" action="/admin/accounts/reset" method="post" hx-post="/admin/accounts/reset" hx-confirm="Use one banked reset for {{.Row.Name}} now?">{{template "csrf" .CSRF}}<input type="hidden" name="account" value="{{.Row.ID}}"><input type="hidden" name="credit" value="{{.Row.ResetCreditID}}"><button class="action" type="submit" aria-label="Use banked reset for {{.Row.Name}}">use</button></form>{{end}}
 
-{{define "account-actions"}}<div class="action-group">
-<form action="/admin/accounts/refresh" method="post" hx-post="/admin/accounts/refresh">{{template "csrf" .CSRF}}<input type="hidden" name="account" value="{{.Row.ID}}"><button class="action" type="submit" aria-label="Refresh quota and banked credits for {{.Row.Name}}">refresh</button></form>
-<form action="/admin/accounts/remove" method="post" hx-post="/admin/accounts/remove" hx-confirm="Remove {{.Row.Name}} from the pool? Existing connections will restart.">{{template "csrf" .CSRF}}<input type="hidden" name="account" value="{{.Row.ID}}"><button class="action danger" type="submit" aria-label="Remove {{.Row.Name}}">remove</button></form>
+{{define "account-actions"}}<button class="menu-trigger" type="button" popovertarget="{{.Row.DOMID}}-menu" aria-label="Actions for {{.Row.Name}}">⋯</button>
+<div id="{{.Row.DOMID}}-menu" class="menu" popover>
+<form action="/admin/accounts/refresh" method="post" hx-post="/admin/accounts/refresh">{{template "csrf" .CSRF}}<input type="hidden" name="account" value="{{.Row.ID}}"><button type="submit" aria-label="Refresh quota and banked credits for {{.Row.Name}}">refresh quota</button></form>
+<form action="/admin/accounts/remove" method="post" hx-post="/admin/accounts/remove" hx-confirm="Remove {{.Row.Name}} from the pool? Existing connections will restart.">{{template "csrf" .CSRF}}<input type="hidden" name="account" value="{{.Row.ID}}"><button class="danger" type="submit" aria-label="Remove {{.Row.Name}}">remove account</button></form>
 </div>{{end}}
 
 {{define "keys-section"}}<section id="keys-section">

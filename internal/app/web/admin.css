@@ -27,9 +27,21 @@
 .segmented button[value="paused"][aria-pressed="true"], .segmented button[value="off"][aria-pressed="true"] { color: var(--red-11) }
 .overview .segmented { margin-top: .125rem }
 
+.routing { display: inline-flex; gap: .375rem }
+.routing select { margin: 0; padding: .125rem 1.375rem .125rem .5rem; border: 1px solid var(--border); border-radius: .375rem; background: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%) calc(100% - .75rem) 55% / .3rem .3rem no-repeat, linear-gradient(135deg, var(--text-muted) 50%, transparent 50%) calc(100% - .45rem) 55% / .3rem .3rem no-repeat; color: var(--text-main); font: inherit; font-size: .75rem; line-height: 1.5; cursor: pointer; appearance: none }
+.routing select:hover { border-color: var(--text-muted) }
+.routing select[data-mode="priority"] { color: var(--amber-11) }
+.routing select[data-mode="paused"] { color: var(--red-11) }
+.routing option { background: var(--background-body); color: var(--text-main) }
+
 .has-tooltip.quiet { text-decoration: none }
 th.actions, td.actions { text-align: right }
-.action-group { display: inline-flex; gap: .375rem }
+.menu-trigger { width: 1.75rem; height: 1.5rem; padding: 0; border: 0; border-radius: .375rem; background: transparent; color: var(--text-muted); font: 700 1.125rem/1 system-ui, sans-serif; cursor: pointer }
+.menu-trigger:hover { background: var(--background); color: var(--text-bright) }
+.menu { position: fixed; inset: auto; margin: 0; min-width: 10rem; padding: .25rem; border: 1px solid var(--border); border-radius: .5rem; background: var(--background-body); color: var(--text-main); box-shadow: 0 12px 32px rgb(0 0 0 / .3); text-align: left }
+.menu button { display: block; width: 100%; padding: .375rem .625rem; border: 0; border-radius: .375rem; background: transparent; color: var(--text-main); font-size: .8125rem; text-align: left; cursor: pointer }
+.menu button:hover { background: var(--background); color: var(--text-bright) }
+.menu .danger, .menu .danger:hover { color: var(--red-11) }
 form.inline { display: inline-block; margin-left: .5rem; vertical-align: middle }
 
 #keys-summary { margin-left: .5rem; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }

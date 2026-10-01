@@ -283,7 +283,7 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 		if response.Code != 200 || candidate.mode != mode || candidate.paused != (mode == routingModePaused) {
 			t.Fatalf("mode %s not applied: status=%d candidate=%+v", mode, response.Code, candidate)
 		}
-		if !strings.Contains(response.Body.String(), `name="mode" value="`+string(mode)+`" aria-pressed="true"`) {
+		if !strings.Contains(response.Body.String(), `<option value="`+string(mode)+`" selected>`) {
 			t.Fatalf("saved mode %s not selected in the routing control", mode)
 		}
 	}
@@ -696,7 +696,8 @@ func TestAdminDashboardUnveilsPrivateData(t *testing.T) {
 		`id="keys" class="scroll" hx-swap-oob="morph"`,
 		`name="csrf" value="` + csrf + `"`,
 		`hx-post="/admin/accounts/mode"`,
-		`name="mode" value="normal" aria-pressed="true"`,
+		`<option value="normal" selected>`,
+		`popovertarget="account-`,
 		`hx-post="/admin/settings"`,
 		`Account ID: account-a`,
 		`>account-a@example.com</span>`,
