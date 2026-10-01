@@ -52,8 +52,8 @@
 {{define "accounts-panel"}}<section id="accounts-panel">
 <div class="section-title"><h2>Accounts</h2><a href="/accounts">Add account ↗</a></div>
 {{if eq .NoticePanel "accounts-panel"}}{{template "notice" .}}{{end}}
-{{if .Accounts}}<div class="scroll"><table class="accounts-table"><thead><tr><th>Account</th><th>Status</th><th>Banked</th><th>Routing</th><th>Actions</th></tr></thead><tbody>
-{{range .Accounts}}<tr><td>{{.Name}}<small>{{.Plan}}</small></td><td>{{.Status}}</td><td><div class="controls banked-controls"><span>{{.Banked}}</span>{{if .ResetCreditID}}<form action="/admin/accounts/reset" method="post" hx-post="/admin/accounts/reset" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button" hx-confirm="Use one banked reset for {{.Name}} now?">
+{{if .Accounts}}<div class="scroll"><table class="accounts-table"><thead><tr><th>Account</th><th>Status</th><th>Credits</th><th>Banked</th><th>Routing</th><th>Actions</th></tr></thead><tbody>
+{{range .Accounts}}<tr><td>{{.Name}}<small>{{.Plan}}</small></td><td>{{.Status}}</td><td title="{{.CreditsInfo}}">{{.Credits}}</td><td><div class="controls banked-controls"><span>{{.Banked}}</span>{{if .ResetCreditID}}<form action="/admin/accounts/reset" method="post" hx-post="/admin/accounts/reset" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button" hx-confirm="Use one banked reset for {{.Name}} now?">
 {{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}"><input type="hidden" name="credit" value="{{.ResetCreditID}}"><button type="submit" aria-label="Use banked reset for {{.Name}}">Reset</button></form>{{end}}</div></td><td>
 <form class="controls" action="/admin/accounts/mode" method="post" hx-post="/admin/accounts/mode" hx-target="#accounts-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
 {{template "csrf" $.CSRF}}<input type="hidden" name="account" value="{{.ID}}">

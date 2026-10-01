@@ -272,13 +272,14 @@ func (d dashboard) accounts(limit int) string {
 	statusW := 10
 	weeklyW := 6
 	bankedW := 6
+	creditsW := 10
 	resetW := 8
 	monthlyBurnW := 16
 	wsW := 2
 	trafficW := 7
 	limitsW := 6
 
-	fixedCols := planW + statusW + weeklyW + bankedW + resetW + monthlyBurnW + wsW + trafficW + limitsW + 10*gap + 2
+	fixedCols := planW + statusW + weeklyW + bankedW + creditsW + resetW + monthlyBurnW + wsW + trafficW + limitsW + 11*gap + 2
 	nameW = min(nameW, max(9, d.width-fixedCols-8))
 	activityW := d.width - fixedCols - nameW
 
@@ -290,6 +291,7 @@ func (d dashboard) accounts(limit int) string {
 		styles.section.Render(fit("Status", statusW)),
 		styles.section.Render(fit("Weekly", weeklyW)),
 		styles.section.Render(fit("Banked", bankedW)),
+		styles.section.Render(fit("Credits", creditsW)),
 		styles.section.Render(fit("Reset in", resetW)),
 		styles.section.Render(fit("Burnt this month", monthlyBurnW)),
 		styles.section.Render(fit("WS", wsW)),
@@ -311,9 +313,10 @@ func (d dashboard) accounts(limit int) string {
 		weekly := longestWindow(primary, secondary)
 		stat := d.snap.Accounts[a.id()]
 		now := time.Now()
+		candidate := a.routingCandidate()
 
 		var status string
-		switch a.status(now) {
+		switch candidate.status(now) {
 		case accountPaused:
 			status = styles.dim.Render(fit("⏸ paused", statusW))
 		case accountNeedsReauth:
@@ -367,6 +370,11 @@ func (d dashboard) accounts(limit int) string {
 		if count, _, known := a.bankedResets(); known {
 			banked = styles.num.Render(fit(fmt.Sprintf("%d", count), bankedW))
 		}
+		creditsStyle := styles.num
+		if candidate.credits == nil {
+			creditsStyle = styles.dim
+		}
+		credits := creditsStyle.Render(fit(dashboardCreditBalance(candidate.credits), creditsW))
 
 		reset := styles.dim.Render(fit("--", resetW))
 		if next := nextReset(now, primary, secondary); !next.IsZero() {
@@ -384,6 +392,7 @@ func (d dashboard) accounts(limit int) string {
 			status,
 			weeklyCell,
 			banked,
+			credits,
 			reset,
 			monthlyBurnStyle.Render(fit(monthlyBurn, monthlyBurnW)),
 			styles.good.Render(fit(websockets, wsW)),

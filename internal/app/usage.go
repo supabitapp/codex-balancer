@@ -27,6 +27,22 @@ type usagePayload struct {
 		AvailableCount int64 `json:"available_count"`
 	} `json:"rate_limit_reset_credits"`
 	SpendControl *spendControlPayload `json:"spend_control"`
+	Credits      *creditsPayload      `json:"credits"`
+}
+
+type creditsPayload struct {
+	HasCredits          bool   `json:"has_credits"`
+	Unlimited           bool   `json:"unlimited"`
+	OverageLimitReached bool   `json:"overage_limit_reached"`
+	Balance             string `json:"balance"`
+}
+
+func cloneCredits(value *creditsPayload) *creditsPayload {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 type spendControlPayload struct {
@@ -148,6 +164,7 @@ func (s *server) pollUsage(ctx context.Context, account *Account) error {
 		payload.RateLimit.SecondaryWindow.window(fetchedAt),
 		payload.bankedResets(),
 		payload.SpendControl,
+		payload.Credits,
 	)
 	var limitReached any
 	if payload.RateLimit.LimitReached != nil {
@@ -306,11 +323,12 @@ func (s *server) reauthorize(account *Account) error {
 	return nil
 }
 
-func (a *Account) adopt(fetchedAt time.Time, planType string, primary, secondary window, banked *int64, spendControl *spendControlPayload) {
+func (a *Account) adopt(fetchedAt time.Time, planType string, primary, secondary window, banked *int64, spendControl *spendControlPayload, credits *creditsPayload) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.usageFetchedAt = fetchedAt
 	a.spendControl = cloneSpendControl(spendControl)
+	a.credits = cloneCredits(credits)
 	if planType != "" {
 		a.planType = planType
 	}

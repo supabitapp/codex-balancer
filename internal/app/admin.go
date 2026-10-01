@@ -27,6 +27,8 @@ type adminAccountView struct {
 	Mode          string
 	ResetCreditID string
 	Banked        string
+	Credits       string
+	CreditsInfo   string
 }
 
 type adminKeyView struct {
@@ -111,6 +113,8 @@ func (s *server) renderAdmin(w http.ResponseWriter, r *http.Request, session adm
 		candidate := account.routingCandidate()
 		row := adminAccountView{ID: account.id(), Name: label(account), Plan: dashboardPlan(account.plan()), Status: dashboardStatus(candidate.status(time.Now())).Label, Paused: candidate.paused, Mode: string(candidate.mode)}
 		row.Banked = "—"
+		row.Credits = dashboardCreditBalance(candidate.credits)
+		row.CreditsInfo = dashboardCreditInfo(candidate.credits)
 		if candidate.resetCredits.known {
 			row.Banked = dashboardNumber(candidate.resetCredits.count)
 		}
