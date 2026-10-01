@@ -53,8 +53,8 @@ capped at 256 MiB and responses stream through unchanged up to 256 MiB.
 For a session tree with neither an accepted route nor a provisional claim, the
 server considers accounts in this order:
 
-1. Exclude paused, spent, cooling, signed-out, unknown-quota, and non-routable
-   accounts.
+1. Exclude paused, spent, cooling, signed-out, unknown-quota, non-routable, and
+   weekly-exhausted accounts from included-quota placement.
 2. If all available accounts publish model catalogs and at least one of them
    carries the requested model and service tier, exclude the accounts that lack
    it. When no available account carries it, keep every candidate and let
@@ -90,13 +90,19 @@ asks. A request waits at most four seconds for a refresh in progress and
 otherwise serves the cached catalog, staying inside Codex's five-second
 fetch timeout.
 
-When no account is available, quota polling and new connection attempts recover
-an exhausted account using the usable reset credit that expires soonest across
-the pool. This fallback also considers credits expiring more than 24 hours away;
-credits without an expiration come last. Paused, signed-out, and non-routable
-accounts are excluded, and temporary cooldowns alone do not spend a reset.
-Recovery runs one account at a time and refreshes its quota before routing
-resumes. If a reset fails to restore capacity, the next eligible account is tried.
+When no eligible account with included quota is available, routing can use an
+account's credit balance. The account must have a known quota window lasting at
+least a week with 100% usage, plus a positive finite balance with `has_credits`
+enabled or unlimited credits. Paused, signed-out, and non-routable accounts,
+cooldowns, spend caps, and credit overage limits still exclude an account.
+
+Credit fallback retains an eligible conversation owner when possible, then
+uses the usual placement ranking. Included quota elsewhere in the pool takes
+precedence over the credit owner's affinity. The upstream handles credit
+billing. A usage-limit or `credit_balance_exhausted` rejection blocks further
+credit fallback on that account until the next successful usage poll. Default
+rate-limit events update the observed balance without exposing it to clients.
+Banked quota-reset credits are redeemed manually through the admin Reset action.
 
 For an identified route, a handshake leaves the last-used timestamp unchanged.
 `response.created` updates it. An anonymous socket has no thread or session
@@ -164,8 +170,9 @@ The server records the account from each `response.created` event. A
 - A later turn that needs another account receives a `1012` close before the
   relay sends it. Codex reconnects and routes the turn again.
 - If quota polling marks the pinned account spent between turns, the relay
-  closes before forwarding the next portable turn. The reconnect can then
-  choose another account without sending a doomed request first.
+  allows the next portable turn only when that account remains eligible for
+  credit fallback and no account with included quota is available. Otherwise
+  it closes before forwarding; reconnect can choose another account.
 - A spent, paused, removed, signed-out, non-routable, or model-incompatible
   owner permits replacement on reconnect.
 - A replacement request must omit `previous_response_id` and

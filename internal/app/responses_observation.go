@@ -327,7 +327,7 @@ func (t *responseObservation) selection(ctx context.Context, selection claimedRo
 	}
 	t.event(ctx, "route_selected", attribute.Int("attempt", attempt+1), attribute.String("account", selected),
 		attribute.String("prior_owner", decision.priorOwner), attribute.String("blocked_owner", decision.blocked), attribute.String("routing_reason", string(decision.reason)),
-		attribute.Bool("account_move", decision.moved()), attribute.Bool("claim_present", selection.claim != nil), attribute.Bool("claim_joined", selection.joined),
+		attribute.Bool("account_move", decision.moved()), attribute.Bool("credit_fallback", decision.creditFallback), attribute.Bool("claim_present", selection.claim != nil), attribute.Bool("claim_joined", selection.joined),
 		attribute.Bool("write_attempted", t.writeAttempted), attribute.Bool("response_created", false))
 	for _, c := range decision.candidates {
 		t.emit(ctx, slog.LevelDebug, "routing_candidate", false, attribute.Int("attempt", attempt+1), attribute.String("account", c.id),

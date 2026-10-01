@@ -282,6 +282,7 @@ func (d *responsesWebSocketDialer) rejectAccount(result upstreamWebSocketDial, a
 	if status == http.StatusTooManyRequests || usageLimit {
 		account.observe(response.Header)
 		if usageLimit {
+			account.rejectCredits()
 			if account.markSpent() {
 				d.server.log.Info("account stopped accepting new websockets", "account", id, "source", "handshake", "thread", d.thread, "status", status)
 			}

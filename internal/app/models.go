@@ -88,7 +88,8 @@ func (c *modelCatalog) allowedAccounts(accounts []*Account, model, serviceTier s
 	availableMatch := false
 	for _, account := range accounts {
 		id := account.id()
-		available := account.routingCandidate().available(now)
+		candidate := account.routingCandidate()
+		available := candidate.available(now) || candidate.creditAvailable(now)
 		if available && c.accounts[id] == nil {
 			return nil
 		}

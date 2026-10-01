@@ -9,7 +9,7 @@ import (
 func TestAccountsModeSetsAndPersistsRoutingMode(t *testing.T) {
 	path := accountStatePath(t)
 
-	for _, mode := range []routingMode{routingModePriority, routingModeNormal} {
+	for _, mode := range []routingMode{routingModePriority, routingModePaused, routingModePaused, routingModeNormal, routingModePaused, routingModePriority} {
 		if err := accountsCmd([]string{"mode", "-state", path, "account-a@example.com", string(mode)}); err != nil {
 			t.Fatal(err)
 		}
@@ -22,11 +22,29 @@ func TestAccountsModeSetsAndPersistsRoutingMode(t *testing.T) {
 func TestAccountsModeRejectsUnknownMode(t *testing.T) {
 	path := accountStatePath(t)
 	err := accountsCmd([]string{"mode", "-state", path, "account-a", "fast"})
-	if err == nil || !strings.Contains(err.Error(), "use normal or priority") {
+	if err == nil || !strings.Contains(err.Error(), "use normal, priority, or paused") {
 		t.Fatalf("error = %v", err)
 	}
 	if got := persistedRoutingMode(t, path, "account-a"); got != routingModeNormal {
 		t.Fatalf("routing mode = %q, want %q", got, routingModeNormal)
+	}
+}
+
+func TestAccountsPausedModeReloadInvalidatesOwner(t *testing.T) {
+	account := testAccount("account-a", 20)
+	srv := newTestServer(t, []*Account{account})
+	if err := accountsCmd([]string{"mode", "-state", srv.pool.store.path, account.id(), "paused"}); err != nil {
+		t.Fatal(err)
+	}
+	change, err := srv.pool.reload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if change.updated != 1 || len(change.unavailable) != 1 || change.unavailable[0] != (accountUnavailable{id: account.id(), reason: routingReasonOwnerPaused}) {
+		t.Fatalf("change = %+v, want paused owner invalidated", change)
+	}
+	if got := srv.pool.route([]string{account.id()}, nil).account; got != nil {
+		t.Fatal("account still routed after reloading CLI pause")
 	}
 }
 

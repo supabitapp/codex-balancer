@@ -202,6 +202,46 @@ func TestPoolRouteManualPriorityWins(t *testing.T) {
 	}
 }
 
+func TestPausedRoutingModeStopsPlacementAndAffinity(t *testing.T) {
+	preferred := testAccount("preferred", 10)
+	fallback := testAccount("fallback", 20)
+	srv := newTestServer(t, []*Account{preferred, fallback})
+	pool := srv.pool
+	if err := pool.setRoutingMode(preferred, routingModePriority); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.setRoutingMode(preferred, routingModePaused); err != nil {
+		t.Fatal(err)
+	}
+	if got := preferred.status(time.Now()); got != accountPaused {
+		t.Fatalf("status = %s, want paused", got)
+	}
+	if srv.accountRoutable(preferred.id()) {
+		t.Fatal("paused account allowed to continue an active response")
+	}
+	for _, owners := range [][]string{nil, {preferred.id()}} {
+		decision := pool.route(owners, nil)
+		if decision.account != fallback || decision.blocked != "" {
+			t.Fatalf("decision = %+v, want fallback with no owner block", decision)
+		}
+		if len(owners) > 0 && !decision.moved() {
+			t.Fatal("paused owner's replacement must be marked as an account move")
+		}
+		if got := pool.route(owners, map[string]bool{fallback.id(): true}).account; got != nil {
+			t.Fatal("paused account selected when no eligible fallback remained")
+		}
+	}
+	if err := pool.setPaused(preferred, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := preferred.routingCandidate().mode; got != routingModePriority {
+		t.Fatalf("resumed mode = %s, want previous priority preference", got)
+	}
+	if got := pool.route(nil, nil).account; got != preferred {
+		t.Fatal("resumed account did not rejoin routing")
+	}
+}
+
 func TestPoolRoutePrioritizesExpiringReset(t *testing.T) {
 	now := time.Now()
 	resetting := testAccount("account-resetting", 80)

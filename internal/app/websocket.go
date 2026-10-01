@@ -270,7 +270,7 @@ func websocketRejection(event websocketEnvelope) websocketRejectionKind {
 	if websocketStatus(event) == http.StatusUnauthorized {
 		return websocketRejectionUnauthorized
 	}
-	if websocketErrorIs(event, "usage_limit_reached") {
+	if websocketErrorIs(event, "usage_limit_reached") || websocketErrorIs(event, "credit_balance_exhausted") {
 		return websocketRejectionUsageLimit
 	}
 	if websocketErrorIs(event, "server_is_overloaded") || websocketErrorIs(event, "slow_down") {
@@ -294,6 +294,7 @@ func (s *server) handleWebSocketRejection(account *Account, kind websocketReject
 		account.rateLimited(headers, 0)
 		s.stats.rateLimited(id)
 	case websocketRejectionUsageLimit:
+		account.rejectCredits()
 		if account.markSpent() {
 			s.log.Info("account stopped accepting new websockets", "account", id, "source", "response", "thread", thread)
 		}

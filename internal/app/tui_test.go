@@ -2,7 +2,6 @@ package app
 
 import (
 	"image/color"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,29 +32,27 @@ func TestDashboardUsesTerminalPalette(t *testing.T) {
 }
 
 func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
-	store, err := openStateStore(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	pool, err := loadPool(store)
-	if err != nil {
-		t.Fatal(err)
-	}
 	account := testAccount("account-a", 20)
-	if err := pool.add(account); err != nil {
-		t.Fatal(err)
-	}
-	dashboard := dashboard{pool: pool, stats: newStatsWithPrices(testPriceSnapshot(t)), width: 160}
+	srv := newTestServer(t, []*Account{account})
+	closed := 0
+	srv.activeWebSockets.add(account.id(), func(id, reason string) {
+		closed++
+		if id != account.id() || reason != string(routingReasonOwnerPaused) {
+			t.Fatalf("connection closed for %s/%s, want selected account paused", id, reason)
+		}
+	})
+	dashboard := dashboard{pool: srv.pool, stats: srv.stats, server: srv, width: 160}
 	press := tea.KeyPressMsg(tea.Key{Text: "r", Code: 'r'})
 
 	for _, want := range []struct {
 		mode   routingMode
 		status accountStatus
 		text   string
+		closed int
 	}{
-		{routingModePriority, accountPriority, "priority"},
-		{routingModeNormal, accountLive, "live"},
+		{routingModePriority, accountPriority, "priority", 0},
+		{routingModePaused, accountPaused, "paused", 1},
+		{routingModeNormal, accountLive, "live", 1},
 	} {
 		dashboard.Update(press)
 		if got := account.routingCandidate().mode; got != want.mode {
@@ -63,6 +60,9 @@ func TestDashboardCyclesSelectedAccountRoutingMode(t *testing.T) {
 		}
 		if got := account.status(time.Now()); got != want.status {
 			t.Fatalf("status = %s, want %s", got, want.status)
+		}
+		if closed != want.closed {
+			t.Fatalf("closed connections = %d, want %d", closed, want.closed)
 		}
 		if row := dashboard.accounts(1); !strings.Contains(row, want.text) {
 			t.Fatalf("account row missing %q:\n%s", want.text, row)

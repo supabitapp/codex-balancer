@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,6 +38,20 @@ type creditsPayload struct {
 	Unlimited           bool   `json:"unlimited"`
 	OverageLimitReached bool   `json:"overage_limit_reached"`
 	Balance             string `json:"balance"`
+}
+
+func (c *creditsPayload) spendable() bool {
+	if c == nil || c.OverageLimitReached {
+		return false
+	}
+	if c.Unlimited {
+		return true
+	}
+	if !c.HasCredits {
+		return false
+	}
+	balance, err := strconv.ParseFloat(strings.TrimSpace(c.Balance), 64)
+	return err == nil && balance > 0 && !math.IsInf(balance, 0)
 }
 
 func cloneCredits(value *creditsPayload) *creditsPayload {
@@ -329,6 +346,7 @@ func (a *Account) adopt(fetchedAt time.Time, planType string, primary, secondary
 	a.usageFetchedAt = fetchedAt
 	a.spendControl = cloneSpendControl(spendControl)
 	a.credits = cloneCredits(credits)
+	a.creditsRejected = false
 	if planType != "" {
 		a.planType = planType
 	}

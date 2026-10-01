@@ -49,6 +49,7 @@ func (s *server) pickAccount(thread string, owners []string, model, serviceTier 
 		"prior_owner", decision.priorOwner,
 		"blocked_owner", decision.blocked,
 		"account_move", decision.moved(),
+		"credit_fallback", decision.creditFallback,
 		"routing_reason", decision.reason,
 		"accounts", len(decision.candidates),
 	)
@@ -80,6 +81,9 @@ func (s *server) pickAccount(thread string, owners []string, model, serviceTier 
 			"model", model,
 			"service_tier", serviceTier,
 		)
+	}
+	if decision.creditFallback {
+		s.log.Info("routing with account credits", "thread", thread, "account", decision.account.id(), "model", model, "service_tier", serviceTier)
 	}
 	return decision
 }

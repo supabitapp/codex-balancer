@@ -76,6 +76,7 @@ func (s *server) proxyTool(w http.ResponseWriter, r *http.Request) {
 			continue
 		case usageLimit || resp.StatusCode == http.StatusTooManyRequests:
 			if usageLimit {
+				account.rejectCredits()
 				account.markSpent()
 			} else {
 				account.rateLimited(resp.Header, 0)

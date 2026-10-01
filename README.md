@@ -27,7 +27,7 @@ The server runs at http://127.0.0.1:8317
 - `/stats` — JSON stats of the server, including the dashboard's estimated monthly API-price value, formatted monthly input and output token totals, and each account's reset countdown and 24-hour traffic share
 - `/accounts` — add an account. On a real server, send this to your friends so they join the pool without exposing credentials.
 
-The TUI also allows you to put a `pause` or `priority` on some accounts.
+In the TUI, press `r` to cycle an account through normal, priority, and paused routing, or space to pause/resume. The admin page's routing selector offers the same modes.
 
 ## CLI
 
@@ -37,8 +37,13 @@ There is a CLI to manage the accounts
 codex-balancer accounts add                 # sign in through a local browser
 codex-balancer accounts list
 codex-balancer accounts mode you@example.com priority
+codex-balancer accounts mode you@example.com paused
 codex-balancer accounts mode you@example.com normal
 ```
+
+Paused accounts stay in the pool but receive no routed requests. Existing connections restart so clients can reconnect to another account. Choose normal or priority to resume routing; space in the TUI restores the previous preference when resuming. Pauses persist across server restarts.
+
+Routing uses included quota first. When no eligible account with included quota is available, accounts whose weekly quota is exhausted can serve requests using a positive credit balance or unlimited credits. Paused accounts, accounts that need reauthentication, cooldowns, and spend/overage limits are respected. An upstream usage rejection disables that account's credit fallback until its next usage poll. Banked quota resets remain manual.
 
 Adding an account preserves its existing model training setting.
 Self-serve Business Pro Lite

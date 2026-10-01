@@ -125,6 +125,9 @@ func (d dashboard) cycleRoutingMode() {
 		d.stats.note("save failed", account.id(), err.Error())
 		return
 	}
+	if mode == routingModePaused && d.server != nil {
+		d.server.invalidateAccount(account.id(), routingReasonOwnerPaused)
+	}
 	d.stats.note("routing mode", account.id(), string(mode))
 }
 
@@ -191,7 +194,7 @@ func (d dashboard) render() string {
 
 func (d dashboard) header() string {
 	styles := d.styles()
-	live, priority, checking, cooling, dead, held, notRouted := 0, 0, 0, 0, 0, 0, 0
+	live, priority, credits, checking, cooling, dead, held, notRouted := 0, 0, 0, 0, 0, 0, 0, 0
 	now := time.Now()
 	for _, a := range d.pool.all() {
 		switch a.status(now) {
@@ -209,12 +212,17 @@ func (d dashboard) header() string {
 			live++
 		case accountPriority:
 			priority++
+		case accountCredits:
+			credits++
 		}
 	}
 
 	parts := []string{styles.good.Render(fmt.Sprintf("%d live", live))}
 	if priority > 0 {
 		parts = append(parts, styles.warn.Render(fmt.Sprintf("%d priority", priority)))
+	}
+	if credits > 0 {
+		parts = append(parts, styles.warn.Render(fmt.Sprintf("%d credits", credits)))
 	}
 	if checking > 0 {
 		parts = append(parts, styles.dim.Render(fmt.Sprintf("%d checking", checking)))
@@ -331,6 +339,8 @@ func (d dashboard) accounts(limit int) string {
 			status = styles.good.Render(fit("● live", statusW))
 		case accountPriority:
 			status = styles.warn.Render(fit("◆ priority", statusW))
+		case accountCredits:
+			status = styles.warn.Render(fit("$ credits", statusW))
 		}
 
 		monthlyBurn := formatAPIPrice(stat.APICostNanoDollars, stat.UnpricedResponses)

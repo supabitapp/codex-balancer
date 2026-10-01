@@ -124,6 +124,7 @@ func (p *Pool) clientUsageEvent(account *Account, data []byte, event websocketEn
 	}
 	if quota {
 		account.observeRateLimitEvent(fields["rate_limits"])
+		account.observeCreditEvent(fields["credits"])
 	}
 	if !quota && !hasHeaders {
 		return data
@@ -154,6 +155,19 @@ func (p *Pool) clientUsageEvent(account *Account, data []byte, event websocketEn
 		return data
 	}
 	return encoded
+}
+
+func (a *Account) observeCreditEvent(data json.RawMessage) {
+	if len(data) == 0 {
+		return
+	}
+	var credits *creditsPayload
+	if json.Unmarshal(data, &credits) != nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.credits = credits
 }
 
 func (a *Account) observeRateLimitEvent(data []byte) {

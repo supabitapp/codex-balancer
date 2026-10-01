@@ -254,7 +254,8 @@ func responseError(resp *http.Response) responseErrorPayload {
 
 func responseUsageLimitReached(resp *http.Response) bool {
 	err := responseError(resp)
-	return err.Type == "usage_limit_reached" || err.Code == "usage_limit_reached"
+	return err.Type == "usage_limit_reached" || err.Code == "usage_limit_reached" ||
+		err.Type == "credit_balance_exhausted" || err.Code == "credit_balance_exhausted"
 }
 
 func workspaceUsageLimitReached(headers http.Header) bool {

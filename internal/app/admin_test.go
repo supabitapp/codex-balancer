@@ -272,12 +272,21 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 			t.Fatal("pause not idempotent")
 		}
 	}
-	response := post("/admin/accounts/mode", url.Values{"account": {account.id()}, "mode": {"priority"}})
-	if response.Code != 200 || account.routingCandidate().mode != routingModePriority {
-		t.Fatal("priority not applied")
+	for _, mode := range []routingMode{routingModePriority, routingModePaused, routingModeNormal, routingModePaused, routingModePriority} {
+		response := post("/admin/accounts/mode", url.Values{"account": {account.id()}, "mode": {string(mode)}})
+		candidate := account.routingCandidate()
+		if response.Code != 200 || candidate.mode != mode || candidate.paused != (mode == routingModePaused) {
+			t.Fatalf("mode %s not applied: status=%d candidate=%+v", mode, response.Code, candidate)
+		}
+		if !strings.Contains(response.Body.String(), `value="`+string(mode)+`" selected`) {
+			t.Fatalf("saved mode %s not selected in the routing control", mode)
+		}
+	}
+	if response := post("/admin/accounts/mode", url.Values{"account": {account.id()}, "mode": {"invalid"}}); response.Code != 422 {
+		t.Fatal("invalid routing mode accepted")
 	}
 	name := `laptop<script>alert(1)</script>`
-	response = post("/admin/keys/add", url.Values{"name": {name}})
+	response := post("/admin/keys/add", url.Values{"name": {name}})
 	if response.Code != 200 || strings.Contains(response.Body.String(), name) {
 		t.Fatal("key creation failed or name not escaped")
 	}
@@ -345,22 +354,35 @@ func TestAdminKeyEventDetailsArePrivate(t *testing.T) {
 }
 
 func TestAdminPauseDisconnectsWebSockets(t *testing.T) {
-	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
-	})
-	defer upstream.Close()
-	srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("owner", 0)})
-	enableTestAdmin(t, srv)
-	cookie, csrf := loginTestAdmin(t, srv.routes())
-	conn, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "thread"))
-	defer conn.CloseNow()
-	completeWebSocketTurn(t, conn, map[string]any{"type": "response.create", "input": []any{}})
-	response := adminRequest(srv.routes(), "POST", "/admin/accounts/pause", url.Values{"csrf": {csrf}, "account": {"owner"}, "paused": {"true"}}, cookie)
-	if response.Code != 200 {
-		t.Fatalf("pause=%d", response.Code)
+	for _, control := range []struct {
+		action string
+		form   url.Values
+	}{
+		{"pause", url.Values{"paused": {"true"}}},
+		{"mode", url.Values{"mode": {"paused"}}},
+	} {
+		t.Run(control.action, func(t *testing.T) {
+			upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
+				writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+				writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+			})
+			defer upstream.Close()
+			srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("owner", 0)})
+			enableTestAdmin(t, srv)
+			cookie, csrf := loginTestAdmin(t, srv.routes())
+			conn, _ := dialWebSocket(t, proxy.URL, codexWebSocketHeaders("session", "thread"))
+			defer conn.CloseNow()
+			completeWebSocketTurn(t, conn, map[string]any{"type": "response.create", "input": []any{}})
+			form := control.form
+			form.Set("csrf", csrf)
+			form.Set("account", "owner")
+			response := adminRequest(srv.routes(), "POST", "/admin/accounts/"+control.action, form, cookie)
+			if response.Code != 200 {
+				t.Fatalf("pause=%d", response.Code)
+			}
+			readCloseStatus(t, conn, websocket.StatusServiceRestart)
+		})
 	}
-	readCloseStatus(t, conn, websocket.StatusServiceRestart)
 }
 
 func TestAdminMigrationAndPersistence(t *testing.T) {

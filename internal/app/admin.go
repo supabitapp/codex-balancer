@@ -23,7 +23,6 @@ type adminAccountView struct {
 	Name          string
 	Plan          string
 	Status        string
-	Paused        bool
 	Mode          string
 	ResetCreditID string
 	Banked        string
@@ -111,7 +110,7 @@ func (s *server) renderAdmin(w http.ResponseWriter, r *http.Request, session adm
 	view.ModeLabel = view.Mode.label()
 	for _, account := range s.pool.sorted() {
 		candidate := account.routingCandidate()
-		row := adminAccountView{ID: account.id(), Name: label(account), Plan: dashboardPlan(account.plan()), Status: dashboardStatus(candidate.status(time.Now())).Label, Paused: candidate.paused, Mode: string(candidate.mode)}
+		row := adminAccountView{ID: account.id(), Name: label(account), Plan: dashboardPlan(account.plan()), Status: dashboardStatus(candidate.status(time.Now())).Label, Mode: string(candidate.mode)}
 		row.Banked = "—"
 		row.Credits = dashboardCreditBalance(candidate.credits)
 		row.CreditsInfo = dashboardCreditInfo(candidate.credits)
@@ -216,12 +215,16 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 		}
 	case "mode":
 		mode := routingMode(r.PostForm.Get("mode"))
-		if mode != routingModeNormal && mode != routingModePriority {
-			s.renderAdmin(w, r, session, "accounts-panel", "Choose normal or priority routing.", "", http.StatusUnprocessableEntity)
+		if mode != routingModeNormal && mode != routingModePriority && mode != routingModePaused {
+			s.renderAdmin(w, r, session, "accounts-panel", "Choose normal, priority, or paused routing.", "", http.StatusUnprocessableEntity)
 			return
 		}
 		err = s.pool.setRoutingMode(account, mode)
 		notice = "Routing preference saved."
+		if err == nil && mode == routingModePaused {
+			s.invalidateAccount(account.id(), routingReasonOwnerPaused)
+			notice = "Account paused. Existing connections are reconnecting."
+		}
 	case "remove":
 		err = s.pool.remove(account)
 		if err == nil {

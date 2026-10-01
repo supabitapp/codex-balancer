@@ -51,23 +51,28 @@ func TestThreadTransportFollowsAcceptedTurns(t *testing.T) {
 	}
 }
 
-func TestStatsEndpointReportsPriorityRoutingMode(t *testing.T) {
-	account := testAccount("account-a", 20)
-	account.RoutingMode = routingModePriority
-	server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(priceSnapshot{})}
-	server.stats.apiCostNanoDollars = 12_340_000_000
-	server.stats.monthlyUsage.InputTokens = 1_234_567
-	server.stats.monthlyUsage.OutputTokens = 2_345_678
-	request := httptest.NewRequest(http.MethodGet, "/stats", nil)
-	response := httptest.NewRecorder()
+func TestStatsEndpointReportsRoutingMode(t *testing.T) {
+	for _, mode := range []routingMode{routingModePriority, routingModePaused} {
+		t.Run(string(mode), func(t *testing.T) {
+			account := testAccount("account-a", 20)
+			account.RoutingMode = routingModePriority
+			account.Paused = mode == routingModePaused
+			server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(priceSnapshot{})}
+			server.stats.apiCostNanoDollars = 12_340_000_000
+			server.stats.monthlyUsage.InputTokens = 1_234_567
+			server.stats.monthlyUsage.OutputTokens = 2_345_678
+			request := httptest.NewRequest(http.MethodGet, "/stats", nil)
+			response := httptest.NewRecorder()
 
-	server.routes().ServeHTTP(response, request)
-	var payload statsResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != http.StatusOK || payload.MonthlyAPICost != "$12.34" || payload.MonthlyInputTokens != "1.2M" || payload.MonthlyOutputTokens != "2.3M" || len(payload.Accounts) != 1 || payload.Accounts[0].Status != accountPriority || payload.Accounts[0].RoutingMode != routingModePriority {
-		t.Fatalf("status = %d, payload = %+v", response.Code, payload)
+			server.routes().ServeHTTP(response, request)
+			var payload statsResponse
+			if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusOK || payload.MonthlyAPICost != "$12.34" || payload.MonthlyInputTokens != "1.2M" || payload.MonthlyOutputTokens != "2.3M" || len(payload.Accounts) != 1 || payload.Accounts[0].Status != accountStatus(mode) || payload.Accounts[0].RoutingMode != mode {
+				t.Fatalf("status = %d, payload = %+v", response.Code, payload)
+			}
+		})
 	}
 }
 

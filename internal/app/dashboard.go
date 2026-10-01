@@ -448,6 +448,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	}{
 		{accountLive, "live"},
 		{accountPriority, "priority"},
+		{accountCredits, "credits"},
 		{accountChecking, "checking"},
 		{accountCooling, "cooling"},
 		{accountPaused, "paused"},
@@ -809,6 +810,8 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 		return dashboardStatusView{Mark: "●", Label: "live"}
 	case accountPriority:
 		return dashboardStatusView{Mark: "◆", Label: "priority"}
+	case accountCredits:
+		return dashboardStatusView{Mark: "$", Label: "credits"}
 	default:
 		return dashboardStatusView{Label: string(status)}
 	}
@@ -816,6 +819,8 @@ func dashboardStatus(status accountStatus) dashboardStatusView {
 
 func dashboardAccountStatusInfo(now time.Time, account accountStatsResponse) string {
 	switch account.Status {
+	case accountCredits:
+		return "Weekly quota exhausted; this account can use credits when no account with included quota is available."
 	case accountNotRouted:
 		return "This workspace plan is displayed here but excluded from routing."
 	case accountCooling:

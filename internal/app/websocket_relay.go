@@ -280,9 +280,13 @@ func (r *responsesWebSocketRelay) handleResponseCreate(message websocketMessage,
 		r.closeDownstream(websocket.StatusServiceRestart, "route owner changed before turn")
 		return false
 	}
-	if r.pinned && r.current.account.routingCandidate().spent && websocketRequestPortable(event) {
-		r.closeDownstream(websocket.StatusServiceRestart, "account exhausted before a new turn")
-		return false
+	candidate := r.current.account.routingCandidate()
+	if r.pinned && (candidate.spent || candidate.weeklyExhausted()) && websocketRequestPortable(event) {
+		decision := r.server.pickAccount(r.thread, []string{candidate.id}, event.Model, event.ServiceTier, nil, 0)
+		if decision.account != r.current.account || !decision.creditFallback {
+			r.closeDownstream(websocket.StatusServiceRestart, "account exhausted before a new turn")
+			return false
+		}
 	}
 	allowed := r.server.allowedAccounts(event.Model, event.ServiceTier)
 	observation(r.ctx).event(r.ctx, "turn_preflight", attribute.String("account", r.current.account.id()), attribute.Bool("pinned", r.pinned), attribute.Bool("account_move", r.current.moved), attribute.Bool("model_tier_allowed", accountAllowed(allowed, r.current.account.id())), attribute.Bool("catalog_filter_active", allowed != nil), attribute.Bool("portable_frame", websocketRequestPortable(event)), attribute.Bool("turn_state_header_present", strings.TrimSpace(r.request.Header.Get(codexTurnStateKey)) != ""))

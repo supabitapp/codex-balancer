@@ -41,16 +41,17 @@ type Account struct {
 	inflight            *accountRefresh
 	rejectedAccessToken authorizationRevision
 
-	cooldown       time.Time
-	planType       string
-	primary        window
-	secondary      window
-	spent          bool
-	resetCredits   resetCreditState
-	spendControl   *spendControlPayload
-	credits        *creditsPayload
-	usageFetchedAt time.Time
-	lastUsed       time.Time
+	cooldown        time.Time
+	planType        string
+	primary         window
+	secondary       window
+	spent           bool
+	resetCredits    resetCreditState
+	spendControl    *spendControlPayload
+	credits         *creditsPayload
+	creditsRejected bool
+	usageFetchedAt  time.Time
+	lastUsed        time.Time
 }
 
 type authorizationRevision [sha256.Size]byte
@@ -76,6 +77,7 @@ type routingMode string
 const (
 	accountLive        accountStatus = "live"
 	accountPriority    accountStatus = "priority"
+	accountCredits     accountStatus = "credits"
 	accountChecking    accountStatus = "checking"
 	accountCooling     accountStatus = "cooling"
 	accountPaused      accountStatus = "paused"
@@ -84,6 +86,7 @@ const (
 
 	routingModeNormal   routingMode = "normal"
 	routingModePriority routingMode = "priority"
+	routingModePaused   routingMode = "paused"
 )
 
 func (m routingMode) normalized() routingMode {
@@ -96,12 +99,21 @@ func (m routingMode) normalized() routingMode {
 }
 
 func (m routingMode) next() routingMode {
-	switch m.normalized() {
-	case routingModeNormal:
-		return routingModePriority
-	default:
+	switch m {
+	case routingModePriority:
+		return routingModePaused
+	case routingModePaused:
 		return routingModeNormal
+	default:
+		return routingModePriority
 	}
+}
+
+func (s accountState) effectiveRoutingMode() routingMode {
+	if s.Paused {
+		return routingModePaused
+	}
+	return s.RoutingMode.normalized()
 }
 
 func (w window) known() bool { return !w.seenAt.IsZero() }

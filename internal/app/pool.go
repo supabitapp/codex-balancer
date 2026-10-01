@@ -28,30 +28,32 @@ type Pool struct {
 }
 
 type routingCandidate struct {
-	account      *Account
-	id           string
-	plan         string
-	paused       bool
-	reauth       string
-	cooldown     time.Time
-	primary      window
-	secondary    window
-	resetCredits resetCreditState
-	spendControl *spendControlPayload
-	credits      *creditsPayload
-	spent        bool
-	pressure     float64
-	lastUsed     time.Time
-	mode         routingMode
+	account         *Account
+	id              string
+	plan            string
+	paused          bool
+	reauth          string
+	cooldown        time.Time
+	primary         window
+	secondary       window
+	resetCredits    resetCreditState
+	spendControl    *spendControlPayload
+	credits         *creditsPayload
+	creditsRejected bool
+	spent           bool
+	pressure        float64
+	lastUsed        time.Time
+	mode            routingMode
 }
 
 type routingDecision struct {
-	account    *Account
-	blocked    string
-	priorOwner string
-	reason     routingReason
-	candidates []routingCandidate
-	now        time.Time
+	account        *Account
+	blocked        string
+	priorOwner     string
+	reason         routingReason
+	candidates     []routingCandidate
+	now            time.Time
+	creditFallback bool
 }
 
 func (d routingDecision) moved() bool {
@@ -151,8 +153,8 @@ func (p *Pool) cycleRoutingMode(a *Account) (routingMode, error) {
 }
 
 func (p *Pool) setRoutingMode(a *Account, mode routingMode) error {
-	if mode != routingModeNormal && mode != routingModePriority {
-		return fmt.Errorf("unknown routing mode %q; use normal or priority", mode)
+	if mode != routingModeNormal && mode != routingModePriority && mode != routingModePaused {
+		return fmt.Errorf("unknown routing mode %q; use normal, priority, or paused", mode)
 	}
 	_, err := p.updateRoutingMode(a, func(routingMode) routingMode { return mode })
 	return err
@@ -167,8 +169,12 @@ func (p *Pool) updateRoutingMode(a *Account, update func(routingMode) routingMod
 			return nil, fmt.Errorf("no account %q", id)
 		}
 		state := accounts[i].persisted()
-		state.RoutingMode = update(state.RoutingMode.normalized())
-		mode = state.RoutingMode
+		mode = update(state.effectiveRoutingMode())
+		state.Paused = mode == routingModePaused
+		// Keep the routing preference while paused so Resume can restore it.
+		if !state.Paused {
+			state.RoutingMode = mode
+		}
 		accounts[i] = accountFromState(state)
 		return accounts, nil
 	})
@@ -216,7 +222,7 @@ func (p *Pool) route(owners []string, skip map[string]bool) routingDecision {
 	for _, owner := range owners {
 		for i := range decision.candidates {
 			candidate := &decision.candidates[i]
-			if candidate.id != owner || !candidate.routingEnabled() || candidate.paused || candidate.reauth != "" || candidate.spent {
+			if candidate.id != owner || !candidate.routingEnabled() || candidate.paused || candidate.reauth != "" || candidate.spent || candidate.weeklyExhausted() {
 				continue
 			}
 			if !candidate.quotaKnown() || !now.After(candidate.cooldown) {
@@ -241,6 +247,31 @@ func (p *Pool) route(owners []string, skip map[string]bool) routingDecision {
 	}
 	if best != nil {
 		decision.account = best.account
+		return decision
+	}
+	// Use included quota throughout the pool before charging an account's credits.
+	for _, owner := range owners {
+		for i := range decision.candidates {
+			candidate := &decision.candidates[i]
+			if candidate.id == owner && !skip[candidate.id] && candidate.creditAvailable(now) {
+				decision.account = candidate.account
+				decision.creditFallback = true
+				return decision
+			}
+		}
+	}
+	for i := range decision.candidates {
+		candidate := &decision.candidates[i]
+		if skip[candidate.id] || !candidate.creditAvailable(now) {
+			continue
+		}
+		if best == nil || candidate.routesBefore(*best, now) {
+			best = candidate
+		}
+	}
+	if best != nil {
+		decision.account = best.account
+		decision.creditFallback = true
 	}
 	return decision
 }
@@ -267,24 +298,28 @@ func (a *Account) routingCandidate() routingCandidate {
 			count:     a.resetCredits.count,
 			details:   append([]resetCredit(nil), a.resetCredits.details...),
 		},
-		spendControl: cloneSpendControl(a.spendControl),
-		credits:      cloneCredits(a.credits),
-		spent:        a.spent || spendLimitReached(a.spendControl),
-		pressure:     a.pressure(),
-		lastUsed:     a.lastUsed,
-		mode:         a.RoutingMode.normalized(),
+		spendControl:    cloneSpendControl(a.spendControl),
+		credits:         cloneCredits(a.credits),
+		creditsRejected: a.creditsRejected,
+		spent:           a.spent || spendLimitReached(a.spendControl),
+		pressure:        a.pressure(),
+		lastUsed:        a.lastUsed,
+		mode:            a.accountState.effectiveRoutingMode(),
 	}
 }
 
 func (c routingCandidate) available(now time.Time) bool {
-	return c.routingEnabled() && !c.paused && c.reauth == "" && !c.spent && c.quotaKnown() && now.After(c.cooldown)
+	return c.routingEnabled() && !c.paused && c.reauth == "" && !c.spent && !c.weeklyExhausted() && c.quotaKnown() && now.After(c.cooldown)
 }
 
 func (c routingCandidate) status(now time.Time) accountStatus {
 	if !c.paused && c.reauth == "" && !c.routingEnabled() {
 		return accountNotRouted
 	}
-	status := accountStatusAt(c.paused, c.reauth, c.cooldown, c.spent, c.quotaKnown(), now)
+	if c.creditAvailable(now) {
+		return accountCredits
+	}
+	status := accountStatusAt(c.paused, c.reauth, c.cooldown, c.spent || c.weeklyExhausted(), c.quotaKnown(), now)
 	if status == accountLive {
 		if c.mode == routingModePriority {
 			return accountPriority

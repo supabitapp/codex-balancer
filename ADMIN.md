@@ -1,7 +1,7 @@
 # Browser admin
 
-Open `/admin` to manage fast mode, pause or resume accounts, change routing
-priority, remove accounts, create or revoke API keys, and view connections and
+Open `/admin` to manage fast mode, select normal, priority, or paused account
+routing, remove accounts, create or revoke API keys, and view connections and
 recent events. This is a hidden route with no link from the public dashboard.
 Adding an account uses the existing `/accounts` sign-in flow.
 
@@ -58,8 +58,9 @@ behind a reverse proxy.
   poll. A changed mode restarts existing WebSockets and preserves account
   ownership under the normal routing rules. Repeating a mode does not restart
   connections.
-- Pause and removal retire an account's existing sockets immediately. Resume
-  and routing priority changes use the same pool operations as the TUI/CLI.
+- Account routing uses the Normal, Priority, and Paused dropdown. Select Paused
+  and save to retire the account's existing sockets immediately; select Normal
+  or Priority and save to resume. Removal also retires existing sockets.
 - New API key secrets appear only in the creation response and use the
   [pi-compatible JWT format](README.md#point-pi-at-it). Existing keys remain valid.
   Key lists show names, status, dates, and usage, never existing secrets.
