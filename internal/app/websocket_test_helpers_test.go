@@ -89,11 +89,14 @@ func newTestServer(t *testing.T, accounts []*Account) *server {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	prices := newPriceCatalog()
+	prices.install(testPriceSnapshot(t))
 	srv := &server{
 		ctx:      ctx,
 		pool:     pool,
 		catalog:  newModelCatalog(),
 		stats:    stats,
+		prices:   prices,
 		upstream: "http://127.0.0.1:1",
 		client:   newProxyClient(),
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),

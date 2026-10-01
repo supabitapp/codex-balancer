@@ -82,6 +82,7 @@
 <th>Cached</th>
 <th>Output</th>
 <th>Total</th>
+<th title="Estimated lifetime API cost at current model prices">USD burnt</th>
 <th>Created</th>
 <th class="actions"><span class="visually-hidden">Actions</span></th>
 </tr></thead>
@@ -92,8 +93,9 @@
 <td>{{.Cached}}</td>
 <td>{{.Output}}</td>
 <td>{{.Total}}</td>
+<td>{{.Cost}}</td>
 <td class="dim">{{.Created}}</td>
 <td class="actions">{{if .Active}}<form action="/admin/keys/revoke" method="post" hx-post="/admin/keys/revoke" hx-confirm="Revoke {{.Name}}? New requests using this key will be rejected.">{{template "csrf" $.Admin.CSRF}}<input type="hidden" name="name" value="{{.Name}}"><button class="action danger" type="submit" aria-label="Revoke {{.Name}}">revoke</button></form>{{end}}</td>
-</tr>{{end}}{{else}}<tr><td class="empty" colspan="8">no API keys yet</td></tr>{{end}}</tbody>
+</tr>{{end}}{{else}}<tr><td class="empty" colspan="9">no API keys yet</td></tr>{{end}}</tbody>
 </table>
 {{end}}

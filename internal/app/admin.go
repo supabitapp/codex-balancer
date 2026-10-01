@@ -28,6 +28,7 @@ type adminKeyView struct {
 	Cached  string
 	Output  string
 	Total   string
+	Cost    string
 }
 
 type dashboardAdminView struct {
@@ -112,10 +113,14 @@ func (s *server) adminPage(w http.ResponseWriter, r *http.Request, session admin
 
 func (s *server) adminKeys() ([]adminKeyView, error) {
 	keys, err := s.pool.store.readAPIKeys()
-	if err != nil {
+	if err != nil || len(keys) == 0 {
 		return nil, err
 	}
 	usage, err := s.pool.store.apiKeyUsage()
+	if err != nil {
+		return nil, err
+	}
+	costs, err := s.pool.store.apiKeyCosts(s.prices.current())
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +133,7 @@ func (s *server) adminKeys() ([]adminKeyView, error) {
 	views := make([]adminKeyView, 0, len(keys))
 	for _, key := range keys {
 		used := usage[key.Name]
+		cost := costs[key.Name]
 		views = append(views, adminKeyView{
 			DOMID:   dashboardDOMID("key", key.Name),
 			Name:    key.Name,
@@ -137,6 +143,7 @@ func (s *server) adminKeys() ([]adminKeyView, error) {
 			Cached:  formatTokenCount(used.InputDetails.CachedTokens),
 			Output:  formatTokenCount(used.OutputTokens),
 			Total:   formatTokenCount(used.TotalTokens),
+			Cost:    formatAPIPrice(cost.apiCostNanoDollars, cost.unpricedResponses),
 		})
 	}
 	return views, nil
