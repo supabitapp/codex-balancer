@@ -181,60 +181,44 @@ func (s *server) adminSessionActive(token string, now time.Time) bool {
 }
 
 func (s *server) adminEvents(w http.ResponseWriter, r *http.Request, session adminSession) {
-	if s.dashboardStreams.Add(1) > dashboardMaxStreams {
-		s.dashboardStreams.Add(-1)
-		http.Error(w, "dashboard is busy", http.StatusServiceUnavailable)
-		return
-	}
-	defer s.dashboardStreams.Add(-1)
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("X-Accel-Buffering", "no")
-	controller := http.NewResponseController(w)
 	token := adminCookieValue(r, false)
-	ticker := time.NewTicker(dashboardInterval)
-	defer ticker.Stop()
-	var done <-chan struct{}
-	if s.ctx != nil {
-		done = s.ctx.Done()
-	}
-	previous := make(map[string][]byte, len(adminUpdateTemplates))
-	var keys []adminKeyView
-	var keysAt time.Time
-	for {
-		now := time.Now()
-		if !s.adminSessionActive(token, now) {
-			return
-		}
-		if now.Sub(keysAt) >= adminKeysInterval {
-			loaded, err := s.adminKeys()
+	s.streamDashboard(w, func(send func([]byte) error) {
+		ticker := time.NewTicker(dashboardInterval)
+		defer ticker.Stop()
+		done := s.done()
+		previous := make(map[string][]byte, len(adminUpdateTemplates))
+		var keys []adminKeyView
+		var keysAt time.Time
+		for {
+			now := time.Now()
+			if !s.adminSessionActive(token, now) {
+				return
+			}
+			if now.Sub(keysAt) >= adminKeysInterval {
+				loaded, err := s.adminKeys()
+				if err != nil {
+					s.log.Error("admin stream failed", "error", err)
+					return
+				}
+				keys, keysAt = loaded, now
+			}
+			payload, err := renderDashboardUpdates(adminUpdateTemplates, s.adminDashboard(now, session, keys), previous)
 			if err != nil {
 				s.log.Error("admin stream failed", "error", err)
 				return
 			}
-			keys, keysAt = loaded, now
-		}
-		payload, err := renderDashboardUpdates(adminUpdateTemplates, s.adminDashboard(now, session, keys), previous)
-		if err != nil {
-			s.log.Error("admin stream failed", "error", err)
-			return
-		}
-		if len(payload) > 0 {
-			if err := writeSSEEvent(w, dashboardEventName, payload); err != nil {
+			if len(payload) > 0 && send(payload) != nil {
 				return
 			}
-			if err := controller.Flush(); err != nil {
+			select {
+			case <-r.Context().Done():
 				return
+			case <-done:
+				return
+			case <-ticker.C:
 			}
 		}
-		select {
-		case <-r.Context().Done():
-			return
-		case <-done:
-			return
-		case <-ticker.C:
-		}
-	}
+	})
 }
 
 func (s *server) adminSettings(w http.ResponseWriter, r *http.Request, session adminSession) {

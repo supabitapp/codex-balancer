@@ -272,6 +272,27 @@ func (s *server) dashboardPage(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) dashboardEvents(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache")
+	s.streamDashboard(w, func(send func([]byte) error) {
+		updates, start := s.dashboardUpdates.subscribe()
+		defer s.dashboardUpdates.unsubscribe(updates)
+		if start {
+			go s.broadcastDashboard()
+		}
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case payload, ok := <-updates:
+				if !ok || send(payload) != nil {
+					return
+				}
+			}
+		}
+	})
+}
+
+func (s *server) streamDashboard(w http.ResponseWriter, stream func(send func([]byte) error)) {
 	if s.dashboardStreams.Add(1) > dashboardMaxStreams {
 		s.dashboardStreams.Add(-1)
 		http.Error(w, "dashboard is busy", http.StatusServiceUnavailable)
@@ -279,42 +300,29 @@ func (s *server) dashboardEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.dashboardStreams.Add(-1)
 
-	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(w)
-
-	updates, start := s.dashboardUpdates.subscribe()
-	defer s.dashboardUpdates.unsubscribe(updates)
-	if start {
-		go s.broadcastDashboard()
-	}
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case payload, ok := <-updates:
-			if !ok {
-				return
-			}
-			if err := writeSSEEvent(w, dashboardEventName, payload); err != nil {
-				return
-			}
-			if err := controller.Flush(); err != nil {
-				return
-			}
+	stream(func(payload []byte) error {
+		if err := writeSSEEvent(w, dashboardEventName, payload); err != nil {
+			return err
 		}
+		return controller.Flush()
+	})
+}
+
+func (s *server) done() <-chan struct{} {
+	if s.ctx == nil {
+		return nil
 	}
+	return s.ctx.Done()
 }
 
 func (s *server) broadcastDashboard() {
 	ticker := time.NewTicker(dashboardInterval)
 	defer ticker.Stop()
 	previous := make(map[string][]byte, len(dashboardUpdateTemplates))
-	var done <-chan struct{}
-	if s.ctx != nil {
-		done = s.ctx.Done()
-	}
+	done := s.done()
 	for {
 		if s.dashboardUpdates.stopIfIdle() {
 			return

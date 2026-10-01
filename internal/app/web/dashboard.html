@@ -1,15 +1,17 @@
+{{define "head-common"}}<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{waterCSSURL}}">
+<link rel="stylesheet" href="{{dashboardAssetURL "dashboard.css"}}">{{end}}
+
 {{define "page"}}<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+{{template "head-common"}}
 {{if .Admin}}<meta name="htmx-config" content='{"allowEval":false,"includeIndicatorStyles":false,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
 <title>Admin · Codex Balancer</title>
+<link rel="stylesheet" href="{{dashboardAssetURL "admin.css"}}">
 {{else}}<title>Codex Balancer</title>
-{{end}}<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="{{waterCSSURL}}">
-<link rel="stylesheet" href="{{dashboardAssetURL "dashboard.css"}}">
-{{if .Admin}}<link rel="stylesheet" href="{{dashboardAssetURL "admin.css"}}">
 {{end}}<script src="{{dashboardAssetURL "dashboard.js"}}" defer></script>
 <script src="/dashboard/assets/htmx-2.0.10.min.js" defer></script>
 <script src="/dashboard/assets/idiomorph-0.7.4.min.js" defer></script>

@@ -1,16 +1,17 @@
 :root {
+  --page-width: min(calc(100% - 2rem), 100rem);
   --green-11: #218358;
   --amber-11: #ab6400;
   --red-11: #ce2c31;
 }
 * { box-sizing: border-box }
 body { max-width: none; min-height: 100vh; margin: 0; padding: 0 }
-main { width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding: 1rem 0 3rem }
+main { width: var(--page-width); margin: 0 auto; padding: 1rem 0 3rem }
 h2 { margin: 0 0 .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase }
 section { margin-top: 1rem }
-#summary, .dim, .empty, th, td, dt, dd { color: var(--text-muted) }
-#summary { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }
-#summary, td, dd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace }
+#summary, #keys-summary, .dim, .empty, th, td, dt, dd { color: var(--text-muted) }
+#summary, #keys-summary { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }
+#summary, #keys-summary, td, dd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace }
 .dot { margin: 0 .35rem; color: var(--text-muted) }
 #stream-status { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none }
 #stream-status[data-state="live"] { color: var(--green-11) }
@@ -52,5 +53,5 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
   }
 }
 @media (max-width: 760px) {
-  main { width: min(calc(100% - 1.25rem), 100rem) }
+  :root { --page-width: min(calc(100% - 1.25rem), 100rem) }
 }

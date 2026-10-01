@@ -1,12 +1,6 @@
-{{define "head"}}<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+{{define "login"}}<!doctype html><html lang="en"><head>{{template "head-common"}}
 <title>Admin · Codex Balancer</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="{{waterCSSURL}}">
-<link rel="stylesheet" href="{{dashboardAssetURL "dashboard.css"}}">
-<link rel="stylesheet" href="{{dashboardAssetURL "admin.css"}}">{{end}}
-
-{{define "login"}}<!doctype html><html lang="en"><head>{{template "head"}}</head>
+<link rel="stylesheet" href="{{dashboardAssetURL "admin.css"}}"></head>
 <body class="admin" hx-history="false"><main class="login">
 <p class="admin-brand"><strong>Codex Balancer</strong><span class="admin-badge">admin</span></p>
 {{if .Disabled}}<p>Admin access is disabled.</p><p class="dim">Set an admin password from the server terminal to enable access.</p>

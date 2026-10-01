@@ -4,7 +4,7 @@
 .admin button:disabled { opacity: .5; cursor: wait }
 .admin form { margin: 0 }
 
-.admin-bar { display: flex; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; flex-wrap: wrap; width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding: 1rem 0 .875rem; border-bottom: 1px solid var(--border) }
+.admin-bar { display: flex; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; flex-wrap: wrap; width: var(--page-width); margin: 0 auto; padding: 1rem 0 .875rem; border-bottom: 1px solid var(--border) }
 .admin-brand { display: flex; align-items: center; gap: .5rem; margin: 0 }
 .admin-brand strong { color: var(--text-bright); font-size: .9375rem }
 .admin-badge { padding: 0 .5rem; border: 1px solid currentColor; border-radius: 999px; color: var(--amber-11); font-size: .6875rem; font-weight: 600; line-height: 1.5; letter-spacing: .08em; text-transform: uppercase }
@@ -44,7 +44,6 @@ th.actions, td.actions { text-align: right }
 .menu .danger, .menu .danger:hover { color: var(--red-11) }
 form.inline { display: inline-block; margin-left: .5rem; vertical-align: middle }
 
-#keys-summary { margin-left: .5rem; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }
 .key-create { display: flex; gap: .5rem; max-width: 30rem; margin: .25rem 0 .5rem }
 .key-create input { flex: 1; min-width: 0; margin: 0; padding: .375rem .625rem; font-size: .8125rem }
 .key-create .action { padding: .375rem .875rem; font-size: .8125rem }
@@ -65,7 +64,3 @@ form.inline { display: inline-block; margin-left: .5rem; vertical-align: middle 
 .login button[type=submit] { width: 100% }
 .login > a { display: inline-block; margin-top: 1.5rem; font-size: .875rem; text-decoration: none }
 .login-error { padding: .5rem .75rem; border-left: 3px solid var(--red-11); border-radius: .25rem; background: var(--background); font-size: .875rem }
-
-@media (max-width: 760px) {
-  .admin-bar { width: min(calc(100% - 1.25rem), 100rem) }
-}
