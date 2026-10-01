@@ -304,6 +304,46 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 	}
 }
 
+func TestAdminKeyEventDetailsArePrivate(t *testing.T) {
+	srv := newTestServer(t, nil)
+	enableTestAdmin(t, srv)
+	h := srv.routes()
+	cookie, csrf := loginTestAdmin(t, h)
+	const name = "private-key-owner"
+	for _, action := range []string{"add", "revoke"} {
+		response := adminRequest(h, "POST", "/admin/keys/"+action, url.Values{"csrf": {csrf}, "name": {name}}, cookie)
+		if response.Code != http.StatusOK {
+			t.Fatalf("key %s status=%d", action, response.Code)
+		}
+		keys, err := srv.pool.store.readAPIKeys()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(keys) != 1 {
+			t.Fatalf("keys=%d, want 1", len(keys))
+		}
+		for _, path := range []string{"/dashboard", "/stats"} {
+			public := adminRequest(h, "GET", path, nil)
+			if public.Code != http.StatusOK {
+				t.Fatalf("%s status=%d", path, public.Code)
+			}
+			for _, private := range []string{name, keys[0].Secret} {
+				if strings.Contains(public.Body.String(), private) {
+					t.Fatalf("%s exposed key details after %s", path, action)
+				}
+			}
+		}
+		dashboard := adminRequest(h, "GET", "/dashboard", nil)
+		if !strings.Contains(dashboard.Body.String(), "<td>admin key "+action+"</td>\n<td></td>\n<td class=\"dim\"></td>") {
+			t.Fatalf("dashboard missing key %s event with empty detail", action)
+		}
+		status := adminRequest(h, "GET", "/admin/status", nil, cookie)
+		if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), "<td>admin key "+action+"</td><td></td><td class=\"detail\">"+name+"</td>") {
+			t.Fatalf("admin status lost key %s details", action)
+		}
+	}
+}
+
 func TestAdminPauseDisconnectsWebSockets(t *testing.T) {
 	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
 		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})

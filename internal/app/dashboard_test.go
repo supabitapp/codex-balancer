@@ -127,6 +127,8 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "high", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	stats.note("admin account refresh", "unused", "Quota and banked credits refreshed for alice@example.com.")
+	stats.note("admin key add", "", "private-key-owner")
+	stats.note("admin key revoke", "", "private-key-owner")
 	tokenPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"email":"alice@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"unused","chatgpt_plan_type":"pro"}}`))
 	account := accountFromState(accountState{IDToken: "x." + tokenPayload + ".x"})
 	server := &server{
@@ -186,6 +188,8 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 		`<td>connection retry</td>`,
 		`&lt;script&gt;upstream unavailable&lt;/script&gt;`,
 		`Quota and banked credits refreshed for a***e@***.com.`,
+		"<td>admin key add</td>\n<td></td>\n<td class=\"dim\"></td>",
+		"<td>admin key revoke</td>\n<td></td>\n<td class=\"dim\"></td>",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard update missing %q:\n%s", expected, body)
@@ -196,7 +200,7 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 			t.Fatalf("dashboard update replaces stable container %q", replaced)
 		}
 	}
-	for _, private := range []string{"alice@example.com", "019fe5c2private", "203.0.113.42", "<script>"} {
+	for _, private := range []string{"alice@example.com", "019fe5c2private", "203.0.113.42", "<script>", "private-key-owner"} {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard update exposed %q", private)
 		}

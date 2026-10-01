@@ -467,6 +467,9 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	events := make([]dashboardEventView, 0, len(snapshot.Events))
 	for i := len(snapshot.Events) - 1; i >= 0; i-- {
 		event := snapshot.Events[i]
+		if strings.HasPrefix(event.Kind, "admin key ") {
+			event.Detail = ""
+		}
 		events = append(events, dashboardEventView{
 			DOMID:   dashboardDOMID("event", event.At.Format(time.RFC3339Nano), event.Kind, event.Account, event.Detail),
 			At:      event.At.UTC().Format("15:04:05") + " UTC",
