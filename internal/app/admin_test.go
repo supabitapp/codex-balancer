@@ -305,6 +305,9 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 	if strings.Contains(page.Body.String(), keys[0].Secret) || strings.Contains(page.Body.String(), account.AccessToken) {
 		t.Fatal("credentials exposed")
 	}
+	if !strings.Contains(page.Body.String(), `popovertarget="key-create"`) || !strings.Contains(page.Body.String(), `<form id="key-create" class="key-create" popover`) {
+		t.Fatal("key creation is not behind the add button")
+	}
 	response = post("/admin/keys/add", url.Values{"name": {name}})
 	if response.Code != 409 {
 		t.Fatal("duplicate key accepted")

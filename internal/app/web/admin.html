@@ -59,10 +59,10 @@
 </div>{{end}}
 
 {{define "keys-section"}}<section id="keys-section">
-<h2>API keys <span id="keys-summary">{{template "keys-summary" .}}</span></h2>
-<form class="key-create" action="/admin/keys/add" method="post" hx-post="/admin/keys/add" data-reset-on-success>{{template "csrf" .Admin.CSRF}}
-<input name="name" placeholder="New key name, e.g. my-laptop" aria-label="New key name" required maxlength="128" autocomplete="off">
-<button class="action primary" type="submit">Create key</button>
+<h2>API keys <span id="keys-summary">{{template "keys-summary" .}}</span><button class="menu-trigger key-add" type="button" popovertarget="key-create" aria-label="Create API key">+</button></h2>
+<form id="key-create" class="key-create" popover action="/admin/keys/add" method="post" hx-post="/admin/keys/add" data-reset-on-success>{{template "csrf" .Admin.CSRF}}
+<input name="name" placeholder="Key name, e.g. my-laptop" aria-label="New key name" required maxlength="128" autocomplete="off" autofocus>
+<button class="action primary" type="submit">Create</button>
 </form>
 <div id="keys" class="scroll">
 {{template "keys" .}}

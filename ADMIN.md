@@ -5,7 +5,7 @@ emails and IDs, client IP addresses, API key names on active threads, full
 thread and turn identifiers, and unmasked event details. Admin controls sit
 inline: fast mode in the overview; a routing dropdown, banked reset, and a
 ⋯ menu with refresh and remove on each account row; and an API keys section
-to create or revoke keys. This
+with a + button to create keys and per-key revoke. This
 is a hidden route with no link from the public dashboard. Adding an account
 uses the existing `/accounts` sign-in flow.
 
