@@ -142,8 +142,8 @@ func TestUsagePollReportsCreditsAcrossAccountViews(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/admin", nil)
 			request.Header.Set("HX-Request", "true")
 			response = httptest.NewRecorder()
-			server.renderAdmin(response, request, adminSession{}, "accounts-panel", "", "", http.StatusOK)
-			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "<th>Credits</th>") || !strings.Contains(response.Body.String(), ">"+test.display+"</td>") {
+			server.renderAdmin(response, request, adminSession{}, "", "", http.StatusOK)
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "<th>Credits</th>") || !strings.Contains(response.Body.String(), ">"+test.display+"<") {
 				t.Fatalf("admin missing credit balance %q:\n%s", test.display, response.Body.String())
 			}
 			terminal := dashboard{pool: server.pool, stats: server.stats, snap: server.stats.snapshot(), width: 160}

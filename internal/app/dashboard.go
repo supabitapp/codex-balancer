@@ -23,7 +23,7 @@ const (
 	waterCSSURL              = "https://cdn.jsdelivr.net/npm/water.css@2/out/water.css"
 )
 
-//go:embed web/admin.html web/admin.css web/accounts.css web/accounts.html web/accounts.js web/dashboard.html web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/idiomorph-0.7.4.min.js web/sse-2.2.4.min.js
+//go:embed web/admin.html web/admin.css web/admin.js web/accounts.css web/accounts.html web/accounts.js web/dashboard.html web/dashboard.css web/dashboard.js web/favicon.svg web/htmx-2.0.10.min.js web/idiomorph-0.7.4.min.js web/sse-2.2.4.min.js
 var dashboardFiles embed.FS
 
 func webTemplate(name string) *template.Template {
@@ -37,7 +37,7 @@ var dashboardTemplate = template.Must(webTemplate("dashboard").Funcs(template.Fu
 	"dashboardAssetURL": dashboardAssetURL,
 	"dashboardStatus":   dashboardStatus,
 	"dashboardPlan":     dashboardPlan,
-}).ParseFS(dashboardFiles, "web/dashboard.html"))
+}).ParseFS(dashboardFiles, "web/dashboard.html", "web/admin.html"))
 
 var dashboardUpdateTemplates = []string{
 	"overview-update",
@@ -50,6 +50,7 @@ var dashboardUpdateTemplates = []string{
 }
 
 type dashboardView struct {
+	Admin      *dashboardAdminView
 	Summary    []dashboardCount
 	Accounts   []dashboardAccountView
 	Workspaces []dashboardWorkspaceView
@@ -65,6 +66,9 @@ type dashboardCount struct {
 
 type dashboardAccountView struct {
 	DOMID           string
+	ID              string
+	Mode            routingMode
+	ResetCreditID   string
 	Name            string
 	Plan            string
 	PlanInfo        string
@@ -85,6 +89,7 @@ type dashboardAccountView struct {
 
 type dashboardWorkspaceView struct {
 	DOMID       string
+	ID          string
 	Name        string
 	Plan        string
 	PlanInfo    string
@@ -259,7 +264,7 @@ func (s *server) dashboardPage(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline' "+waterCSSURL+"; script-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline' "+waterCSSURL+"; script-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -359,8 +364,12 @@ func renderDashboard(name string, view dashboardView) ([]byte, error) {
 }
 
 func renderDashboardChanges(view dashboardView, previous map[string][]byte) ([]byte, error) {
+	return renderDashboardUpdates(dashboardUpdateTemplates, view, previous)
+}
+
+func renderDashboardUpdates(names []string, view dashboardView, previous map[string][]byte) ([]byte, error) {
 	var output bytes.Buffer
-	for _, name := range dashboardUpdateTemplates {
+	for _, name := range names {
 		fragment, err := renderDashboard(name, view)
 		if err != nil {
 			return nil, err
@@ -383,6 +392,10 @@ func fullDashboardUpdate(fragments map[string][]byte) []byte {
 }
 
 func (s *server) currentDashboard(now time.Time) dashboardView {
+	return s.dashboardAt(now, false)
+}
+
+func (s *server) dashboardAt(now time.Time, private bool) dashboardView {
 	snapshot := s.stats.snapshot()
 	s.countries.refresh(snapshot.Threads)
 	stats := s.statsResponseAt(now, snapshot)
@@ -397,12 +410,19 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	workspaces := make([]dashboardWorkspaceView, 0)
 	for i, account := range stats.Accounts {
 		name := account.Email
+		if private && account.privateEmail != "" {
+			name = account.privateEmail
+		}
 		if name == "" {
 			name = "account " + strconv.Itoa(i+1)
 		}
 		names[account.ID] = name
 		if !routablePlan(account.Plan) {
-			workspaces = append(workspaces, newDashboardWorkspaceView(now, name, account))
+			workspace := newDashboardWorkspaceView(now, name, account)
+			if private {
+				workspace.ID = account.ID
+			}
+			workspaces = append(workspaces, workspace)
 			continue
 		}
 		counts[account.Status]++
@@ -420,7 +440,7 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 		if usage.UnpricedResponses > 0 {
 			monthlyBurnInfo = "Some responses have no available price. " + monthlyBurnInfo
 		}
-		accounts = append(accounts, dashboardAccountView{
+		view := dashboardAccountView{
 			DOMID:           dashboardDOMID("account", account.ID),
 			Name:            name,
 			Plan:            account.Plan,
@@ -438,7 +458,13 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 			OpenWebSockets:  dashboardNumber(account.OpenWebSockets),
 			Traffic:         dashboardNumber(account.Traffic24hPercent),
 			Activity:        sparkline(account.Activity),
-		})
+		}
+		if private {
+			view.ID = account.ID
+			view.Mode = account.RoutingMode
+			view.ResetCreditID = dashboardResetCreditID(now, account.ResetCredits)
+		}
+		accounts = append(accounts, view)
 	}
 
 	summary := make([]dashboardCount, 0, 6)
@@ -462,13 +488,20 @@ func (s *server) currentDashboard(now time.Time) dashboardView {
 	threadViews := make([]dashboardThreadView, 0, len(snapshot.Threads))
 	for _, thread := range snapshot.Threads {
 		client := newDashboardClientView(thread, &s.countries)
-		threadViews = append(threadViews, newDashboardThreadView(thread, names[thread.Account], client, now))
+		view := newDashboardThreadView(thread, names[thread.Account], client, now)
+		if private {
+			view.Client = privateDashboardClientView(thread, client)
+			view.Info = privateDashboardThreadInfo(thread)
+		}
+		threadViews = append(threadViews, view)
 	}
 
 	events := make([]dashboardEventView, 0, len(snapshot.Events))
 	for i := len(snapshot.Events) - 1; i >= 0; i-- {
 		event := snapshot.Events[i]
-		if strings.HasPrefix(event.Kind, "admin key ") {
+		if private {
+			event.Detail = event.private
+		} else if strings.HasPrefix(event.Kind, "admin key ") {
 			event.Detail = ""
 		}
 		events = append(events, dashboardEventView{
@@ -667,6 +700,33 @@ func newDashboardThreadView(thread ThreadSnapshot, account string, client dashbo
 	}
 }
 
+func privateDashboardClientView(thread ThreadSnapshot, client dashboardClientView) dashboardClientView {
+	if thread.apiKeyName != "" {
+		client.Suffix = thread.apiKeyName
+	}
+	if thread.ClientIP != "" {
+		client.Info += "\n" + thread.ClientIP
+	}
+	return client
+}
+
+func privateDashboardThreadInfo(thread ThreadSnapshot) string {
+	lines := []string{"Thread: " + thread.Key}
+	if info := dashboardMetadataInfo(thread.Metadata, func(value string) string { return value }); info != "" {
+		lines = append(lines, info)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func dashboardResetCreditID(now time.Time, credits []resetCreditStatsResponse) string {
+	for _, credit := range credits {
+		if credit.id != "" && (credit.ExpiresAt == nil || credit.ExpiresAt.After(now)) {
+			return credit.id
+		}
+	}
+	return ""
+}
+
 func dashboardThreadModel(thread ThreadSnapshot) (string, string) {
 	if len(thread.models) < 2 {
 		return dashboardModel(thread.Model, thread.Effort), ""
@@ -704,19 +764,23 @@ func dashboardModelName(model string) string {
 }
 
 func dashboardThreadInfo(metadata turnMetadata) string {
+	return dashboardMetadataInfo(metadata, shortKeySuffix)
+}
+
+func dashboardMetadataInfo(metadata turnMetadata, identifier func(string) string) string {
 	lines := make([]string, 0, 8)
 	for _, item := range []struct {
 		label string
 		value string
 	}{
 		{"Request", metadata.RequestKind},
-		{"Codex thread", shortKeySuffix(metadata.ThreadID)},
-		{"Turn", shortKeySuffix(metadata.TurnID)},
-		{"Window", shortKeySuffix(metadata.WindowID)},
+		{"Codex thread", identifier(metadata.ThreadID)},
+		{"Turn", identifier(metadata.TurnID)},
+		{"Window", identifier(metadata.WindowID)},
 		{"Agent", metadata.SubagentKind},
-		{"Parent thread", shortKeySuffix(metadata.ParentThreadID)},
-		{"Parent turn", shortKeySuffix(metadata.ParentTurnID)},
-		{"Forked from", shortKeySuffix(metadata.ForkedFromThreadID)},
+		{"Parent thread", identifier(metadata.ParentThreadID)},
+		{"Parent turn", identifier(metadata.ParentTurnID)},
+		{"Forked from", identifier(metadata.ForkedFromThreadID)},
 	} {
 		if item.value != "" {
 			lines = append(lines, item.label+": "+item.value)

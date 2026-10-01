@@ -43,7 +43,7 @@ func TestThreadTransportFollowsAcceptedTurns(t *testing.T) {
 		{transportWebSocket, false, transportHTTP}, // a warmup must not replace the last turn
 		{transportWebSocket, true, transportWebSocket},
 	} {
-		stats.recordAccepted(time.Now(), "thread", "client", "", "account", "model", "", "", step.via, turnMetadata{}, step.counted)
+		stats.recordAccepted(time.Now(), "thread", "client", apiKeyIdentity{}, "account", "model", "", "", step.via, turnMetadata{}, step.counted)
 		threads := stats.snapshot().Threads
 		if len(threads) != 1 || threads[0].Via != step.want {
 			t.Fatalf("after via=%s counted=%t: threads=%+v, want transport %s", step.via, step.counted, threads, step.want)
@@ -376,7 +376,7 @@ func TestCatalogRefreshRepricesMonthlyUsageWithoutPersistingThreadHistory(t *tes
 		t.Fatal(err)
 	}
 	stats.activateThread("thread")
-	stats.accepted("", "thread", "thread", "client", "", "account", "gpt-5.4", "high", "default", transportWebSocket, turnMetadata{}, true)
+	stats.accepted("", "thread", "thread", "client", apiKeyIdentity{}, "account", "gpt-5.4", "high", "default", transportWebSocket, turnMetadata{}, true)
 	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
 	stats.recordUsage("thread", "account", "gpt-5.4", "high", "default", usage)
 	before := stats.snapshot().Threads[0]

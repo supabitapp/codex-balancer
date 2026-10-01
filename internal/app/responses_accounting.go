@@ -71,7 +71,7 @@ func (r *responseAccounting) responseCreated() bool {
 				r.liveThreads[turn.statsThread] = struct{}{}
 			}
 		}
-		r.server.stats.recordAccepted(acceptedAt, turn.statsThread, requestIP(r.request), r.apiKey.suffix, r.account.account.id(), turn.model, turn.effort, turn.serviceTier, r.via, turn.metadata, turn.counted)
+		r.server.stats.recordAccepted(acceptedAt, turn.statsThread, requestIP(r.request), r.apiKey, r.account.account.id(), turn.model, turn.effort, turn.serviceTier, r.via, turn.metadata, turn.counted)
 		if acceptance.logSwitch {
 			r.server.log.Info("response account switch accepted",
 				"thread", turn.statsThread,

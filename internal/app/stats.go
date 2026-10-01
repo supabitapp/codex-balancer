@@ -78,7 +78,7 @@ type rollingCounter struct {
 type threadStats struct {
 	key                string
 	clientIP           string
-	apiKeySuffix       string
+	apiKey             apiKeyIdentity
 	account            string
 	model              string
 	models             []threadModel
@@ -122,6 +122,7 @@ type Event struct {
 	Kind    string    `json:"kind"`
 	Account string    `json:"account"`
 	Detail  string    `json:"detail"`
+	private string
 }
 
 func newStatsWithPrices(prices priceSnapshot) *Stats {
@@ -200,14 +201,14 @@ func (s *Stats) failedOver(account, reason string) {
 	s.appendEvent(Event{At: now, Kind: eventFailover, Account: account, Detail: reason})
 }
 
-func (s *Stats) accepted(session, routeThread, statsThread, clientIP, apiKeySuffix, account, model, effort, serviceTier string, via transport, metadata turnMetadata, counted bool) bool {
+func (s *Stats) accepted(session, routeThread, statsThread, clientIP string, apiKey apiKeyIdentity, account, model, effort, serviceTier string, via transport, metadata turnMetadata, counted bool) bool {
 	now := time.Now()
 	persisted := s.persistRoute(storedRoute{At: now, Session: session, Thread: routeThread, Account: account})
-	s.recordAccepted(now, statsThread, clientIP, apiKeySuffix, account, model, effort, serviceTier, via, metadata, counted)
+	s.recordAccepted(now, statsThread, clientIP, apiKey, account, model, effort, serviceTier, via, metadata, counted)
 	return persisted
 }
 
-func (s *Stats) recordAccepted(at time.Time, statsThread, clientIP, apiKeySuffix, account, model, effort, serviceTier string, via transport, metadata turnMetadata, counted bool) {
+func (s *Stats) recordAccepted(at time.Time, statsThread, clientIP string, apiKey apiKeyIdentity, account, model, effort, serviceTier string, via transport, metadata turnMetadata, counted bool) {
 	if !counted {
 		return
 	}
@@ -215,7 +216,7 @@ func (s *Stats) recordAccepted(at time.Time, statsThread, clientIP, apiKeySuffix
 	defer s.mu.Unlock()
 	s.applyRouted(at, statsThread, clientIP, account, model, effort, serviceTier, metadata)
 	if thread := s.threads[statsThread]; thread != nil {
-		thread.apiKeySuffix = apiKeySuffix
+		thread.apiKey = apiKey
 		thread.via = via
 	}
 }
@@ -465,6 +466,7 @@ func (s *Stats) reprice(prices priceSnapshot) error {
 }
 
 func (s *Stats) appendEvent(event Event) {
+	event.private = event.Detail
 	event.Detail = eventEmailPattern.ReplaceAllStringFunc(event.Detail, maskEmail)
 	s.events = append(s.events, event)
 	if len(s.events) > eventLog {
@@ -530,6 +532,7 @@ type ThreadSnapshot struct {
 	Key                string `json:"key"`
 	ClientIP           string `json:"-"`
 	APIKeySuffix       string `json:"-"`
+	apiKeyName         string
 	Account            string `json:"account"`
 	Model              string `json:"model"`
 	models             []threadModel
@@ -609,7 +612,8 @@ func (s *Stats) snapshot() Snapshot {
 		out.Threads = append(out.Threads, ThreadSnapshot{
 			Key:                t.key,
 			ClientIP:           t.clientIP,
-			APIKeySuffix:       t.apiKeySuffix,
+			APIKeySuffix:       t.apiKey.suffix,
+			apiKeyName:         t.apiKey.name,
 			Account:            t.account,
 			Model:              t.model,
 			models:             models,
@@ -722,8 +726,9 @@ type statsResponse struct {
 }
 
 type accountStatsResponse struct {
-	ID                     string                        `json:"id"`
-	Email                  string                        `json:"email,omitempty"`
+	ID                     string `json:"id"`
+	Email                  string `json:"email,omitempty"`
+	privateEmail           string
 	Plan                   string                        `json:"plan"`
 	Subscription           *subscriptionStatsResponse    `json:"subscription,omitempty"`
 	Status                 accountStatus                 `json:"status"`
@@ -786,6 +791,7 @@ type routingPriorityStatsResponse struct {
 
 type resetCreditStatsResponse struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	id        string
 }
 
 func (s *server) statsJSON(w http.ResponseWriter, _ *http.Request) {
@@ -831,6 +837,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 				}
 				resetCredits = append(resetCredits, resetCreditStatsResponse{
 					ExpiresAt: credit.ExpiresAt,
+					id:        credit.ID,
 				})
 			}
 		}
@@ -860,6 +867,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 		out.Accounts = append(out.Accounts, accountStatsResponse{
 			ID:                     claims.Auth.AccountID,
 			Email:                  maskEmail(claims.Email),
+			privateEmail:           claims.Email,
 			Plan:                   plan,
 			Subscription:           subscriptionStats(claims, plan),
 			Status:                 status,

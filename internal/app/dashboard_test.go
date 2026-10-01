@@ -59,8 +59,7 @@ func TestDashboardPageConnectsHTMXSSE(t *testing.T) {
 		`hx-swap="none"`,
 		`id="stream-status" data-state="connecting" aria-live="polite">connecting`,
 		`id="dashboard"`,
-		`table { width: max-content; min-width: 100%;`,
-		`.status-mark.status-live { color: var(--green-11) }`,
+		`<link rel="stylesheet" href="` + dashboardAssetURL("dashboard.css") + `">`,
 		`<section id="workspace-section" hidden>`,
 		`<h2>Active Threads&nbsp; <span id="routing-count">0</span></h2>`,
 		`no live threads`,
@@ -68,6 +67,11 @@ func TestDashboardPageConnectsHTMXSSE(t *testing.T) {
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
+		}
+	}
+	for _, admin := range []string{"/admin", "admin.css", "admin.js", "htmx-config", `name="csrf"`} {
+		if strings.Contains(body, admin) {
+			t.Fatalf("public dashboard contains admin markup %q", admin)
 		}
 	}
 	overview := strings.Index(body, `<h2>Overview `)
@@ -98,6 +102,9 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 	}{
 		{"/favicon.svg", "image/svg+xml", "public, max-age=3600", 100},
 		{"/dashboard/assets/dashboard.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 500},
+		{"/dashboard/assets/dashboard.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable", 500},
+		{"/dashboard/assets/admin.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable", 500},
+		{"/dashboard/assets/admin.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 500},
 		{"/dashboard/assets/htmx-2.0.10.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
 		{"/dashboard/assets/idiomorph-0.7.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
 		{"/dashboard/assets/sse-2.2.4.min.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", 1_000},
@@ -123,7 +130,7 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("019fe5c2private")
-	stats.accepted("", "019fe5c2private", "019fe5c2private", "203.0.113.42", "ret", "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{}, true)
+	stats.accepted("", "019fe5c2private", "019fe5c2private", "203.0.113.42", apiKeyIdentity{name: "laptop", suffix: "ret"}, "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{}, true)
 	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "high", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	stats.note("admin account refresh", "unused", "Quota and banked credits refreshed for alice@example.com.")
@@ -200,7 +207,7 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 			t.Fatalf("dashboard update replaces stable container %q", replaced)
 		}
 	}
-	for _, private := range []string{"alice@example.com", "019fe5c2private", "203.0.113.42", "<script>", "private-key-owner"} {
+	for _, private := range []string{"alice@example.com", "019fe5c2private", "203.0.113.42", "<script>", "private-key-owner", "laptop", "/admin/", `name="csrf"`} {
 		if strings.Contains(body, private) {
 			t.Fatalf("dashboard update exposed %q", private)
 		}
@@ -531,15 +538,6 @@ func TestDashboardShortensPlanLabelOnlyInPresentation(t *testing.T) {
 	if view.Accounts[0].Plan != plan || s.currentStats(now).Accounts[0].Plan != plan || account.plan() != plan {
 		t.Error("dashboard rendering changed the underlying plan value")
 	}
-	var admin bytes.Buffer
-	if err := adminTemplate.ExecuteTemplate(&admin, "accounts-panel", adminView{
-		Accounts: []adminAccountView{{Plan: account.plan()}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(admin.String(), "<small>"+plan+"</small>") {
-		t.Error("admin must retain the full plan label")
-	}
 	tui := dashboard{pool: s.pool, stats: s.stats, width: 160}
 	if !strings.Contains(tui.accounts(1), fit(plan, 4)) {
 		t.Error("TUI must continue using the original plan value")
@@ -850,7 +848,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 	metadata := turnMetadata{RequestKind: "compaction", ThreadID: "019fe5c2private", TurnID: "019fe730private", SubagentKind: "compact"}
 	stats.activateThread("thread")
 	stats.applyRouted(now, "thread", "203.0.113.42", "account", "gpt-5.6-sol", "xhigh", "", metadata)
-	stats.threads["thread"].apiKeySuffix = "ret"
+	stats.threads["thread"].apiKey = apiKeyIdentity{suffix: "ret"}
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300, TotalTokens: 2_300}
 	usage.InputDetails.CachedTokens = 1_500
 	stats.applyUsageAt(now, "thread", "account", "gpt-5.6-sol", "xhigh", "default", usage)

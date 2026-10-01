@@ -1,9 +1,12 @@
 # Browser admin
 
-Open `/admin` to manage fast mode, select normal, priority, or paused account
-routing, remove accounts, create or revoke API keys, and view connections and
-recent events. This is a hidden route with no link from the public dashboard.
-Adding an account uses the existing `/accounts` sign-in flow.
+Open `/admin` for the live dashboard with nothing redacted: full account
+emails and IDs, client IP addresses, API key names on active threads, full
+thread and turn identifiers, and unmasked event details. Admin controls sit
+inline: fast mode in the overview, routing, banked resets, refresh, and removal
+on each account row, and an API keys section to create or revoke keys. This
+is a hidden route with no link from the public dashboard. Adding an account
+uses the existing `/accounts` sign-in flow.
 
 ## Set or reset the password
 
@@ -58,16 +61,18 @@ behind a reverse proxy.
   poll. A changed mode restarts existing WebSockets and preserves account
   ownership under the normal routing rules. Repeating a mode does not restart
   connections.
-- Account routing uses the Normal, Priority, and Paused dropdown. Select Paused
-  and save to retire the account's existing sockets immediately; select Normal
-  or Priority and save to resume. Removal also retires existing sockets.
+- Account routing uses the normal, priority, and paused toggle on each row and
+  saves on click. Paused retires the account's existing sockets immediately;
+  normal or priority resumes routing. Removal also retires existing sockets.
 - New API key secrets appear only in the creation response and use the
   [pi-compatible JWT format](README.md#point-pi-at-it). Existing keys remain valid.
   Key lists show names, status, dates, and usage, never existing secrets.
   Revocation rejects new requests using the key; it does not terminate
   already-authenticated WebSockets.
-- The status section refreshes every five seconds. Refresh the page to pick
-  up account or key changes made in another browser or through the CLI.
+- The admin dashboard streams updates every second over `/admin/events`, a
+  per-session stream that ends when the session expires or signs out. API key
+  usage totals refresh every 30 seconds and after key changes.
 
-The UI uses Go templates and HTMX. Full-page form submissions also work
-without JavaScript; HTMX provides section updates and confirmation dialogs.
+The UI reuses the dashboard's Go templates with HTMX. Full-page form
+submissions also work without JavaScript; HTMX provides in-place updates,
+notices, and confirmation dialogs.

@@ -98,6 +98,14 @@ func (s *server) routes() http.Handler {
 		webAsset("web/admin.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable"),
 	)
 	mux.HandleFunc(
+		"GET /dashboard/assets/admin.js",
+		webAsset("web/admin.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable"),
+	)
+	mux.HandleFunc(
+		"GET /dashboard/assets/dashboard.css",
+		webAsset("web/dashboard.css", "text/css; charset=utf-8", "public, max-age=31536000, immutable"),
+	)
+	mux.HandleFunc(
 		"GET /dashboard/assets/accounts.css",
 		webAsset(
 			"web/accounts.css",

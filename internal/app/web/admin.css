@@ -1,43 +1,59 @@
-* { box-sizing: border-box }
-body { max-width: 1100px; padding: 1rem; margin: 0 auto }
-main { padding: 1rem 0 3rem }
-header, .section-title { display: flex; align-items: center; justify-content: space-between; gap: 1rem }
-a { text-decoration: underline; text-underline-offset: .15em }
-h1 { margin: .75rem 0 0 }
-h2 { margin-top: 0; font-size: 1.15rem }
-h3 { font-size: 1rem }
-section { margin-top: 1.5rem; padding: 1.5rem; border: 1px solid var(--border, #ccc); border-radius: .5rem }
-.controls { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap }
-.controls input, .controls select, .controls button, td button { margin: 0 }
-.controls input { flex: 1; min-width: 8rem }
-form { margin: 0 }
-label { display: block; margin-bottom: .5rem }
-.muted, small { color: var(--text-muted, #666); font-size: .875rem }
-small { display: block; margin-top: .25rem }
-.notice { border-left: 3px solid #218358; padding: .75rem; background: var(--background-alt, #eee) }
-.error { border-color: #ce2c31 }
-.danger { color: #b32323 }
-.scroll { overflow-x: auto }
-table { width: 100%; font-size: .875rem; white-space: nowrap }
-th, td { padding: .75rem .5rem; vertical-align: middle }
-.detail { white-space: normal; min-width: 12rem; overflow-wrap: anywhere }
-.secret { white-space: pre-wrap; overflow-wrap: anywhere; user-select: all }
-.login { max-width: 400px; margin: 8vh auto }
-.login input[type=password] { width: 100% }
-.login button { margin-top: .5rem }
-button:disabled { opacity: .5; cursor: wait }
-@media (prefers-color-scheme: dark) { .danger { color: #ff9592 } }
-@media (max-width: 600px) { body { padding: .75rem } section { padding: 1rem } .section-title { align-items: baseline; flex-wrap: wrap } }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
 
-.accounts-table { table-layout: auto }
-.accounts-table th { color: var(--text-muted, #666); font-size: .75rem; font-weight: 500; text-align: left }
-.accounts-table td { border-bottom: 1px solid var(--border, #ddd) }
-.accounts-table tr:nth-child(even) { background: transparent }
-.accounts-table .controls { flex-wrap: nowrap; gap: .375rem }
-.accounts-table form { flex-shrink: 0 }
-.accounts-table button, .accounts-table select { font: inherit; line-height: 1.25; padding: .4rem .6rem; margin: 0; border: 1px solid var(--border, #ddd); border-radius: .375rem; background: var(--background-body, #fff) }
-.accounts-table button:hover { background: var(--background, #eee) }
-.accounts-table select { padding-right: 1.5rem }
-.accounts-table .danger { border-color: transparent; background: transparent }
-.accounts-table .banked-controls { gap: .625rem }
-.accounts-table .banked-controls span { min-width: 1ch; font-variant-numeric: tabular-nums }
+.admin button { margin: 0 }
+.admin button:disabled { opacity: .5; cursor: wait }
+.admin form { margin: 0 }
+
+.admin-bar { display: flex; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; flex-wrap: wrap; width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding: 1rem 0 .875rem; border-bottom: 1px solid var(--border) }
+.admin-brand { display: flex; align-items: center; gap: .5rem; margin: 0 }
+.admin-brand strong { color: var(--text-bright); font-size: .9375rem }
+.admin-badge { padding: 0 .5rem; border: 1px solid currentColor; border-radius: 999px; color: var(--amber-11); font-size: .6875rem; font-weight: 600; line-height: 1.5; letter-spacing: .08em; text-transform: uppercase }
+.admin-bar nav { display: flex; align-items: center; gap: 1.25rem; font-size: .875rem }
+.admin-bar nav a { color: var(--text-muted); text-decoration: none }
+.admin-bar nav a:hover { color: var(--text-bright) }
+
+.action { padding: .125rem .625rem; border: 1px solid var(--border); border-radius: .375rem; background: transparent; color: var(--text-main); font-size: .75rem; font-weight: 500; line-height: 1.5; cursor: pointer }
+.action:hover { background: var(--background); color: var(--text-bright) }
+.action.danger { color: var(--red-11) }
+.action.danger:hover { border-color: var(--red-11); background: transparent; color: var(--red-11) }
+.action.primary { border-color: transparent; background: var(--text-bright); color: var(--background-body) }
+.action.primary:hover { background: var(--text-main); color: var(--background-body) }
+
+.segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: .5rem; background: var(--background) }
+.segmented button { padding: 0 .5rem; border: 0; border-radius: .375rem; background: transparent; color: var(--text-muted); font-size: .75rem; font-weight: 500; line-height: 1.5rem; cursor: pointer }
+.segmented button:hover { background: transparent; color: var(--text-bright) }
+.segmented button[aria-pressed="true"] { background: var(--background-body); color: var(--text-bright); box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / .12) }
+.segmented button[value="priority"][aria-pressed="true"], .segmented button[value="on"][aria-pressed="true"] { color: var(--amber-11) }
+.segmented button[value="paused"][aria-pressed="true"], .segmented button[value="off"][aria-pressed="true"] { color: var(--red-11) }
+.overview .segmented { margin-top: .125rem }
+
+.has-tooltip.quiet { text-decoration: none }
+th.actions, td.actions { text-align: right }
+.action-group { display: inline-flex; gap: .375rem }
+form.inline { display: inline-block; margin-left: .5rem; vertical-align: middle }
+
+#keys-summary { margin-left: .5rem; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }
+.key-create { display: flex; gap: .5rem; max-width: 30rem; margin: .25rem 0 .5rem }
+.key-create input { flex: 1; min-width: 0; margin: 0; padding: .375rem .625rem; font-size: .8125rem }
+.key-create .action { padding: .375rem .875rem; font-size: .8125rem }
+
+#admin-notice { position: fixed; z-index: 2; right: 1rem; bottom: 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: .625rem; width: max-content; max-width: min(34rem, calc(100vw - 2rem)); padding: .75rem 2.75rem .75rem 1rem; border-left: 3px solid var(--green-11); border-radius: .5rem; background: var(--background); color: var(--text-main); box-shadow: 0 12px 32px rgb(0 0 0 / .25); font-size: .875rem; line-height: 1.4 }
+#admin-notice:empty { display: none }
+#admin-notice[data-state="error"] { border-left-color: var(--red-11) }
+#admin-notice p { margin: 0 }
+.notice-close { position: absolute; top: .375rem; right: .375rem; padding: .125rem .5rem; border: 0; background: transparent; color: var(--text-muted); font-size: 1.125rem; line-height: 1; cursor: pointer }
+.notice-close:hover { background: transparent; color: var(--text-bright) }
+.secret { display: flex; align-items: center; gap: .5rem; width: 100% }
+.secret code { flex: 1; padding: .375rem .5rem; background: var(--background-body); font-size: .75rem; overflow-wrap: anywhere; user-select: all }
+
+.login { width: min(calc(100% - 2rem), 22rem); margin: 14vh auto 0 }
+.login .admin-brand { margin-bottom: 1rem }
+.login label { margin-bottom: .375rem; font-size: .875rem }
+.login input[type=password] { width: 100%; margin: 0 0 .75rem }
+.login button[type=submit] { width: 100% }
+.login > a { display: inline-block; margin-top: 1.5rem; font-size: .875rem; text-decoration: none }
+.login-error { padding: .5rem .75rem; border-left: 3px solid var(--red-11); border-radius: .25rem; background: var(--background); font-size: .875rem }
+
+@media (max-width: 760px) {
+  .admin-bar { width: min(calc(100% - 1.25rem), 100rem) }
+}

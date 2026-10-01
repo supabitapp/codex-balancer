@@ -1,0 +1,56 @@
+:root {
+  --green-11: #218358;
+  --amber-11: #ab6400;
+  --red-11: #ce2c31;
+}
+* { box-sizing: border-box }
+body { max-width: none; min-height: 100vh; margin: 0; padding: 0 }
+main { width: min(calc(100% - 2rem), 100rem); margin: 0 auto; padding: 1rem 0 3rem }
+h2 { margin: 0 0 .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase }
+section { margin-top: 1rem }
+#summary, .dim, .empty, th, td, dt, dd { color: var(--text-muted) }
+#summary { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none; white-space: nowrap }
+#summary, td, dd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace }
+.dot { margin: 0 .35rem; color: var(--text-muted) }
+#stream-status { margin-left: .5rem; font-weight: 400; letter-spacing: normal; text-transform: none }
+#stream-status[data-state="live"] { color: var(--green-11) }
+#stream-status[data-state="connecting"], #stream-status[data-state="reconnecting"] { color: var(--amber-11) }
+#stream-status[data-state="disconnected"] { color: var(--red-11) }
+.status-mark { display: inline-block; min-width: 1em; text-align: center }
+.has-tooltip { cursor: help; text-decoration: underline dotted; text-underline-offset: .2em }
+.client-location { text-decoration: none }
+#dashboard-tooltip { position: fixed; z-index: 1; width: max-content; max-width: min(28rem, calc(100vw - 1rem)); padding: .5rem .75rem; border-radius: .5rem; background: var(--background); color: var(--text-main); font-size: .8125rem; line-height: 1.4; pointer-events: none; white-space: pre-line }
+#dashboard-tooltip strong { font-weight: 700 }
+.scroll { overflow-x: auto }
+#threads { --visible-rows: 16 }
+#events { --visible-rows: 7 }
+#threads, #events { --row-height: 2.25rem; max-height: calc(var(--visible-rows) * var(--row-height)); overflow: auto; scrollbar-width: none }
+#threads::-webkit-scrollbar, #events::-webkit-scrollbar { display: none }
+#threads tr, #events tr { height: var(--row-height) }
+#threads thead, #events thead { position: sticky; top: 0; z-index: 1; background: var(--background-body) }
+table { width: max-content; min-width: 100%; border-collapse: collapse; white-space: nowrap; font-variant-numeric: tabular-nums }
+tbody tr:hover { background: var(--background-alt) }
+th, td { padding: .5rem .75rem .5rem 0; text-align: left }
+th:last-child, td:last-child { padding-right: 0 }
+th { font-size: .75rem; font-weight: 500 }
+td { font-weight: 400 }
+.status-mark.status-live { color: var(--green-11) }
+.status-mark.status-priority { color: var(--amber-11) }
+.status-mark.status-cooling { color: var(--amber-11) }
+.status-mark.status-needs_reauth { color: var(--red-11) }
+.spark { letter-spacing: .08em }
+.empty { padding: .5rem 0 }
+.overview { display: flex; gap: 1rem; margin: 0; overflow-x: auto }
+.overview div { display: grid; gap: .125rem; min-width: max-content }
+dt { font-size: .75rem }
+dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --green-11: #3dd68c;
+    --amber-11: #ffca16;
+    --red-11: #ff9592;
+  }
+}
+@media (max-width: 760px) {
+  main { width: min(calc(100% - 1.25rem), 100rem) }
+}

@@ -3,14 +3,15 @@ package app
 import (
 	"bytes"
 	"context"
-	"html/template"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 )
 
-var adminTemplate = template.Must(webTemplate("admin").ParseFS(dashboardFiles, "web/admin.html"))
+const adminKeysInterval = 30 * time.Second
+
+var adminUpdateTemplates = append(append([]string{}, dashboardUpdateTemplates...), "keys-update")
 
 type adminLoginView struct {
 	Disabled bool
@@ -18,19 +19,8 @@ type adminLoginView struct {
 	Error    string
 }
 
-type adminAccountView struct {
-	ID            string
-	Name          string
-	Plan          string
-	Status        string
-	Mode          string
-	ResetCreditID string
-	Banked        string
-	Credits       string
-	CreditsInfo   string
-}
-
 type adminKeyView struct {
+	DOMID   string
 	Name    string
 	Active  bool
 	Created string
@@ -40,18 +30,36 @@ type adminKeyView struct {
 	Total   string
 }
 
-type adminView struct {
-	CSRF        string
-	Mode        fastMode
-	ModeLabel   string
-	Accounts    []adminAccountView
-	Keys        []adminKeyView
-	Connections int64
-	Events      []Event
-	Notice      string
-	NoticePanel string
-	Error       bool
-	Secret      string
+type dashboardAdminView struct {
+	CSRF     string
+	FastMode fastMode
+	Keys     []adminKeyView
+	Notice   string
+	Error    bool
+	Secret   string
+}
+
+type dashboardAdminControl struct {
+	CSRF string
+	Row  any
+}
+
+func (a *dashboardAdminView) With(row any) dashboardAdminControl {
+	return dashboardAdminControl{CSRF: a.CSRF, Row: row}
+}
+
+func (a *dashboardAdminView) ActiveKeys() int {
+	active := 0
+	for _, key := range a.Keys {
+		if key.Active {
+			active++
+		}
+	}
+	return active
+}
+
+func (a *dashboardAdminView) RevokedKeys() int {
+	return len(a.Keys) - a.ActiveKeys()
 }
 
 func (s *server) adminRoutes() http.Handler {
@@ -64,9 +72,7 @@ func (s *server) adminRoutes() http.Handler {
 	mux.HandleFunc("POST /admin/settings", s.requireAdmin(s.adminSettings))
 	mux.HandleFunc("POST /admin/accounts/{action}", s.requireAdmin(s.adminAccountAction))
 	mux.HandleFunc("POST /admin/keys/{action}", s.requireAdmin(s.adminKeyAction))
-	mux.HandleFunc("GET /admin/status", s.requireAdmin(func(w http.ResponseWriter, r *http.Request, session adminSession) {
-		s.renderAdmin(w, r, session, "status-panel", "", "", http.StatusOK)
-	}))
+	mux.HandleFunc("GET /admin/events", s.requireAdmin(s.adminEvents))
 	protection := http.NewCrossOriginProtection()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -91,7 +97,7 @@ func (s *server) adminRoutes() http.Handler {
 
 func (s *server) renderAdminLogin(w http.ResponseWriter, status int, view adminLoginView) {
 	var body bytes.Buffer
-	if err := adminTemplate.ExecuteTemplate(&body, "login", view); err != nil {
+	if err := dashboardTemplate.ExecuteTemplate(&body, "login", view); err != nil {
 		http.Error(w, "Could not render login.", http.StatusInternalServerError)
 		return
 	}
@@ -101,39 +107,17 @@ func (s *server) renderAdminLogin(w http.ResponseWriter, status int, view adminL
 }
 
 func (s *server) adminPage(w http.ResponseWriter, r *http.Request, session adminSession) {
-	s.renderAdmin(w, r, session, "page", "", "", http.StatusOK)
+	s.renderAdmin(w, r, session, "", "", http.StatusOK)
 }
 
-func (s *server) renderAdmin(w http.ResponseWriter, r *http.Request, session adminSession, panel, notice, secret string, status int) {
-	view := adminView{CSRF: session.csrf, Notice: notice, NoticePanel: panel, Secret: secret, Error: status >= 400}
-	view.Mode, _ = s.fastMode.snapshot()
-	view.ModeLabel = view.Mode.label()
-	for _, account := range s.pool.sorted() {
-		candidate := account.routingCandidate()
-		row := adminAccountView{ID: account.id(), Name: label(account), Plan: dashboardPlan(account.plan()), Status: dashboardStatus(candidate.status(time.Now())).Label, Mode: string(candidate.mode)}
-		row.Banked = "—"
-		row.Credits = dashboardCreditBalance(candidate.credits)
-		row.CreditsInfo = dashboardCreditInfo(candidate.credits)
-		if candidate.resetCredits.known {
-			row.Banked = dashboardNumber(candidate.resetCredits.count)
-		}
-		for _, credit := range candidate.resetCredits.details {
-			if credit.ID != "" && credit.available() && (credit.ExpiresAt == nil || credit.ExpiresAt.After(time.Now())) {
-				row.ResetCreditID = credit.ID
-				break
-			}
-		}
-		view.Accounts = append(view.Accounts, row)
-	}
+func (s *server) adminKeys() ([]adminKeyView, error) {
 	keys, err := s.pool.store.readAPIKeys()
 	if err != nil {
-		s.adminError(w, r, err)
-		return
+		return nil, err
 	}
 	usage, err := s.pool.store.apiKeyUsage()
 	if err != nil {
-		s.adminError(w, r, err)
-		return
+		return nil, err
 	}
 	sort.SliceStable(keys, func(i, j int) bool {
 		if keys[i].RevokedAt.IsZero() != keys[j].RevokedAt.IsZero() {
@@ -141,33 +125,122 @@ func (s *server) renderAdmin(w http.ResponseWriter, r *http.Request, session adm
 		}
 		return keys[i].CreatedAt.After(keys[j].CreatedAt)
 	})
+	views := make([]adminKeyView, 0, len(keys))
 	for _, key := range keys {
 		used := usage[key.Name]
-		view.Keys = append(view.Keys, adminKeyView{Name: key.Name, Active: key.RevokedAt.IsZero(), Created: key.CreatedAt.Format("2006-01-02"), Input: formatTokenCount(used.InputTokens), Cached: formatTokenCount(used.InputDetails.CachedTokens), Output: formatTokenCount(used.OutputTokens), Total: formatTokenCount(used.TotalTokens)})
+		views = append(views, adminKeyView{
+			DOMID:   dashboardDOMID("key", key.Name),
+			Name:    key.Name,
+			Active:  key.RevokedAt.IsZero(),
+			Created: key.CreatedAt.Format("2006-01-02"),
+			Input:   formatTokenCount(used.InputTokens),
+			Cached:  formatTokenCount(used.InputDetails.CachedTokens),
+			Output:  formatTokenCount(used.OutputTokens),
+			Total:   formatTokenCount(used.TotalTokens),
+		})
 	}
-	snapshot := s.stats.snapshot()
-	view.Connections = snapshot.WSOpen
-	for i := len(snapshot.Events) - 1; i >= 0 && len(view.Events) < 20; i-- {
-		view.Events = append(view.Events, snapshot.Events[i])
+	return views, nil
+}
+
+func (s *server) adminDashboard(now time.Time, session adminSession, keys []adminKeyView) dashboardView {
+	view := s.dashboardAt(now, true)
+	mode, _ := s.fastMode.snapshot()
+	view.Admin = &dashboardAdminView{CSRF: session.csrf, FastMode: mode, Keys: keys}
+	return view
+}
+
+func (s *server) renderAdmin(w http.ResponseWriter, r *http.Request, session adminSession, notice, secret string, status int) {
+	keys, err := s.adminKeys()
+	if err != nil {
+		s.adminError(w, r, err)
+		return
 	}
-	name := panel
+	view := s.adminDashboard(time.Now(), session, keys)
+	view.Admin.Notice, view.Admin.Secret, view.Admin.Error = notice, secret, status >= 400
+	name := "admin-response"
 	if r.Header.Get("HX-Request") != "true" {
 		name = "page"
 	}
-	var body bytes.Buffer
-	if err := adminTemplate.ExecuteTemplate(&body, name, view); err != nil {
+	body, err := renderDashboard(name, view)
+	if err != nil {
 		s.adminError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	w.Write(body.Bytes())
+	w.Write(body)
+}
+
+func (s *server) adminSessionActive(token string, now time.Time) bool {
+	hash, err := s.pool.store.raw.AdminPasswordHash()
+	if err != nil || hash == "" {
+		return false
+	}
+	_, ok := s.admin.session(token, hash, now)
+	return ok
+}
+
+func (s *server) adminEvents(w http.ResponseWriter, r *http.Request, session adminSession) {
+	if s.dashboardStreams.Add(1) > dashboardMaxStreams {
+		s.dashboardStreams.Add(-1)
+		http.Error(w, "dashboard is busy", http.StatusServiceUnavailable)
+		return
+	}
+	defer s.dashboardStreams.Add(-1)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("X-Accel-Buffering", "no")
+	controller := http.NewResponseController(w)
+	token := adminCookieValue(r, false)
+	ticker := time.NewTicker(dashboardInterval)
+	defer ticker.Stop()
+	var done <-chan struct{}
+	if s.ctx != nil {
+		done = s.ctx.Done()
+	}
+	previous := make(map[string][]byte, len(adminUpdateTemplates))
+	var keys []adminKeyView
+	var keysAt time.Time
+	for {
+		now := time.Now()
+		if !s.adminSessionActive(token, now) {
+			return
+		}
+		if now.Sub(keysAt) >= adminKeysInterval {
+			loaded, err := s.adminKeys()
+			if err != nil {
+				s.log.Error("admin stream failed", "error", err)
+				return
+			}
+			keys, keysAt = loaded, now
+		}
+		payload, err := renderDashboardUpdates(adminUpdateTemplates, s.adminDashboard(now, session, keys), previous)
+		if err != nil {
+			s.log.Error("admin stream failed", "error", err)
+			return
+		}
+		if len(payload) > 0 {
+			if err := writeSSEEvent(w, dashboardEventName, payload); err != nil {
+				return
+			}
+			if err := controller.Flush(); err != nil {
+				return
+			}
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *server) adminSettings(w http.ResponseWriter, r *http.Request, session adminSession) {
 	mode := fastMode(r.PostForm.Get("fast-mode"))
 	if !mode.valid() {
-		s.renderAdmin(w, r, session, "settings-panel", "Choose a valid fast mode.", "", http.StatusUnprocessableEntity)
+		s.renderAdmin(w, r, session, "Choose a valid fast mode.", "", http.StatusUnprocessableEntity)
 		return
 	}
 	if err := s.saveFastMode(mode); err != nil {
@@ -175,7 +248,7 @@ func (s *server) adminSettings(w http.ResponseWriter, r *http.Request, session a
 		return
 	}
 	s.stats.note("fast mode changed", "", mode.label())
-	s.renderAdmin(w, r, session, "settings-panel", "Saved. Fast mode: "+mode.label()+".", "", http.StatusOK)
+	s.renderAdmin(w, r, session, "Saved. Fast mode: "+mode.label()+".", "", http.StatusOK)
 }
 
 func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, session adminSession) {
@@ -186,7 +259,7 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 	}
 	account := s.pool.find(r.PostForm.Get("account"))
 	if account == nil {
-		s.renderAdmin(w, r, session, "accounts-panel", "Account no longer exists.", "", http.StatusNotFound)
+		s.renderAdmin(w, r, session, "Account no longer exists.", "", http.StatusNotFound)
 		return
 	}
 	var err error
@@ -201,7 +274,7 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 	case "pause":
 		value := r.PostForm.Get("paused")
 		if value != "true" && value != "false" {
-			s.renderAdmin(w, r, session, "accounts-panel", "Choose pause or resume.", "", http.StatusUnprocessableEntity)
+			s.renderAdmin(w, r, session, "Choose pause or resume.", "", http.StatusUnprocessableEntity)
 			return
 		}
 		paused := value == "true"
@@ -216,7 +289,7 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 	case "mode":
 		mode := routingMode(r.PostForm.Get("mode"))
 		if mode != routingModeNormal && mode != routingModePriority && mode != routingModePaused {
-			s.renderAdmin(w, r, session, "accounts-panel", "Choose normal, priority, or paused routing.", "", http.StatusUnprocessableEntity)
+			s.renderAdmin(w, r, session, "Choose normal, priority, or paused routing.", "", http.StatusUnprocessableEntity)
 			return
 		}
 		err = s.pool.setRoutingMode(account, mode)
@@ -238,7 +311,7 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	s.stats.note("admin account "+action, account.id(), notice)
-	s.renderAdmin(w, r, session, "accounts-panel", notice, "", http.StatusOK)
+	s.renderAdmin(w, r, session, notice, "", http.StatusOK)
 }
 
 func (s *server) adminKeyAction(w http.ResponseWriter, r *http.Request, session adminSession) {
@@ -249,7 +322,7 @@ func (s *server) adminKeyAction(w http.ResponseWriter, r *http.Request, session 
 	}
 	name := r.PostForm.Get("name")
 	if name == "" || len(name) > 128 || name != strings.TrimSpace(name) || strings.ContainsAny(name, "\t\r\n") {
-		s.renderAdmin(w, r, session, "keys-panel", "Use a key name of 1–128 bytes without surrounding whitespace or line breaks.", "", http.StatusUnprocessableEntity)
+		s.renderAdmin(w, r, session, "Use a key name of 1–128 bytes without surrounding whitespace or line breaks.", "", http.StatusUnprocessableEntity)
 		return
 	}
 	secret, notice := "", ""
@@ -261,7 +334,7 @@ func (s *server) adminKeyAction(w http.ResponseWriter, r *http.Request, session 
 		}
 		for _, key := range keys {
 			if key.Name == name {
-				s.renderAdmin(w, r, session, "keys-panel", "That key name is already in use. Choose another.", "", http.StatusConflict)
+				s.renderAdmin(w, r, session, "That key name is already in use. Choose another.", "", http.StatusConflict)
 				return
 			}
 		}
@@ -281,13 +354,13 @@ func (s *server) adminKeyAction(w http.ResponseWriter, r *http.Request, session 
 			return
 		}
 		if !revoked {
-			s.renderAdmin(w, r, session, "keys-panel", "Active key not found.", "", http.StatusNotFound)
+			s.renderAdmin(w, r, session, "Active key not found.", "", http.StatusNotFound)
 			return
 		}
 		notice = "Key revoked. New requests using it will be rejected."
 	}
 	s.stats.note("admin key "+action, "", name)
-	s.renderAdmin(w, r, session, "keys-panel", notice, secret, http.StatusOK)
+	s.renderAdmin(w, r, session, notice, secret, http.StatusOK)
 }
 
 func (s *server) adminRefreshAccount(w http.ResponseWriter, r *http.Request, session adminSession, account *Account) {
@@ -301,13 +374,13 @@ func (s *server) adminRefreshAccount(w http.ResponseWriter, r *http.Request, ses
 		notice, status = "Could not refresh all account data. Try again.", http.StatusBadGateway
 	}
 	s.stats.note("admin account refresh", account.id(), notice)
-	s.renderAdmin(w, r, session, "accounts-panel", notice, "", status)
+	s.renderAdmin(w, r, session, notice, "", status)
 }
 
 func (s *server) adminBankedReset(w http.ResponseWriter, r *http.Request, session adminSession, account *Account) {
 	creditID := r.PostForm.Get("credit")
 	if creditID == "" {
-		s.renderAdmin(w, r, session, "accounts-panel", "Choose an available banked reset.", "", http.StatusUnprocessableEntity)
+		s.renderAdmin(w, r, session, "Choose an available banked reset.", "", http.StatusUnprocessableEntity)
 		return
 	}
 	account.resetMu.Lock()
@@ -324,7 +397,7 @@ func (s *server) adminBankedReset(w http.ResponseWriter, r *http.Request, sessio
 	})
 	if err != nil {
 		s.log.Warn("admin banked reset failed", "account", account.id(), "error", err)
-		s.renderAdmin(w, r, session, "accounts-panel", "Could not confirm the banked reset. Refresh before trying again.", "", http.StatusBadGateway)
+		s.renderAdmin(w, r, session, "Could not confirm the banked reset. Refresh before trying again.", "", http.StatusBadGateway)
 		return
 	}
 	notice, status := "Banked reset applied.", http.StatusOK
@@ -348,5 +421,5 @@ func (s *server) adminBankedReset(w http.ResponseWriter, r *http.Request, sessio
 	if usageErr != nil || creditsErr != nil {
 		notice += " Could not refresh account data; it will update on the next successful poll."
 	}
-	s.renderAdmin(w, r, session, "accounts-panel", notice, "", status)
+	s.renderAdmin(w, r, session, notice, "", status)
 }

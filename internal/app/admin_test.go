@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"io"
@@ -132,7 +133,7 @@ func TestAdminAuthAndCookies(t *testing.T) {
 		t.Fatalf("unconfigured admin status=%d", got)
 	}
 	enableTestAdmin(t, srv)
-	for _, path := range []string{"/admin", "/admin/status"} {
+	for _, path := range []string{"/admin", "/admin/events"} {
 		if got := adminRequest(h, "GET", path, nil).Code; got != 303 {
 			t.Fatalf("unprotected %s: %d", path, got)
 		}
@@ -254,8 +255,12 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 	}
 	for _, mode := range []string{"on", "off", "default"} {
 		response := post("/admin/settings", url.Values{"fast-mode": {mode}})
-		if response.Code != 200 || !strings.Contains(response.Body.String(), `id="settings-panel"`) || strings.Contains(response.Body.String(), "<!doctype") {
+		body := response.Body.String()
+		if response.Code != 200 || !strings.Contains(body, "Saved. Fast mode") || !strings.Contains(body, `id="overview" class="overview" hx-swap-oob="morph"`) || strings.Contains(body, "<!doctype") {
 			t.Fatalf("bad settings fragment: %d", response.Code)
+		}
+		if !strings.Contains(body, `name="fast-mode" value="`+mode+`" aria-pressed="true"`) {
+			t.Fatalf("saved fast mode %s not pressed in the overview control", mode)
 		}
 		stored, _ := srv.pool.store.raw.FastMode()
 		applied, _ := srv.fastMode.snapshot()
@@ -278,7 +283,7 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 		if response.Code != 200 || candidate.mode != mode || candidate.paused != (mode == routingModePaused) {
 			t.Fatalf("mode %s not applied: status=%d candidate=%+v", mode, response.Code, candidate)
 		}
-		if !strings.Contains(response.Body.String(), `value="`+string(mode)+`" selected`) {
+		if !strings.Contains(response.Body.String(), `name="mode" value="`+string(mode)+`" aria-pressed="true"`) {
 			t.Fatalf("saved mode %s not selected in the routing control", mode)
 		}
 	}
@@ -346,9 +351,9 @@ func TestAdminKeyEventDetailsArePrivate(t *testing.T) {
 		if !strings.Contains(dashboard.Body.String(), "<td>admin key "+action+"</td>\n<td></td>\n<td class=\"dim\"></td>") {
 			t.Fatalf("dashboard missing key %s event with empty detail", action)
 		}
-		status := adminRequest(h, "GET", "/admin/status", nil, cookie)
-		if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), "<td>admin key "+action+"</td><td></td><td class=\"detail\">"+name+"</td>") {
-			t.Fatalf("admin status lost key %s details", action)
+		admin := adminRequest(h, "GET", "/admin", nil, cookie)
+		if admin.Code != http.StatusOK || !strings.Contains(admin.Body.String(), "<td>admin key "+action+"</td>\n<td></td>\n<td class=\"dim\">"+name+"</td>") {
+			t.Fatalf("admin dashboard lost key %s details", action)
 		}
 	}
 }
@@ -441,7 +446,7 @@ func TestAdminSessionDoesNotTrustAPIKeys(t *testing.T) {
 	}
 	token, session := srv.admin.newSession(hash, time.Now())
 	srv.admin.sessions[sha256.Sum256([]byte(token))] = adminSession{csrf: session.csrf, credential: hash, expires: time.Now().Add(-time.Second)}
-	request = httptest.NewRequest("GET", "https://balancer.test/admin/status", nil)
+	request = httptest.NewRequest("GET", "https://balancer.test/admin/events", nil)
 	request.Header.Set("HX-Request", "true")
 	request.AddCookie(&http.Cookie{Name: "__Host-cb-admin", Value: token})
 	response = httptest.NewRecorder()
@@ -642,5 +647,78 @@ func TestAdminAccountRefresh(t *testing.T) {
 				t.Fatalf("dashboard missing refresh detail %q", wantDetail)
 			}
 		})
+	}
+}
+
+func TestAdminDashboardUnveilsPrivateData(t *testing.T) {
+	account := testAccount("account-a", 0)
+	srv := newTestServer(t, []*Account{account})
+	srv.countries = countryResolver{states: map[string]countryState{"203.0.113.42": {code: "US", ready: true}}}
+	srv.stats.activateThread("019fe5c2private")
+	srv.stats.accepted("", "019fe5c2private", "019fe5c2private", "203.0.113.42", apiKeyIdentity{name: "laptop", suffix: "ret"}, account.id(), "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{ThreadID: "codex-thread-0123456789"}, true)
+	srv.stats.note("admin account refresh", account.id(), "Quota and banked credits refreshed for account-a@example.com.")
+	srv.stats.note("admin key add", "", "private-key-owner")
+	enableTestAdmin(t, srv)
+	cookie, csrf := loginTestAdmin(t, srv.routes())
+	httpServer := httptest.NewServer(srv.routes())
+	defer httpServer.Close()
+
+	public := adminRequest(srv.routes(), "GET", "/dashboard", nil)
+	for _, private := range []string{"account-a@example.com", "019fe5c2private", "203.0.113.42", "laptop", "private-key-owner", "/admin/", `name="csrf"`} {
+		if strings.Contains(public.Body.String(), private) {
+			t.Fatalf("public dashboard exposed %q", private)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, httpServer.URL+"/admin/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AddCookie(&http.Cookie{Name: "cb-admin-local", Value: cookie.Value})
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("status = %s, content type = %q", response.Status, response.Header.Get("Content-Type"))
+	}
+	event, body, err := readSSEEvent(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event != dashboardEventName {
+		t.Fatalf("event = %q, want %q", event, dashboardEventName)
+	}
+	for _, expected := range []string{
+		`id="keys" class="scroll" hx-swap-oob="morph"`,
+		`name="csrf" value="` + csrf + `"`,
+		`hx-post="/admin/accounts/mode"`,
+		`name="mode" value="normal" aria-pressed="true"`,
+		`hx-post="/admin/settings"`,
+		`Account ID: account-a`,
+		`>account-a@example.com</span>`,
+		`Thread: 019fe5c2private`,
+		`Codex thread: codex-thread-0123456789`,
+		`United States` + "\n" + `203.0.113.42`,
+		`</span> laptop</td>`,
+		`Quota and banked credits refreshed for account-a@example.com.`,
+		"<td>admin key add</td>\n<td></td>\n<td class=\"dim\">private-key-owner</td>",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("admin update missing %q:\n%s", expected, body)
+		}
+	}
+	for _, secret := range []string{account.AccessToken, account.RefreshToken} {
+		if strings.Contains(body, secret) {
+			t.Fatal("admin update exposed account credentials")
+		}
+	}
+
+	srv.admin.logout(cookie.Value)
+	if _, err := io.Copy(io.Discard, response.Body); err != nil {
+		t.Fatalf("admin stream did not end after logout: %v", err)
 	}
 }
