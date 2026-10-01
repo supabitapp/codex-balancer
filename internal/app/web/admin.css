@@ -45,7 +45,7 @@ th.actions, td.actions { text-align: right }
 .menu .danger, .menu .danger:hover { color: var(--red-11) }
 form.inline { display: inline-block; margin-left: .5rem; vertical-align: middle }
 
-.key-add { margin-left: .625rem; vertical-align: middle; letter-spacing: normal }
+.admin .key-add { margin-left: .75rem; vertical-align: middle; letter-spacing: normal; text-transform: none }
 .admin .key-create:popover-open { display: flex; gap: .375rem; width: min(22rem, calc(100vw - 1rem)); padding: .375rem }
 .key-create input { flex: 1; min-width: 0; margin: 0; padding: .375rem .625rem; font-size: .8125rem }
 .key-create .action { padding: .375rem .875rem; font-size: .8125rem }
