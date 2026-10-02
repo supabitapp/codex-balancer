@@ -361,9 +361,6 @@ func (a *Account) adopt(fetchedAt time.Time, planType string, primary, secondary
 	}
 	if (a.primary.known() || a.secondary.known()) && a.pressure() < 100 && !spendLimitReached(a.spendControl) {
 		a.spent = false
-		if a.Reauth == "" {
-			a.cooldown = time.Time{}
-		}
 	}
 }
 

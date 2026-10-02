@@ -49,6 +49,12 @@ func responseSetupFailure(ctx context.Context, failed *http.Response, err error)
 		}
 		copyHTTPResponseHeaders(headers, failed.Header)
 	}
+	var unavailable *routeUnavailableError
+	if errors.As(err, &unavailable) {
+		// A previous attempt's rejection may concern a different account.
+		// The current routing decision supplies the actual recovery deadline.
+		headers.Set("Retry-After", retryAfterSeconds(unavailable.retryAt))
+	}
 	if ctx.Err() != nil {
 		failure.Status, failure.Code, failure.Message = 503, "request_canceled", "request canceled or server shutting down"
 	}

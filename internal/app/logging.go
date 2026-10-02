@@ -39,6 +39,7 @@ func (s *server) pickAccount(thread string, owners []string, model, serviceTier 
 		}
 	}
 	decision := s.pool.route(owners, routingSkip)
+	decision.retryAt = decision.cooldownRecovery(allowed)
 	decision.reason = routingDecisionReason(decision, allowed, skip)
 	s.log.Debug("routing attempt",
 		"thread", thread,

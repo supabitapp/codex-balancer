@@ -380,7 +380,7 @@ func TestHTTPResponsesRejectionsAndRefresh(t *testing.T) {
 			srv.admission = newAdmissionGate(1)
 			resp := postResponse(t, proxy.URL, `{"model":"m"}`, nil)
 			body := readHTTPBody(t, resp)
-			want := map[string]int{"server failure": 502, "model missing": 404, "rate limited": 429, "refresh": 503, "in-band refresh": 503}[scenario]
+			want := map[string]int{"server failure": 502, "model missing": 404, "rate limited": 503, "refresh": 503, "in-band refresh": 503}[scenario]
 			if resp.StatusCode != want || strings.Contains(body, "token-a") || resp.Header.Get("Authorization") != "" || resp.Header.Get("Chatgpt-Account-Id") != "" || resp.Header.Get("Upgrade") != "" {
 				t.Fatalf("status=%d headers=%v body=%s", resp.StatusCode, resp.Header, body)
 			}

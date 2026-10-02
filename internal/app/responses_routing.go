@@ -160,11 +160,11 @@ func (d *responseAccountRouter) selectHTTPAccount(event websocketEnvelope) (*res
 		selection := d.server.claimAccount(d.route, d.durable, d.model, d.serviceTier, d.skip, attempt)
 		observation(d.request.Context()).selection(d.request.Context(), selection, attempt)
 		if selection.blocked != "" {
-			return nil, errRouteOwnerUnavailable
+			return nil, selection.unavailable(errRouteOwnerUnavailable)
 		}
 		account := selection.account
 		if account == nil {
-			return nil, errNoAccountAvailable
+			return nil, selection.unavailable(errNoAccountAvailable)
 		}
 		if selection.moved() && (!websocketRequestPortable(event) || strings.TrimSpace(d.request.Header.Get(codexTurnStateKey)) != "") {
 			selection.claim.release()

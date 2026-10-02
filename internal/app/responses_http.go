@@ -156,14 +156,17 @@ func copyHTTPResponseHeaders(dst, src http.Header) {
 }
 
 type httpResponsesDownstream struct {
-	writer     http.ResponseWriter
-	ctx        context.Context
-	controller *http.ResponseController
-	request    []byte
-	stream     bool
-	committed  bool
-	finished   bool
-	sequence   int64
+	writer          http.ResponseWriter
+	ctx             context.Context
+	controller      *http.ResponseController
+	request         []byte
+	stream          bool
+	committed       bool
+	finished        bool
+	sequence        int64
+	accountBound    bool
+	routeIdentified bool
+	retryAt         time.Time
 	responsesRedactor
 	outputSeen   bool
 	created      responseFields

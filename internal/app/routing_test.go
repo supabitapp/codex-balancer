@@ -276,6 +276,43 @@ func TestPoolRouteBreaksEqualPressureTiesByLastUsedAndID(t *testing.T) {
 	}
 }
 
+func TestPoolPlacementIndependentOfOrder(t *testing.T) {
+	for _, credits := range []bool{false, true} {
+		for _, priority := range []string{"normal", "manual", "reset"} {
+			t.Run(fmt.Sprintf("credits_%t/%s", credits, priority), func(t *testing.T) {
+				a, b, c := testAccount("a", 10), testAccount("b", 10.75), testAccount("c", 11.5)
+				if credits {
+					// The exhausted weekly window is equal; pressure can still differ
+					// in the shorter window while credits remain spendable.
+					a, b, c = testAccountWithCredits("a"), testAccountWithCredits("b"), testAccountWithCredits("c")
+					a.primary.usedPercent, b.primary.usedPercent, c.primary.usedPercent = 110, 110.75, 111.5
+				}
+				now := time.Now()
+				a.lastUsed, b.lastUsed, c.lastUsed = now, now.Add(-time.Minute), now.Add(-2*time.Minute)
+				want := b
+				switch priority {
+				case "manual":
+					c.RoutingMode = routingModePriority
+					want = c
+				case "reset":
+					adoptTestResetCredit(c, now.Add(time.Hour))
+					want = c
+				}
+				for _, accounts := range [][]*Account{{a, b, c}, {a, c, b}, {b, a, c}, {b, c, a}, {c, a, b}, {c, b, a}} {
+					decision := (&Pool{accounts: accounts}).route(nil, nil)
+					if decision.account != want || decision.creditFallback != credits {
+						t.Fatalf("order %s,%s,%s: decision = %+v, want %s", accounts[0].id(), accounts[1].id(), accounts[2].id(), decision, want.id())
+					}
+					// Ownership continues to outrank fresh-placement preferences.
+					if got := (&Pool{accounts: accounts}).route([]string{a.id()}, nil).account; got != a {
+						t.Fatal("placement ranking displaced a retained owner")
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestRoutingDecisionReasonExplainsEveryAccountChangeClass(t *testing.T) {
 	owner := testAccount("account-owner", 10)
 	fresh := testAccount("account-fresh", 20)

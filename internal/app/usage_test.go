@@ -158,6 +158,7 @@ func TestUsagePollPositiveCapacityReturnsSpentAccountToRouting(t *testing.T) {
 	account := testAccount("account-a", 100)
 	account.markSpent()
 	account.cooldown = time.Now().Add(time.Hour)
+	cooldown := account.cooldown
 	roomier := testAccount("account-b", 20)
 	usage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
@@ -182,6 +183,15 @@ func TestUsagePollPositiveCapacityReturnsSpentAccountToRouting(t *testing.T) {
 	}
 
 	roomier.Paused = true
+	if candidate := account.routingCandidate(); candidate.spent || !candidate.cooldown.Equal(cooldown) {
+		t.Fatalf("quota recovery must clear spent and preserve the transient cooldown: %+v", candidate)
+	}
+	if picked := server.pool.route(nil, nil).account; picked != nil {
+		t.Fatal("usage polling returned a throttled account to routing")
+	}
+	account.mu.Lock()
+	account.cooldown = time.Now().Add(-time.Second)
+	account.mu.Unlock()
 	if picked := server.pool.route(nil, nil).account; picked == nil || picked.id() != "account-a" {
 		t.Fatalf("picked = %v, want account-a", picked)
 	}

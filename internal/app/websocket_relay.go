@@ -384,8 +384,11 @@ func (r *responsesWebSocketRelay) handleUpstream(message websocketMessage) bool 
 		return false
 	}
 	if parsed {
-		retryUsage := websocketRejection(event) == websocketRejectionUsageLimit && r.canRetryUsageLimit()
-		if rejected := websocketRejection(event); rejected != websocketRejectionNone {
+		rejected := websocketRejection(event)
+		retryUsage := rejected == websocketRejectionUsageLimit && r.canRetryUsageLimit()
+		bound := rejected == websocketRejectionRateLimited && r.hasTurnState()
+		retryRateLimit := rejected == websocketRejectionRateLimited && event.Type == "error" && websocketErrorIs(event, "rate_limit_exceeded") && (!bound || r.route.key() != "")
+		if rejected != websocketRejectionNone {
 			observation(r.ctx).event(r.ctx, "reconnect_decision", attribute.String("rejection", string(rejected)), attribute.Bool("usage_reconnect_signal", retryUsage), attribute.Int("pending_turns", len(r.turns)), attribute.Bool("accepted_before_rejection", len(r.turns) > 0 && r.turns[0].created), attribute.Bool("turn_state_metadata_present", len(r.turns) > 0 && strings.TrimSpace(r.turns[0].turnState) != ""), attribute.Bool("turn_state_header_present", strings.TrimSpace(r.request.Header.Get(codexTurnStateKey)) != ""), attribute.Bool("upstream_turn_state_present", r.current.resp != nil && strings.TrimSpace(r.current.resp.Header.Get(codexTurnStateKey)) != ""), attribute.String("retry_owner", "client"), attribute.Bool("inference_replayed", false))
 		}
 		var allowed bool
@@ -393,9 +396,16 @@ func (r *responsesWebSocketRelay) handleUpstream(message websocketMessage) bool 
 		if !allowed {
 			return false
 		}
+		if rejection == websocketRejectionRateLimited && bound {
+			r.server.preserveResponseOwner(r.current.responseAccount)
+		}
 		if retryUsage {
 			r.server.preserveResponseOwner(r.current.responseAccount)
 			r.downstream.reject(r.ctx, message, websocket.StatusServiceRestart, "account exhausted; reconnect with full history")
+			return false
+		}
+		if retryRateLimit {
+			r.downstream.reject(r.ctx, message, websocket.StatusServiceRestart, "account temporarily rate limited")
 			return false
 		}
 		if rejection == websocketRejectionModelCapacity {
@@ -421,18 +431,28 @@ func (r *responsesWebSocketRelay) canRetryUsageLimit() bool {
 	if r.route.key() == "" || len(r.turns) != 1 || r.turns[0].created {
 		return false
 	}
+	if r.hasTurnState() {
+		return false
+	}
 	turn := r.turns[0]
-	if strings.TrimSpace(turn.turnState) != "" || strings.TrimSpace(r.request.Header.Get(codexTurnStateKey)) != "" {
-		return false
-	}
-	if r.current.resp != nil && strings.TrimSpace(r.current.resp.Header.Get(codexTurnStateKey)) != "" {
-		return false
-	}
 	allowed := r.server.allowedAccounts(turn.model, turn.serviceTier)
 	now := time.Now()
 	for _, account := range r.server.pool.all() {
 		candidate := account.routingCandidate()
 		if candidate.id != r.current.account.id() && candidate.available(now) && accountAllowed(allowed, candidate.id) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *responsesWebSocketRelay) hasTurnState() bool {
+	if strings.TrimSpace(r.request.Header.Get(codexTurnStateKey)) != "" ||
+		r.current.resp != nil && strings.TrimSpace(r.current.resp.Header.Get(codexTurnStateKey)) != "" {
+		return true
+	}
+	for _, turn := range r.turns {
+		if strings.TrimSpace(turn.turnState) != "" {
 			return true
 		}
 	}

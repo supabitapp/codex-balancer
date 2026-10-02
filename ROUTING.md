@@ -44,7 +44,11 @@ HTTP inference. These calls carry no conversation state, so they use fresh
 placement without claims or affinity, skipping accounts that do not carry the
 requested model. A `401` refreshes the account once; a usage limit marks it
 spent and a transient `429` cools it, and the next eligible account is tried.
-When every account rejects the call, the client receives the last upstream
+Dispatch updates last-used so equal-quota tool traffic is spread across accounts.
+A credential refresh retries the same account. Transport failures return `502`
+(`504` for timeouts) without sending another POST, since the upstream may already
+have received it. Upstream redirects are not followed. When every account rejects
+the call, the client receives the last upstream
 rejection with its status, `Retry-After` and redacted body. Request bodies are
 capped at 256 MiB and responses stream through unchanged up to 256 MiB.
 
@@ -63,8 +67,9 @@ server considers accounts in this order:
 4. Prefer an account with a reset credit that expires within 24 hours, ordered
    by expiration time.
 5. Choose the account with the lowest peak usage across its rate-limit windows.
-6. For a peak-usage difference of one percentage point or less, choose the
-   oldest last-used timestamp, then account ID.
+6. Within the winning priority group, consider accounts at most one percentage
+   point above its lowest peak usage. Choose the oldest last-used timestamp,
+   then account ID. The result is independent of account-list order.
 
 Self-serve Business Pro Lite (`self_serve_business_prolite`) participates in
 normal per-account routing once quota is known. Other Business and Enterprise
@@ -154,6 +159,10 @@ The router uses this affinity precedence:
 
 A retained owner in cooldown, or one with unknown quota, blocks weaker entries
 and returns `503`. Codex then retries the route.
+For a cooling owner, `Retry-After` reports that owner's remaining cooldown,
+rounded up to seconds. Fresh placement blocked by cooldowns reports the earliest
+eligible recovery, including credit accounts. Unknown quota and provisional
+claim conflicts retain the default retry hint.
 
 The server records the account from each `response.created` event. A
 `generate:false` warmup records the route without adding a turn.
@@ -352,12 +361,21 @@ balancer does not add a second reconnect path.
   owner, and close the downstream socket with `1012`. Codex reconnects and
   replays the request to the same account. The balancer neither replays the request nor marks the
   account spent or cooling.
-- For transient `429`, forward the original event, cool down the account, and
-  retire the socket. The balancer does not replay the request. The cooldown is
-  a short backoff starting at five seconds, extended only by an upstream
-  `Retry-After`, and capped at one hour; usage-window reset times never set
-  it, because a per-minute throttle would otherwise park the account until a
-  weekly reset while Codex burns its retry budget on the retained owner.
+- For transient `429`, cool down the account and retire the socket. A wrapped
+  `type:error` with `rate_limit_exceeded` becomes a retryable `502`, preserving
+  upstream details, followed by a `1012` close. Codex otherwise treats this error
+  as terminal. Other error codes retain their existing behavior. The balancer
+  does not replay the request.
+  Token-bound provisional routes with thread or session identity retain an owner
+  barrier, including for native `response.failed` rate-limit events. An anonymous
+  token-bound error is not rewritten into an automatic retry.
+  The cooldown uses a fixed five-second base independent of retry-loop position,
+  extended by upstream `Retry-After`, and capped at one hour. Later failures can
+  only extend the deadline. Usage polling can clear exhausted quota but cannot
+  clear a transient cooldown. Usage-window reset times never set this deadline.
+  A retained owner can remain blocked for the full advised period. Codex ignores
+  `Retry-After` on WebSocket retries and can exhaust that budget or fall back to
+  HTTP; HTTP clients receive the actual remaining cooldown.
 - For a usage limit, mark the account spent. If the socket has a thread or
   session identity, exactly one request is pending,
   it has not received `response.created`, no turn-state token was sent in its
@@ -414,7 +432,14 @@ for account pause, removal, sign-out, and policy changes. They do not increment
 open-WebSocket statistics. Account or catalog changes after dispatch cannot
 cause another POST. Unaccepted owners are retained for policy changes, upstream
 timeouts, usage limits, and model capacity failures. Other failures release
-provisional claims so a client retry can select an eligible account.
+provisional claims so a client retry can select an eligible account, except a
+rate-limited request with nonportable input or turn-state retains its owner.
+
+Before streaming starts, a known `rate_limit_exceeded` error becomes `503` with
+the upstream details and a retry hint at least as long as the account's remaining
+cooldown. This lets Codex retry a transient throttle. Anonymous nonportable
+requests keep their terminal `429`, since no route identity can retain their
+account boundary. Committed SSE events keep their original framing.
 
 Thread affinity prefers `thread-id`, then `x-client-request-id`. Session affinity
 prefers `session_id`, `session-id`, `x-codex-session-id`,

@@ -130,7 +130,7 @@ func TestHTTPResponsesNeverRedispatches(t *testing.T) {
 			srv.admission = newAdmissionGate(1)
 			response := postResponse(t, proxy.URL, `{"model":"m"}`, http.Header{"Session-Id": {"session"}})
 			body := readHTTPBody(t, response)
-			want := map[string]int{"rate": 429, "server": 503, "redirect": 502, "too large": 400, "disconnect": 502, "invalidate": 503}[scenario]
+			want := map[string]int{"rate": 503, "server": 503, "redirect": 502, "too large": 400, "disconnect": 502, "invalidate": 503}[scenario]
 			if response.StatusCode != want || calls.Load() != 1 {
 				t.Fatalf("status=%d calls=%d body=%s", response.StatusCode, calls.Load(), body)
 			}
@@ -262,7 +262,7 @@ func TestHTTPResponsesRateLimitReleasesUnacceptedOwner(t *testing.T) {
 	})
 	srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("a", 0), testAccount("b", 20)})
 	srv.admission = newAdmissionGate(1)
-	for _, status := range []int{429, 200} {
+	for _, status := range []int{503, 200} {
 		response := postResponse(t, proxy.URL, `{"model":"m"}`, http.Header{"Session-Id": {"same"}})
 		body := readHTTPBody(t, response)
 		assertHTTPClean(t, srv)

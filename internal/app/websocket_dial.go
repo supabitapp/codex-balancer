@@ -81,11 +81,11 @@ func (d *responsesWebSocketDialer) dial() (dial *websocketDial, failed *http.Res
 		decision := selection.routingDecision
 		observed.selection(ctx, selection, attempt)
 		if decision.blocked != "" {
-			return nil, nil, d.unavailable(errRouteOwnerUnavailable)
+			return nil, nil, d.unavailable(decision.unavailable(errRouteOwnerUnavailable))
 		}
 		account := decision.account
 		if account == nil {
-			return nil, nil, d.unavailable(errNoAccountAvailable)
+			return nil, nil, d.unavailable(decision.unavailable(errNoAccountAvailable))
 		}
 		if decision.moved() && strings.TrimSpace(d.request.Header.Get(codexTurnStateKey)) != "" {
 			observed.event(ctx, "account_move_blocked", attribute.String("reason", "turn_state_header"), attribute.Bool("write_attempted", false))
@@ -261,7 +261,7 @@ func (d *responsesWebSocketDialer) invalidHandshake(result upstreamWebSocketDial
 	id := account.id()
 	d.server.log.Warn("upstream websocket handshake invalid", "thread", d.thread, "account", id, "attempt", attempt+1, "error", result.err)
 	d.server.stats.failedOver(id, "invalid handshake")
-	account.failed(attempt)
+	account.failed()
 	d.skip[id] = true
 }
 
@@ -295,7 +295,7 @@ func (d *responsesWebSocketDialer) rejectAccount(result upstreamWebSocketDial, a
 				return true
 			}
 		} else {
-			account.rateLimited(response.Header, attempt)
+			account.rateLimited(response.Header)
 		}
 		d.server.stats.rateLimited(id)
 		attrs := []any{"thread", d.thread, "attempt", attempt + 1}
@@ -303,7 +303,7 @@ func (d *responsesWebSocketDialer) rejectAccount(result upstreamWebSocketDial, a
 		d.server.log.Info("account rate limited", attrs...)
 	} else {
 		d.server.log.Warn("upstream websocket rejected credentials", "thread", d.thread, "account", id, "attempt", attempt+1, "status", status)
-		account.failed(attempt)
+		account.failed()
 	}
 	closeWebSocketResponse(response)
 	d.server.stats.failedOver(id, response.Status)

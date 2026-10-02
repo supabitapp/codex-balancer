@@ -234,7 +234,7 @@ func TestResponsesObservabilityErrorsAndGuards(t *testing.T) {
 				body = `{`
 				want = 400
 			case "handshake":
-				want = 429
+				want = 503
 			}
 			resp := postResponse(t, proxy.URL, body, nil)
 			readHTTPBody(t, resp)

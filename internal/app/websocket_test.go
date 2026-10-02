@@ -497,7 +497,7 @@ func TestWebSocketCoolingOwnerReturnsRetryWithoutSpillingTheSession(t *testing.T
 	first, _ := dialWebSocket(t, proxy.URL, headers)
 	completeWebSocketTurn(t, first, map[string]any{"type": "response.create", "input": []any{}})
 	first.CloseNow()
-	owner.rateLimited(http.Header{"Retry-After": {"60"}}, 0)
+	owner.rateLimited(http.Header{"Retry-After": {"60"}})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1094,7 +1094,7 @@ func TestWebSocketUsageDoesNotMovePinnedSockets(t *testing.T) {
 	}
 }
 
-func TestWebSocketRateLimitPassesThroughBeforeReconnect(t *testing.T) {
+func TestWebSocketRateLimitSignalsRetryBeforeReconnect(t *testing.T) {
 	requests := 0
 	const rateLimitEvent = `{"type":"error","status":429,"headers":{"retry-after":"30"},"error":{"type":"invalid_request_error","code":"rate_limit_exceeded"},"upstream_only":{"kept":true}}`
 	upstream := newWebSocketUpstream(t, func(account string, conn *websocket.Conn, request websocketEnvelope) {
@@ -1117,8 +1117,9 @@ func TestWebSocketRateLimitPassesThroughBeforeReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	kind, data, err := conn.Read(ctx)
 	cancel()
-	if err != nil || kind != websocket.MessageText || string(data) != rateLimitEvent {
-		t.Fatalf("rate-limit frame = %q/%q, error = %v, want the original upstream frame", kind, data, err)
+	var failure websocketFailureEvent
+	if err != nil || kind != websocket.MessageText || json.Unmarshal(data, &failure) != nil || failure.Status != 502 || failure.UpstreamStatus != 429 || !failure.Retryable || failure.Error.Code != "rate_limit_exceeded" || websocketEventHeaders(failure.Headers).Get("Retry-After") != "30" || !strings.Contains(string(data), `"upstream_only":{"kept":true}`) {
+		t.Fatalf("rate-limit frame = %q/%q, error = %v, want retryable error with original details", kind, data, err)
 	}
 	readCloseStatus(t, conn, websocket.StatusServiceRestart)
 	conn.CloseNow()

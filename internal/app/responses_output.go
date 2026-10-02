@@ -30,6 +30,12 @@ func (f httpResponseFailure) errorObject() responseFields {
 	return object
 }
 
+func (f httpResponseFailure) transientRateLimit() bool {
+	var event websocketEnvelope
+	event.Error.Code, event.Error.Type = f.Code, f.Type
+	return websocketRejection(event) == websocketRejectionRateLimited && websocketErrorIs(event, "rate_limit_exceeded")
+}
+
 func responseFailure(fields responseFields, fallback int) httpResponseFailure {
 	failure := httpResponseFailure{Status: fallback, Code: "upstream_error", Type: "upstream_error", Message: "upstream rejected response"}
 	var envelope websocketEnvelope
@@ -88,6 +94,14 @@ func (d *httpResponsesDownstream) fail(failure httpResponseFailure) (err error) 
 	defer func() { observation(d.ctx).delivery(d.ctx, err, d.committed) }()
 	if d.finished {
 		return errResponseFinished
+	}
+	if !d.committed && failure.Status == 429 && failure.transientRateLimit() && (!d.accountBound || d.routeIdentified) {
+		// Codex treats a raw HTTP 429 as terminal. A known transient throttle
+		// can be retried by the client if the account boundary is preserved.
+		failure.Status = 503
+		if !d.retryAt.IsZero() && retryAfterHeader(d.writer.Header()).Before(d.retryAt) {
+			d.writer.Header().Set("Retry-After", retryAfterSeconds(d.retryAt))
+		}
 	}
 	d.finished = true
 	// A failed WebSocket handshake is never an HTTP success, even if its

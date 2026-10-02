@@ -29,6 +29,8 @@ func (s *server) forwardHTTPResponse(peer *httpResponsesDownstream, request *htt
 	defer cancel(nil)
 	request = request.WithContext(ctx)
 	route := websocketRouteFrom(request.Header)
+	peer.accountBound = !websocketRequestPortable(event) || strings.TrimSpace(request.Header.Get(codexTurnStateKey)) != ""
+	peer.routeIdentified = route.key() != ""
 	router, err := newResponseAccountRouter(s, request, route, event.Model, event.ServiceTier)
 	if err != nil {
 		peer.setupFailed(ctx, nil, err)
@@ -123,6 +125,7 @@ func (s *server) forwardHTTPResponse(peer *httpResponsesDownstream, request *htt
 	timer.Reset(httpIdleWait)
 	response.Body = &httpActivityReader{ReadCloser: response.Body, timer: timer}
 	account.account.observe(response.Header)
+	peer.accountBound = peer.accountBound || strings.TrimSpace(response.Header.Get(codexTurnStateKey)) != ""
 	observation(ctx).event(ctx, "http_response_headers", attribute.Int("upstream_status", response.StatusCode))
 	if observed := observation(ctx); observed != nil {
 		observed.writeSucceeded = true
@@ -144,7 +147,10 @@ func (s *server) forwardHTTPResponse(peer *httpResponsesDownstream, request *htt
 		if rejection != websocketRejectionNone {
 			s.handleWebSocketRejection(account.account, rejection, response.Header, route.key())
 		}
-		if rejection == websocketRejectionUsageLimit || rejection == websocketRejectionModelCapacity {
+		if rejection == websocketRejectionRateLimited {
+			peer.retryAt = account.account.routingCandidate().cooldown
+		}
+		if rejection == websocketRejectionUsageLimit || rejection == websocketRejectionModelCapacity || rejection == websocketRejectionRateLimited && peer.accountBound {
 			err = errHTTPRetryOwner
 		}
 		observation(ctx).event(ctx, "upstream_rejected", attribute.Int("upstream_status", response.StatusCode), attribute.Bool("inference_sent", true), attribute.String("retry_owner", "client"))
@@ -188,6 +194,7 @@ func (s *server) deliverHTTPEvent(peer *httpResponsesDownstream, accounting *res
 		return errors.Join(errHTTPInvalidResponse, err)
 	}
 	headers := websocketEventHeaders(event.Headers)
+	peer.accountBound = peer.accountBound || strings.TrimSpace(headers.Get(codexTurnStateKey)) != ""
 	message.data = s.pool.clientUsageEvent(accounting.account.account, message.data, event)
 	if !peer.committed && (event.Type == "codex.rate_limits" || len(event.Headers) > 0) {
 		s.pool.clientUsage().writeHeaders(peer.writer.Header())
@@ -200,6 +207,9 @@ func (s *server) deliverHTTPEvent(peer *httpResponsesDownstream, accounting *res
 	if rejection == websocketRejectionUnauthorized {
 		s.refreshRejectedHTTPAccount(accounting.ctx, accounting.account)
 	}
+	if rejection == websocketRejectionRateLimited {
+		peer.retryAt = accounting.account.account.routingCandidate().cooldown
+	}
 	switch event.Type {
 	case "response.created":
 		if !accounting.responseCreated() {
@@ -209,7 +219,7 @@ func (s *server) deliverHTTPEvent(peer *httpResponsesDownstream, accounting *res
 		accounting.responseFinished(event)
 	}
 	err = peer.Write(accounting.ctx, websocket.MessageText, message.data)
-	if rejection == websocketRejectionUsageLimit || rejection == websocketRejectionModelCapacity {
+	if rejection == websocketRejectionUsageLimit || rejection == websocketRejectionModelCapacity || rejection == websocketRejectionRateLimited && peer.accountBound {
 		return errors.Join(err, errHTTPRetryOwner)
 	}
 	return err

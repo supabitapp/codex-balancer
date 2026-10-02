@@ -291,7 +291,7 @@ func (s *server) handleWebSocketRejection(account *Account, kind websocketReject
 	s.log.Info("account rejected websocket request", "thread", thread, "account", id, "reason", kind)
 	switch kind {
 	case websocketRejectionRateLimited:
-		account.rateLimited(headers, 0)
+		account.rateLimited(headers)
 		s.stats.rateLimited(id)
 	case websocketRejectionUsageLimit:
 		account.rejectCredits()

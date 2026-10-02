@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const maxToolRequestBody = 256 << 20
@@ -48,8 +49,20 @@ func (s *server) proxyTool(w http.ResponseWriter, r *http.Request) {
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
 	var rejection *http.Response
+	var retryAccount *Account
 	for range 2 * len(s.pool.all()) {
-		account := s.pool.route(nil, skip).account
+		account := retryAccount
+		retryAccount = nil
+		if account != nil {
+			candidate := account.routingCandidate()
+			now := time.Now()
+			if s.pool.find(candidate.id) != account || !candidate.available(now) && !candidate.creditAvailable(now) {
+				account = nil
+			}
+		}
+		if account == nil {
+			account = s.pool.route(nil, skip).account
+		}
 		if account == nil {
 			break
 		}
@@ -58,11 +71,18 @@ func (s *server) proxyTool(w http.ResponseWriter, r *http.Request) {
 			skip[id] = true
 			continue
 		}
+		account.accepted(time.Now())
 		resp, err := s.forwardTool(ctx, account, path, body, headers)
 		if err != nil {
-			s.log.Warn("tool upstream unreachable", "path", path, "account", id, "error", err)
-			skip[id] = true
-			continue
+			// A transport failure may follow delivery of the complete POST.
+			// Leave retries to the client instead of generating the image twice.
+			if rejection != nil {
+				rejection.Body.Close()
+			}
+			failure := httpTransportFailure(ctx, err)
+			s.log.Warn("tool upstream failed", "path", path, "account", id, "error_class", failure.Code)
+			writeHTTPResponseError(w, failure.Status, failure.Message)
+			return
 		}
 		account.observe(resp.Header)
 		usageLimit := (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden) && responseUsageLimitReached(resp)
@@ -70,8 +90,12 @@ func (s *server) proxyTool(w http.ResponseWriter, r *http.Request) {
 		case resp.StatusCode == http.StatusUnauthorized && !reauthed[id]:
 			resp.Body.Close()
 			reauthed[id] = true
-			if !s.refreshed(account, id) {
+			if !s.refreshedContext(ctx, account, id) {
 				skip[id] = true
+			} else {
+				// Dispatch updates last-used; explicitly retain the account for
+				// its one authorized retry after refreshing credentials.
+				retryAccount = account
 			}
 			continue
 		case usageLimit || resp.StatusCode == http.StatusTooManyRequests:
@@ -79,7 +103,7 @@ func (s *server) proxyTool(w http.ResponseWriter, r *http.Request) {
 				account.rejectCredits()
 				account.markSpent()
 			} else {
-				account.rateLimited(resp.Header, 0)
+				account.rateLimited(resp.Header)
 			}
 			if s.stats != nil {
 				s.stats.rateLimited(id)
@@ -111,6 +135,7 @@ func (s *server) forwardTool(ctx context.Context, account *Account, path string,
 	if err != nil {
 		return nil, err
 	}
+	req.GetBody = nil
 	req.Header = headers.Clone()
 	account.mu.Lock()
 	token := account.AccessToken
@@ -121,7 +146,9 @@ func (s *server) forwardTool(ctx context.Context, account *Account, path string,
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return s.client.Do(req)
+	client := *s.client
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return client.Do(req)
 }
 
 func (s *server) writeToolResponse(w http.ResponseWriter, resp *http.Response) {

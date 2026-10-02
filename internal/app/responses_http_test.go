@@ -400,7 +400,7 @@ func TestHTTPResponsesInBandErrors(t *testing.T) {
 		kind   string
 	}{
 		{"context_length_exceeded", 400, "response.failed"}, {"model_not_found", 404, "error"},
-		{"rate_limit_exceeded", 429, "error"}, {"usage_limit_reached", 429, "error"},
+		{"rate_limit_exceeded", 503, "error"}, {"usage_limit_reached", 429, "error"},
 		{"server_is_overloaded", 503, "response.failed"}, {"slow_down", 503, "error"},
 		{"websocket_connection_limit_reached", 503, "error"},
 	} {

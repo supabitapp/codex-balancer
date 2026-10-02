@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -54,6 +53,7 @@ type routingDecision struct {
 	candidates     []routingCandidate
 	now            time.Time
 	creditFallback bool
+	retryAt        time.Time
 }
 
 func (d routingDecision) moved() bool {
@@ -227,6 +227,7 @@ func (p *Pool) route(owners []string, skip map[string]bool) routingDecision {
 			}
 			if !candidate.quotaKnown() || !now.After(candidate.cooldown) {
 				decision.blocked = owner
+				decision.retryAt = decision.cooldownRecovery(nil)
 				return decision
 			}
 			if !skip[candidate.id] {
@@ -235,18 +236,10 @@ func (p *Pool) route(owners []string, skip map[string]bool) routingDecision {
 			}
 		}
 	}
-	var best *routingCandidate
-	for i := range decision.candidates {
-		candidate := &decision.candidates[i]
-		if skip[candidate.id] || !candidate.available(now) {
-			continue
-		}
-		if best == nil || candidate.routesBefore(*best, now) {
-			best = candidate
-		}
-	}
-	if best != nil {
-		decision.account = best.account
+	decision.account = selectFreshAccount(decision.candidates, now, func(candidate routingCandidate) bool {
+		return !skip[candidate.id] && candidate.available(now)
+	})
+	if decision.account != nil {
 		return decision
 	}
 	// Use included quota throughout the pool before charging an account's credits.
@@ -260,20 +253,41 @@ func (p *Pool) route(owners []string, skip map[string]bool) routingDecision {
 			}
 		}
 	}
-	for i := range decision.candidates {
-		candidate := &decision.candidates[i]
-		if skip[candidate.id] || !candidate.creditAvailable(now) {
+	decision.account = selectFreshAccount(decision.candidates, now, func(candidate routingCandidate) bool {
+		return !skip[candidate.id] && candidate.creditAvailable(now)
+	})
+	decision.creditFallback = decision.account != nil
+	decision.retryAt = decision.cooldownRecovery(nil)
+	return decision
+}
+
+func selectFreshAccount(candidates []routingCandidate, now time.Time, eligible func(routingCandidate) bool) *Account {
+	var least *routingCandidate
+	for i := range candidates {
+		candidate := &candidates[i]
+		if !eligible(*candidate) {
 			continue
 		}
-		if best == nil || candidate.routesBefore(*best, now) {
+		if least == nil || cmp.Or(candidate.comparePriority(*least, now), cmp.Compare(candidate.pressure, least.pressure)) < 0 {
+			least = candidate
+		}
+	}
+	if least == nil {
+		return nil
+	}
+	// Anchor the tolerance to the cohort minimum. Pairwise pressure ties can
+	// form cycles and make selection depend on the order of the account list.
+	best := least
+	for i := range candidates {
+		candidate := &candidates[i]
+		if !eligible(*candidate) || candidate.comparePriority(*least, now) != 0 || candidate.pressure > least.pressure+1 {
+			continue
+		}
+		if cmp.Or(candidate.lastUsed.Compare(best.lastUsed), cmp.Compare(candidate.id, best.id)) < 0 {
 			best = candidate
 		}
 	}
-	if best != nil {
-		decision.account = best.account
-		decision.creditFallback = true
-	}
-	return decision
+	return best.account
 }
 
 func (a *Account) routingCandidate() routingCandidate {
@@ -354,28 +368,27 @@ func (c routingCandidate) routingPriority(now time.Time) (routingPriority, bool)
 	}, true
 }
 
-func (c routingCandidate) routesBefore(other routingCandidate, now time.Time) bool {
+func (c routingCandidate) comparePriority(other routingCandidate, now time.Time) int {
 	manualPriority := c.mode == routingModePriority
 	otherManualPriority := other.mode == routingModePriority
 	if manualPriority != otherManualPriority {
-		return manualPriority
+		if manualPriority {
+			return -1
+		}
+		return 1
 	}
 	priority, prioritized := c.routingPriority(now)
 	otherPriority, otherPrioritized := other.routingPriority(now)
 	if prioritized != otherPrioritized {
-		return prioritized
+		if prioritized {
+			return -1
+		}
+		return 1
 	}
 	if prioritized && !priority.expiresAt.Equal(otherPriority.expiresAt) {
-		return priority.expiresAt.Before(otherPriority.expiresAt)
+		return priority.expiresAt.Compare(otherPriority.expiresAt)
 	}
-	return c.roomierThan(other)
-}
-
-func (c routingCandidate) roomierThan(other routingCandidate) bool {
-	if math.Abs(c.pressure-other.pressure) > 1 {
-		return c.pressure < other.pressure
-	}
-	return cmp.Or(c.lastUsed.Compare(other.lastUsed), cmp.Compare(c.id, other.id)) < 0
+	return 0
 }
 
 func (p *Pool) sorted() []*Account {
@@ -433,23 +446,23 @@ func (a *Account) accepted(at time.Time) {
 	}
 }
 
-func (a *Account) rateLimited(h http.Header, attempt int) {
+func (a *Account) rateLimited(h http.Header) {
 	now := time.Now()
-	until := now.Add(backoff(attempt))
+	until := now.Add(minCooldown)
 	if retryAfter := retryAfterHeader(h); retryAfter.After(until) {
 		until = retryAfter
 	}
 	if limit := now.Add(maxCooldown); until.After(limit) {
 		until = limit
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.cooldown = until
+	a.extendCooldown(until)
 }
 
 func retryAfterHeader(h http.Header) time.Time {
-	retryAfter := h.Get("retry-after")
-	if secs, err := strconv.Atoi(retryAfter); err == nil {
+	retryAfter := strings.TrimSpace(h.Get("retry-after"))
+	if secs, err := strconv.ParseUint(retryAfter, 10, 64); err == nil || errors.Is(err, strconv.ErrRange) && strings.Trim(retryAfter, "0123456789") == "" {
+		// Saturate before converting seconds to a nanosecond duration.
+		secs = min(secs, uint64(maxCooldown/time.Second))
 		return time.Now().Add(time.Duration(secs) * time.Second)
 	}
 	if date, err := http.ParseTime(retryAfter); err == nil {
@@ -458,16 +471,14 @@ func retryAfterHeader(h http.Header) time.Time {
 	return time.Time{}
 }
 
-func (a *Account) failed(attempt int) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.cooldown = time.Now().Add(backoff(attempt))
+func (a *Account) failed() {
+	a.extendCooldown(time.Now().Add(minCooldown))
 }
 
-func backoff(attempt int) time.Duration {
-	d := minCooldown << attempt
-	if d > maxCooldown {
-		return maxCooldown
+func (a *Account) extendCooldown(until time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if until.After(a.cooldown) {
+		a.cooldown = until
 	}
-	return d
 }

@@ -81,15 +81,15 @@ func TestRateLimitedCooldownIgnoresUsageWindowReset(t *testing.T) {
 	reset := time.Now().Add(48 * time.Hour)
 	account.rateLimited(http.Header{
 		"X-Codex-Primary-Used-Percent": {"95"}, "X-Codex-Primary-Reset-At": {fmt.Sprint(reset.Unix())},
-	}, 0)
+	})
 	if cooldown := account.routingCandidate().cooldown; cooldown.After(time.Now().Add(2 * minCooldown)) {
 		t.Fatalf("transient cooldown %s follows the usage window instead of a short backoff", time.Until(cooldown))
 	}
-	account.rateLimited(http.Header{"Retry-After": {"20"}}, 0)
+	account.rateLimited(http.Header{"Retry-After": {"20"}})
 	if cooldown := account.routingCandidate().cooldown; cooldown.Before(time.Now().Add(15*time.Second)) || cooldown.After(time.Now().Add(25*time.Second)) {
 		t.Fatalf("cooldown %s ignores Retry-After", time.Until(cooldown))
 	}
-	account.rateLimited(http.Header{"Retry-After": {"86400"}}, 0)
+	account.rateLimited(http.Header{"Retry-After": {"86400"}})
 	if cooldown := account.routingCandidate().cooldown; cooldown.After(time.Now().Add(maxCooldown + time.Minute)) {
 		t.Fatalf("cooldown %s exceeds the cap", time.Until(cooldown))
 	}
@@ -126,5 +126,80 @@ func TestWebSocketUpgradeBudgetFailsFast(t *testing.T) {
 	}
 	if !srv.pool.all()[0].routingCandidate().cooldown.IsZero() {
 		t.Fatal("budget overrun penalized the account")
+	}
+}
+
+func TestCooldownCannotShrink(t *testing.T) {
+	for _, later := range []string{"429", "failure"} {
+		t.Run(later, func(t *testing.T) {
+			a := testAccount("a", 0)
+			a.rateLimited(http.Header{"Retry-After": {"120"}})
+			deadline := a.routingCandidate().cooldown
+			if later == "429" {
+				a.rateLimited(nil)
+			} else {
+				a.failed()
+			}
+			if got := a.routingCandidate().cooldown; got.Before(deadline) {
+				t.Fatalf("cooldown shrank by %s", deadline.Sub(got))
+			}
+		})
+	}
+}
+
+func TestRetryAfterNumericBounds(t *testing.T) {
+	for _, value := range []string{"3600", "86400", "9223372036854775807", strings.Repeat("9", 100)} {
+		t.Run(value, func(t *testing.T) {
+			account := testAccount("a", 0)
+			before := time.Now()
+			account.rateLimited(http.Header{"Retry-After": {value}})
+			until := account.routingCandidate().cooldown
+			if until.Before(before.Add(maxCooldown)) || until.After(time.Now().Add(maxCooldown)) {
+				t.Fatalf("cooldown = %v, want cap %v", until.Sub(before), maxCooldown)
+			}
+		})
+	}
+	for _, value := range []string{"-1", "-9223372036854775808", "1.5", "later", strings.Repeat("9", 100) + "x"} {
+		t.Run(value, func(t *testing.T) {
+			account := testAccount("a", 0)
+			before := time.Now()
+			account.rateLimited(http.Header{"Retry-After": {value}})
+			until := account.routingCandidate().cooldown
+			if until.Before(before.Add(minCooldown)) || until.After(time.Now().Add(minCooldown)) {
+				t.Fatalf("invalid retry hint produced cooldown %v", until.Sub(before))
+			}
+		})
+	}
+}
+
+func TestHandshakeFailuresUseSameCooldownForEveryAccount(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":{"code":"rate_limit_exceeded"}}`)
+	}))
+	defer upstream.Close()
+	var accounts []*Account
+	for i := range 8 {
+		accounts = append(accounts, testAccount(fmt.Sprintf("account-%d", i), 0))
+	}
+	_, proxy := newWebSocketProxy(t, upstream.URL, accounts)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	before := time.Now()
+	conn, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(proxy.URL, "http")+"/v1/responses", nil)
+	if conn != nil {
+		conn.CloseNow()
+	}
+	if response != nil && response.Body != nil {
+		response.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("throttled pool accepted a connection")
+	}
+	for _, account := range accounts {
+		until := account.routingCandidate().cooldown
+		if until.Before(before.Add(minCooldown)) || until.After(time.Now().Add(minCooldown)) {
+			t.Errorf("account %s cooldown = %v, want fixed base", account.id(), until.Sub(before))
+		}
 	}
 }
