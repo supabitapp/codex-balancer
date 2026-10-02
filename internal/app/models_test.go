@@ -73,8 +73,10 @@ func TestModelCatalogEntriesUseModelAndTierUnion(t *testing.T) {
 	b := testAccount("account-b", 20)
 	base := testModelEntry("gpt-common", "priority", "default")
 	base["display_name"] = "Common from account-a"
-	other := testModelEntry("gpt-common", "priority")
+	base["additional_speed_tiers"] = []any{"fast"}
+	other := testModelEntry("gpt-common", "priority", "ultrafast")
 	other["display_name"] = "Common from account-b"
+	other["additional_speed_tiers"] = []any{"fast", "ultrafast"}
 	catalog := newModelCatalog()
 	catalog.replace(
 		[]string{b.id(), a.id()},
@@ -90,11 +92,15 @@ func TestModelCatalogEntriesUseModelAndTierUnion(t *testing.T) {
 		t.Fatalf("models = %v", got)
 	}
 	want := cloneModelEntry(base)
-	want["service_tiers"] = []any{map[string]any{"id": "priority"}}
+	want["service_tiers"] = []any{map[string]any{"id": "priority"}, map[string]any{"id": "ultrafast"}}
+	want["additional_speed_tiers"] = []any{"fast", "ultrafast"}
 	for _, entry := range entries {
 		if modelSlug(entry) == "gpt-common" && !reflect.DeepEqual(entry, want) {
 			t.Fatalf("model = %#v, want %#v", entry, want)
 		}
+	}
+	if !reflect.DeepEqual(base["additional_speed_tiers"], []any{"fast"}) {
+		t.Fatalf("account-a speed tiers changed: %#v", base["additional_speed_tiers"])
 	}
 }
 
@@ -120,7 +126,10 @@ func TestModelCatalogFiltersAccountsByModelAndServiceTier(t *testing.T) {
 		[]string{a.id(), b.id()},
 		map[string][]modelEntry{
 			a.id(): {testModelEntry("gpt-terra")},
-			b.id(): {testModelEntry("gpt-sol", "priority")},
+			b.id(): {
+				testModelEntry("gpt-sol", "priority", "ultrafast"),
+				{"slug": "gpt-additional", "additional_speed_tiers": []any{"ultrafast"}},
+			},
 		},
 		"0.1.0",
 	)
@@ -132,6 +141,8 @@ func TestModelCatalogFiltersAccountsByModelAndServiceTier(t *testing.T) {
 	}{
 		{model: "gpt-sol", want: "[account-b]"},
 		{model: "gpt-sol", tier: "fast", want: "[account-b]"},
+		{model: "gpt-sol", tier: "ultrafast", want: "[account-b]"},
+		{model: "gpt-additional", tier: "ultrafast", want: "[account-b]"},
 		{model: "gpt-terra", want: "[account-a]"},
 	} {
 		got := allowedAccountIDs(catalog.allowedAccounts([]*Account{a, b}, test.model, test.tier))
@@ -319,9 +330,9 @@ func TestModelsRefreshesEveryActiveAccountAndServesUnion(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch account {
 		case a.id():
-			fmt.Fprint(w, `{"models":[{"slug":"gpt-common","display_name":"A","service_tiers":[{"id":"priority"}]},{"slug":"gpt-a-only"}]}`)
+			fmt.Fprint(w, `{"models":[{"slug":"gpt-common","display_name":"A","service_tiers":[{"id":"priority"}],"additional_speed_tiers":["fast"]},{"slug":"gpt-a-only"}]}`)
 		case b.id():
-			fmt.Fprint(w, `{"models":[{"slug":"gpt-common","display_name":"B","service_tiers":[{"id":"priority"}]},{"slug":"gpt-b-only"}]}`)
+			fmt.Fprint(w, `{"models":[{"slug":"gpt-common","display_name":"B","service_tiers":[{"id":"priority"},{"id":"ultrafast","name":"Ultrafast","description":"The fastest available responses for latency-sensitive work."}],"additional_speed_tiers":["fast","ultrafast"]},{"slug":"gpt-b-only"}]}`)
 		default:
 			http.Error(w, "unknown account", http.StatusBadRequest)
 		}
@@ -351,8 +362,18 @@ func TestModelsRefreshesEveryActiveAccountAndServesUnion(t *testing.T) {
 		t.Fatalf("models = %v", got)
 	}
 	for _, model := range payload.Models {
-		if modelSlug(model) == "gpt-common" && model["display_name"] != "A" {
+		if modelSlug(model) != "gpt-common" {
+			continue
+		}
+		if model["display_name"] != "A" {
 			t.Fatalf("base payload = %#v, want account-a payload", model)
+		}
+		if !reflect.DeepEqual(model["additional_speed_tiers"], []any{"fast", "ultrafast"}) {
+			t.Fatalf("speed tiers = %#v", model["additional_speed_tiers"])
+		}
+		wantTiers := []any{map[string]any{"id": "priority"}, map[string]any{"id": "ultrafast", "name": "Ultrafast", "description": "The fastest available responses for latency-sensitive work."}}
+		if !reflect.DeepEqual(model["service_tiers"], wantTiers) {
+			t.Fatalf("service tiers = %#v, want %#v", model["service_tiers"], wantTiers)
 		}
 	}
 	mu.Lock()

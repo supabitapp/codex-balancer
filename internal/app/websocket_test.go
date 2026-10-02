@@ -1010,28 +1010,35 @@ func TestWebSocketFirstTurnRoutesByModel(t *testing.T) {
 }
 
 func TestWebSocketFirstTurnRoutesByServiceTier(t *testing.T) {
-	upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
-		writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
-	})
-	defer upstream.Close()
-	a := testAccount("account-a", 0)
-	b := testAccount("account-b", 20)
-	server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b})
-	server.catalog.replace(
-		[]string{a.id(), b.id()},
-		map[string][]modelEntry{
-			a.id(): {testModelEntry("gpt-sol")},
-			b.id(): {testModelEntry("gpt-sol", "priority")},
-		},
-		"0.1.0",
-	)
-	conn, _ := dialWebSocket(t, proxy.URL, nil)
-	defer conn.CloseNow()
+	for _, tier := range []string{"fast", "ultrafast"} {
+		t.Run(tier, func(t *testing.T) {
+			upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, request websocketEnvelope) {
+				if request.ServiceTier != tier {
+					t.Errorf("upstream tier = %q, want %q", request.ServiceTier, tier)
+				}
+				writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
+			})
+			defer upstream.Close()
+			a := testAccount("account-a", 0)
+			b := testAccount("account-b", 20)
+			server, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b})
+			server.catalog.replace(
+				[]string{a.id(), b.id()},
+				map[string][]modelEntry{
+					a.id(): {testModelEntry("gpt-sol")},
+					b.id(): {testModelEntry("gpt-sol", "priority", "ultrafast")},
+				},
+				"0.1.0",
+			)
+			conn, _ := dialWebSocket(t, proxy.URL, nil)
+			defer conn.CloseNow()
 
-	writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-sol", "service_tier": "fast", "input": []any{}})
-	readWebSocketEvent(t, conn)
-	if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b]" {
-		t.Fatalf("request accounts = %s", got)
+			writeWebSocketEvent(t, conn, map[string]any{"type": "response.create", "model": "gpt-sol", "service_tier": tier, "input": []any{}})
+			readWebSocketEvent(t, conn)
+			if got := fmt.Sprint(upstream.RequestAccounts()); got != "[account-b]" {
+				t.Fatalf("request accounts = %s", got)
+			}
+		})
 	}
 }
 

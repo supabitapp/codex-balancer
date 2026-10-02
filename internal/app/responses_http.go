@@ -125,7 +125,7 @@ func httpResponseRequestHeaders(inbound http.Header) http.Header {
 	out := http.Header{}
 	for _, name := range []string{
 		"User-Agent", "Originator", "OpenAI-Beta", "Session_id", "Session-Id",
-		"X-Codex-Session-Id", "X-Codex-Conversation-Id", "X-Session-Affinity", "X-Session-Id",
+		"OpenAI-Service-Tier", "X-Codex-Session-Id", "X-Codex-Conversation-Id", "X-Session-Affinity", "X-Session-Id",
 		"Thread-Id", "X-Client-Request-Id", codexTurnStateKey,
 	} {
 		if value := inbound.Get(name); value != "" {

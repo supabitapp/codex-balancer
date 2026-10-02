@@ -122,11 +122,13 @@ func (c *modelCatalog) entries() []modelEntry {
 		for slug, entry := range c.accounts[id] {
 			if existing := merged[slug]; existing != nil {
 				mergeModelServiceTiers(existing, entry)
+				mergeModelSpeedTiers(existing, entry)
 				continue
 			}
 			clone := cloneModelEntry(entry)
 			delete(clone, "service_tiers")
 			mergeModelServiceTiers(clone, entry)
+			mergeModelSpeedTiers(clone, entry)
 			merged[slug] = clone
 		}
 	}
@@ -459,6 +461,11 @@ func modelSupportsServiceTier(entry modelEntry, serviceTier string) bool {
 			return true
 		}
 	}
+	for _, tier := range modelAdditionalSpeedTiers(entry) {
+		if canonicalServiceTier(tier) == serviceTier {
+			return true
+		}
+	}
 	return false
 }
 
@@ -469,6 +476,21 @@ func modelServiceTiers(entry modelEntry) []string {
 		id := modelServiceTierID(value)
 		if id != "" {
 			tiers = append(tiers, id)
+		}
+	}
+	return tiers
+}
+
+func modelAdditionalSpeedTiers(entry modelEntry) []string {
+	values, _ := entry["additional_speed_tiers"].([]any)
+	if len(values) == 0 {
+		stringValues, _ := entry["additional_speed_tiers"].([]string)
+		return stringValues
+	}
+	tiers := make([]string, 0, len(values))
+	for _, value := range values {
+		if tier, ok := value.(string); ok && tier != "" {
+			tiers = append(tiers, tier)
 		}
 	}
 	return tiers
@@ -507,4 +529,23 @@ func mergeModelServiceTiers(target, source modelEntry) {
 		return
 	}
 	target["service_tiers"] = merged
+}
+
+func mergeModelSpeedTiers(target, source modelEntry) {
+	seen := map[string]bool{}
+	merged := []any{}
+	for _, entry := range []modelEntry{target, source} {
+		for _, tier := range modelAdditionalSpeedTiers(entry) {
+			key := strings.ToLower(strings.TrimSpace(tier))
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			merged = append(merged, tier)
+		}
+	}
+	if len(merged) == 0 {
+		return
+	}
+	target["additional_speed_tiers"] = merged
 }

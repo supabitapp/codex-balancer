@@ -237,12 +237,12 @@ func TestHTTPResponsesForwardsCodexHeaders(t *testing.T) {
 	srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("pool", 0)})
 	srv.admission = newAdmissionGate(1)
 	resp := postResponse(t, proxy.URL, `{"model":"m","input":"hello"}`, http.Header{
-		"X-Codex-Beta-Features": {"remote_compaction_v2"}, "X-Openai-Subagent": {"review"}, "X-Codex-Window-Id": {"w1"},
+		"OpenAI-Service-Tier": {"ultrafast"}, "X-Codex-Beta-Features": {"remote_compaction_v2"}, "X-Openai-Subagent": {"review"}, "X-Codex-Window-Id": {"w1"},
 		"X-Openai-Internal-Codex-Responses-Lite": {"true"}, "X-Secret": {"private"}, "Cookie": {"private"}, "Accept": {"text/event-stream"},
 	})
 	readHTTPBody(t, resp)
 	headers := <-seen
-	for name, want := range map[string]string{"X-Codex-Beta-Features": "remote_compaction_v2", "X-Openai-Subagent": "review", "X-Codex-Window-Id": "w1", "X-Openai-Internal-Codex-Responses-Lite": "true"} {
+	for name, want := range map[string]string{"OpenAI-Service-Tier": "ultrafast", "X-Codex-Beta-Features": "remote_compaction_v2", "X-Openai-Subagent": "review", "X-Codex-Window-Id": "w1", "X-Openai-Internal-Codex-Responses-Lite": "true"} {
 		if headers.Get(name) != want {
 			t.Errorf("%s = %q, want %q", name, headers.Get(name), want)
 		}
