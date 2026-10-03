@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -136,13 +137,14 @@ func (s *server) adminKeys() ([]adminKeyView, error) {
 		return keys[i].CreatedAt.After(keys[j].CreatedAt)
 	})
 	views := make([]adminKeyView, 0, len(keys))
+	now := time.Now()
 	for _, key := range keys {
 		used := usage[key.Name]
 		cost := costs[key.Name]
 		lastUsedAt := lastUsed[key.Name]
 		lastUsedValue := "--"
 		if !lastUsedAt.IsZero() {
-			lastUsedValue = lastUsedAt.Format("2006-01-02")
+			lastUsedValue = formatRelativeDate(now, lastUsedAt)
 		}
 		views = append(views, adminKeyView{
 			DOMID:    dashboardDOMID("key", key.Name),
@@ -158,6 +160,37 @@ func (s *server) adminKeys() ([]adminKeyView, error) {
 		})
 	}
 	return views, nil
+}
+
+func formatRelativeDate(now, value time.Time) string {
+	nowDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	valueDate := time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
+	days := int(nowDate.Sub(valueDate) / (24 * time.Hour))
+	switch {
+	case days == 0:
+		return "today"
+	case days == 1:
+		return "yesterday"
+	case days > 1 && days < 30:
+		return fmt.Sprintf("%d days ago", days)
+	case days >= 30 && days < 365:
+		months := days / 30
+		return fmt.Sprintf("%d month%s ago", months, pluralSuffix(months))
+	case days >= 365:
+		years := days / 365
+		return fmt.Sprintf("%d year%s ago", years, pluralSuffix(years))
+	case days == -1:
+		return "tomorrow"
+	default:
+		return fmt.Sprintf("in %d days", -days)
+	}
+}
+
+func pluralSuffix(value int) string {
+	if value == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func (s *server) adminDashboard(now time.Time, session adminSession, keys []adminKeyView) dashboardView {

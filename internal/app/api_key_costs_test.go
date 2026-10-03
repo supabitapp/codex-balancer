@@ -90,7 +90,7 @@ func TestAdminAPIKeyCostsUseLifetimeResponsePrices(t *testing.T) {
 			t.Fatal("unused row missing last used placeholder")
 		}
 		for _, name := range []string{"standard", "fast", "unpriced"} {
-			if !strings.Contains(rows[name], `<td class="dim">2026-`) {
+			if !strings.Contains(rows[name], `<td class="dim">today</td>`) {
 				t.Fatalf("%s row missing last used date", name)
 			}
 		}
