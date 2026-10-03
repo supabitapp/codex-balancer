@@ -90,7 +90,7 @@ func TestAdminAPIKeyCostsUseLifetimeResponsePrices(t *testing.T) {
 			t.Fatal("unused row missing last used placeholder")
 		}
 		for _, name := range []string{"standard", "fast", "unpriced"} {
-			if !strings.Contains(rows[name], `<td class="dim">today</td>`) {
+			if !strings.Contains(rows[name], `<td class="dim">just now</td>`) {
 				t.Fatalf("%s row missing last used date", name)
 			}
 		}
@@ -147,5 +147,27 @@ func TestAPIKeyCostsSurviveStoreReopen(t *testing.T) {
 	}
 	if got := costs["client"]; got != (usageCost{apiCostNanoDollars: 2_500_000}) {
 		t.Fatalf("restored cost = %+v, want 2500000 nano-dollars", got)
+	}
+}
+
+func TestFormatRelativeDate(t *testing.T) {
+	now := time.Date(2026, time.October, 3, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name string
+		at   time.Time
+		want string
+	}{
+		{name: "now", at: now, want: "just now"},
+		{name: "minute", at: now.Add(-time.Minute), want: "1 minute ago"},
+		{name: "minutes", at: now.Add(-5 * time.Minute), want: "5 minutes ago"},
+		{name: "hour", at: now.Add(-time.Hour), want: "1 hour ago"},
+		{name: "hours", at: now.Add(-3 * time.Hour), want: "3 hours ago"},
+		{name: "yesterday", at: now.Add(-24 * time.Hour), want: "yesterday"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := formatRelativeDate(now, test.at); got != test.want {
+				t.Fatalf("formatRelativeDate() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }

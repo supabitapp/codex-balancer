@@ -163,6 +163,30 @@ func (s *server) adminKeys() ([]adminKeyView, error) {
 }
 
 func formatRelativeDate(now, value time.Time) string {
+	delta := now.Sub(value)
+	if delta >= 0 {
+		minutes := int(delta / time.Minute)
+		if minutes < 1 {
+			return "just now"
+		}
+		if minutes < 60 {
+			return fmt.Sprintf("%d minute%s ago", minutes, pluralSuffix(minutes))
+		}
+		hours := int(delta / time.Hour)
+		if hours < 24 {
+			return fmt.Sprintf("%d hour%s ago", hours, pluralSuffix(hours))
+		}
+	} else {
+		minutes := int(-delta / time.Minute)
+		if minutes < 60 {
+			return fmt.Sprintf("in %d minute%s", minutes, pluralSuffix(minutes))
+		}
+		hours := int(-delta / time.Hour)
+		if hours < 24 {
+			return fmt.Sprintf("in %d hour%s", hours, pluralSuffix(hours))
+		}
+	}
+
 	nowDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	valueDate := time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 	days := int(nowDate.Sub(valueDate) / (24 * time.Hour))
