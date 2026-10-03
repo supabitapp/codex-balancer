@@ -20,15 +20,16 @@ type adminLoginView struct {
 }
 
 type adminKeyView struct {
-	DOMID   string
-	Name    string
-	Active  bool
-	Created string
-	Input   string
-	Cached  string
-	Output  string
-	Total   string
-	Cost    string
+	DOMID    string
+	Name     string
+	Active   bool
+	Created  string
+	LastUsed string
+	Input    string
+	Cached   string
+	Output   string
+	Total    string
+	Cost     string
 }
 
 type dashboardAdminView struct {
@@ -120,6 +121,10 @@ func (s *server) adminKeys() ([]adminKeyView, error) {
 	if err != nil {
 		return nil, err
 	}
+	lastUsed, err := s.pool.store.apiKeyLastUsed()
+	if err != nil {
+		return nil, err
+	}
 	costs, err := s.pool.store.apiKeyCosts(s.prices.current())
 	if err != nil {
 		return nil, err
@@ -134,16 +139,22 @@ func (s *server) adminKeys() ([]adminKeyView, error) {
 	for _, key := range keys {
 		used := usage[key.Name]
 		cost := costs[key.Name]
+		lastUsedAt := lastUsed[key.Name]
+		lastUsedValue := "--"
+		if !lastUsedAt.IsZero() {
+			lastUsedValue = lastUsedAt.Format("2006-01-02")
+		}
 		views = append(views, adminKeyView{
-			DOMID:   dashboardDOMID("key", key.Name),
-			Name:    key.Name,
-			Active:  key.RevokedAt.IsZero(),
-			Created: key.CreatedAt.Format("2006-01-02"),
-			Input:   formatTokenCount(used.InputTokens),
-			Cached:  formatTokenCount(used.InputDetails.CachedTokens),
-			Output:  formatTokenCount(used.OutputTokens),
-			Total:   formatTokenCount(used.TotalTokens),
-			Cost:    formatAPIPrice(cost.apiCostNanoDollars, cost.unpricedResponses),
+			DOMID:    dashboardDOMID("key", key.Name),
+			Name:     key.Name,
+			Active:   key.RevokedAt.IsZero(),
+			Created:  key.CreatedAt.Format("2006-01-02"),
+			LastUsed: lastUsedValue,
+			Input:    formatTokenCount(used.InputTokens),
+			Cached:   formatTokenCount(used.InputDetails.CachedTokens),
+			Output:   formatTokenCount(used.OutputTokens),
+			Total:    formatTokenCount(used.TotalTokens),
+			Cost:     formatAPIPrice(cost.apiCostNanoDollars, cost.unpricedResponses),
 		})
 	}
 	return views, nil

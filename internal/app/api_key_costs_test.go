@@ -86,6 +86,14 @@ func TestAdminAPIKeyCostsUseLifetimeResponsePrices(t *testing.T) {
 				t.Fatalf("%s row missing %q", name, want)
 			}
 		}
+		if !strings.Contains(rows["unused"], `<td class="dim">--</td>`) {
+			t.Fatal("unused row missing last used placeholder")
+		}
+		for _, name := range []string{"standard", "fast", "unpriced"} {
+			if !strings.Contains(rows[name], `<td class="dim">2026-`) {
+				t.Fatalf("%s row missing last used date", name)
+			}
+		}
 		if !strings.Contains(rows["standard"], "</span> "+strings.ToLower(status)) {
 			t.Fatalf("standard row missing %s status", status)
 		}

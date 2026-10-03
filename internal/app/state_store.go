@@ -212,6 +212,10 @@ func (s *StateStore) apiKeyUsage() (map[string]responseUsage, error) {
 	return usage, nil
 }
 
+func (s *StateStore) apiKeyLastUsed() (map[string]time.Time, error) {
+	return s.raw.APIKeyLastUsed()
+}
+
 func stateUsageEvent(event storedUsage) statepkg.UsageEvent {
 	return statepkg.UsageEvent{
 		At:          event.At,

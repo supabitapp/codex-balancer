@@ -598,6 +598,27 @@ func (s *Store) APIKeyUsage() (map[string]Usage, error) {
 	return usage, rows.Err()
 }
 
+func (s *Store) APIKeyLastUsed() (map[string]time.Time, error) {
+	rows, err := s.db.Query(`SELECT api_key_name, max(at_ns)
+		FROM response_usage
+		WHERE api_key_name IS NOT NULL
+		GROUP BY api_key_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	lastUsed := make(map[string]time.Time)
+	for rows.Next() {
+		var name string
+		var at int64
+		if err := rows.Scan(&name, &at); err != nil {
+			return nil, err
+		}
+		lastUsed[name] = decodeTime(at)
+	}
+	return lastUsed, rows.Err()
+}
+
 func (s *Store) immediate(run func(*sql.Conn) error) error {
 	return s.immediateContext(context.Background(), run)
 }
