@@ -87,7 +87,6 @@ env_key = "CODEX_BALANCER_API_KEY"
 requires_openai_auth = true
 supports_websockets = true
 supports_standalone_web_search = true
-request_max_retries = 4
 ```
 
 Keep `name = "OpenAI"` for server-side compaction. `model_catalog_url` lets
