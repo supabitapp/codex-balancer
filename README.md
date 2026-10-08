@@ -80,12 +80,21 @@ Then in `~/.codex/config.toml`:
 model_provider = "balancer"
 
 [model_providers.balancer]
-name = "OpenAI" # must be exactly this for server-side compaction to work
+name = "OpenAI"
 base_url = "http://127.0.0.1:8317/v1"
+model_catalog_url = "http://127.0.0.1:8317/v1/models"
 env_key = "CODEX_BALANCER_API_KEY"
 requires_openai_auth = true
 supports_websockets = true
+supports_standalone_web_search = true
+request_max_retries = 4
 ```
+
+Keep `name = "OpenAI"` for server-side compaction. `model_catalog_url` lets
+Codex discover the pool's models and service tiers, including Ultrafast where
+an account supports it. `supports_standalone_web_search` advertises the
+balancer's standalone search endpoint to Codex.
+These keys are defined in [Codex 0.161.0's configuration schema](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/core/config.schema.json).
 
 ## Point pi at it
 
