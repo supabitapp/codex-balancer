@@ -21,25 +21,27 @@ type adminLoginView struct {
 }
 
 type adminKeyView struct {
-	DOMID    string
-	Name     string
-	Active   bool
-	Created  string
-	LastUsed string
-	Input    string
-	Cached   string
-	Output   string
-	Total    string
-	Cost     string
+	DOMID        string
+	Name         string
+	Active       bool
+	Created      string
+	LastUsed     string
+	Input        string
+	Cached       string
+	Output       string
+	Total        string
+	Cost         string
+	LifetimeCost string
 }
 
 type dashboardAdminView struct {
-	CSRF     string
-	FastMode fastMode
-	Keys     []adminKeyView
-	Notice   string
-	Error    bool
-	Secret   string
+	CSRF       string
+	FastMode   fastMode
+	Keys       []adminKeyView
+	UsageSince string
+	Notice     string
+	Error      bool
+	Secret     string
 }
 
 type dashboardAdminControl struct {
@@ -113,12 +115,13 @@ func (s *server) adminPage(w http.ResponseWriter, r *http.Request, session admin
 	s.renderAdmin(w, r, session, "", "", http.StatusOK)
 }
 
-func (s *server) adminKeys() ([]adminKeyView, error) {
+func (s *server) adminKeys(now time.Time) ([]adminKeyView, error) {
 	keys, err := s.pool.store.readAPIKeys()
 	if err != nil || len(keys) == 0 {
 		return nil, err
 	}
-	usage, err := s.pool.store.apiKeyUsage()
+	monthStart := calendarMonthStart(now)
+	usage, err := s.pool.store.apiKeyUsageSince(monthStart)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +129,12 @@ func (s *server) adminKeys() ([]adminKeyView, error) {
 	if err != nil {
 		return nil, err
 	}
-	costs, err := s.pool.store.apiKeyCosts(s.prices.current())
+	prices := s.prices.current()
+	costs, err := s.pool.store.apiKeyCosts(prices, monthStart)
+	if err != nil {
+		return nil, err
+	}
+	lifetimeCosts, err := s.pool.store.apiKeyCosts(prices, time.Time{})
 	if err != nil {
 		return nil, err
 	}
@@ -137,26 +145,27 @@ func (s *server) adminKeys() ([]adminKeyView, error) {
 		return keys[i].CreatedAt.After(keys[j].CreatedAt)
 	})
 	views := make([]adminKeyView, 0, len(keys))
-	now := time.Now()
 	for _, key := range keys {
 		used := usage[key.Name]
 		cost := costs[key.Name]
+		lifetimeCost := lifetimeCosts[key.Name]
 		lastUsedAt := lastUsed[key.Name]
 		lastUsedValue := "--"
 		if !lastUsedAt.IsZero() {
 			lastUsedValue = formatRelativeDate(now, lastUsedAt)
 		}
 		views = append(views, adminKeyView{
-			DOMID:    dashboardDOMID("key", key.Name),
-			Name:     key.Name,
-			Active:   key.RevokedAt.IsZero(),
-			Created:  key.CreatedAt.Format("2006-01-02"),
-			LastUsed: lastUsedValue,
-			Input:    formatTokenCount(used.InputTokens),
-			Cached:   formatTokenCount(used.InputDetails.CachedTokens),
-			Output:   formatTokenCount(used.OutputTokens),
-			Total:    formatTokenCount(used.TotalTokens),
-			Cost:     formatAPIPrice(cost.apiCostNanoDollars, cost.unpricedResponses),
+			DOMID:        dashboardDOMID("key", key.Name),
+			Name:         key.Name,
+			Active:       key.RevokedAt.IsZero(),
+			Created:      key.CreatedAt.Format("2006-01-02"),
+			LastUsed:     lastUsedValue,
+			Input:        formatTokenCount(used.InputTokens),
+			Cached:       formatTokenCount(used.InputDetails.CachedTokens),
+			Output:       formatTokenCount(used.OutputTokens),
+			Total:        formatTokenCount(used.TotalTokens),
+			Cost:         formatAPIPrice(cost.apiCostNanoDollars, cost.unpricedResponses),
+			LifetimeCost: formatAPIPrice(lifetimeCost.apiCostNanoDollars, lifetimeCost.unpricedResponses),
 		})
 	}
 	return views, nil
@@ -220,17 +229,18 @@ func pluralSuffix(value int) string {
 func (s *server) adminDashboard(now time.Time, session adminSession, keys []adminKeyView) dashboardView {
 	view := s.dashboardAt(now, true)
 	mode, _ := s.fastMode.snapshot()
-	view.Admin = &dashboardAdminView{CSRF: session.csrf, FastMode: mode, Keys: keys}
+	view.Admin = &dashboardAdminView{CSRF: session.csrf, FastMode: mode, Keys: keys, UsageSince: calendarMonthStart(now).Format("Jan 2")}
 	return view
 }
 
 func (s *server) renderAdmin(w http.ResponseWriter, r *http.Request, session adminSession, notice, secret string, status int) {
-	keys, err := s.adminKeys()
+	now := time.Now()
+	keys, err := s.adminKeys(now)
 	if err != nil {
 		s.adminError(w, r, err)
 		return
 	}
-	view := s.adminDashboard(time.Now(), session, keys)
+	view := s.adminDashboard(now, session, keys)
 	view.Admin.Notice, view.Admin.Secret, view.Admin.Error = notice, secret, status >= 400
 	name := "admin-response"
 	if r.Header.Get("HX-Request") != "true" {
@@ -270,7 +280,7 @@ func (s *server) adminEvents(w http.ResponseWriter, r *http.Request, session adm
 				return
 			}
 			if now.Sub(keysAt) >= adminKeysInterval {
-				loaded, err := s.adminKeys()
+				loaded, err := s.adminKeys(now)
 				if err != nil {
 					s.log.Error("admin stream failed", "error", err)
 					return

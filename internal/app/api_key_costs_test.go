@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestAdminAPIKeyCostsUseLifetimeResponsePrices(t *testing.T) {
+func TestAdminAPIKeyUsageShowsMonthWithLifetimeCost(t *testing.T) {
 	srv := newTestServer(t, nil)
 	enableTestAdmin(t, srv)
 	now := time.Now()
@@ -43,23 +43,35 @@ func TestAdminAPIKeyCostsUseLifetimeResponsePrices(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	costs, err := srv.pool.store.apiKeyCosts(srv.prices.current())
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantCosts := map[string]usageCost{
-		"standard": {apiCostNanoDollars: 4_372_050_000},
-		"fast":     {apiCostNanoDollars: 5_350_000_000},
-		"unpriced": {apiCostNanoDollars: 2_050_000, unpricedResponses: 1},
-		"unused":   {},
-	}
-	for name, want := range wantCosts {
-		if got := costs[name]; got != want {
-			t.Fatalf("%s cost = %+v, want %+v", name, got, want)
+	for _, test := range []struct {
+		start time.Time
+		want  map[string]usageCost
+	}{
+		{start: time.Time{}, want: map[string]usageCost{
+			"standard": {apiCostNanoDollars: 4_372_050_000},
+			"fast":     {apiCostNanoDollars: 5_350_000_000},
+			"unpriced": {apiCostNanoDollars: 2_050_000, unpricedResponses: 1},
+			"unused":   {},
+		}},
+		{start: calendarMonthStart(now), want: map[string]usageCost{
+			"standard": {apiCostNanoDollars: 3_524_550_000},
+			"fast":     {apiCostNanoDollars: 5_350_000_000},
+			"unpriced": {apiCostNanoDollars: 2_050_000, unpricedResponses: 1},
+			"unused":   {},
+		}},
+	} {
+		costs, err := srv.pool.store.apiKeyCosts(srv.prices.current(), test.start)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if _, found := costs[""]; found {
-		t.Fatal("unattributed usage included in API key costs")
+		for name, want := range test.want {
+			if got := costs[name]; got != want {
+				t.Fatalf("%s cost since %v = %+v, want %+v", name, test.start, got, want)
+			}
+		}
+		if _, found := costs[""]; found {
+			t.Fatal("unattributed usage included in API key costs")
+		}
 	}
 	handler := srv.routes()
 	cookie, csrf := loginTestAdmin(t, handler)
@@ -69,18 +81,22 @@ func TestAdminAPIKeyCostsUseLifetimeResponsePrices(t *testing.T) {
 			t.Fatalf("admin status = %d", response.Code)
 		}
 		body := response.Body.String()
-		if !strings.Contains(body, `<th title="Estimated lifetime API cost at current model prices">USD burnt</th>`) {
-			t.Fatal("admin table missing USD burnt column")
+		if !strings.Contains(body, `<th title="Estimated API cost this month at current model prices">USD burnt</th>`) ||
+			!strings.Contains(body, `<th title="Estimated lifetime API cost at current model prices">Total USD burnt</th>`) {
+			t.Fatal("admin table missing USD burnt columns")
+		}
+		if !strings.Contains(body, "usage from "+calendarMonthStart(now).Format("Jan 2")) {
+			t.Fatal("admin keys summary missing usage period")
 		}
 		rows := make(map[string]string)
 		for _, row := range regexp.MustCompile(`(?s)<tr[^>]*>\s*<td>([^<]*)</td>(.*?)</tr>`).FindAllStringSubmatch(body, -1) {
 			rows[row[1]] = row[2]
 		}
 		for name, want := range map[string]string{
-			"standard": "<td>701K</td>\n<td>200.2K</td>\n<td>14K</td>\n<td>715K</td>\n<td>$4.37</td>",
-			"fast":     "<td>300K</td>\n<td>100K</td>\n<td>10K</td>\n<td>310K</td>\n<td>$5.35</td>",
-			"unpriced": "<td>2K</td>\n<td>400</td>\n<td>0</td>\n<td>2K</td>\n<td>--</td>",
-			"unused":   "<td>0</td>\n<td>0</td>\n<td>0</td>\n<td>0</td>\n<td>$0.00</td>",
+			"standard": "<td>501K</td>\n<td>150.2K</td>\n<td>12K</td>\n<td>513K</td>\n<td>$3.52</td>\n<td>$4.37</td>",
+			"fast":     "<td>300K</td>\n<td>100K</td>\n<td>10K</td>\n<td>310K</td>\n<td>$5.35</td>\n<td>$5.35</td>",
+			"unpriced": "<td>2K</td>\n<td>400</td>\n<td>0</td>\n<td>2K</td>\n<td>--</td>\n<td>--</td>",
+			"unused":   "<td>0</td>\n<td>0</td>\n<td>0</td>\n<td>0</td>\n<td>$0.00</td>\n<td>$0.00</td>",
 		} {
 			if !strings.Contains(rows[name], want) {
 				t.Fatalf("%s row missing %q", name, want)
@@ -113,7 +129,7 @@ func TestAdminAPIKeyCostsUseLifetimeResponsePrices(t *testing.T) {
 	}
 	srv.prices.install(priceSnapshot{})
 	page := adminRequest(handler, http.MethodGet, "/admin", nil, cookie)
-	if strings.Contains(page.Body.String(), "<td>$4.37</td>") || !strings.Contains(page.Body.String(), "<td>715K</td>\n<td>--</td>") {
+	if strings.Contains(page.Body.String(), "<td>$4.37</td>") || !strings.Contains(page.Body.String(), "<td>513K</td>\n<td>--</td>\n<td>--</td>") {
 		t.Fatal("missing catalog displayed a known price")
 	}
 	srv.prices.install(testPriceSnapshot(t))
@@ -141,7 +157,7 @@ func TestAPIKeyCostsSurviveStoreReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	costs, err := store.apiKeyCosts(testPriceSnapshot(t))
+	costs, err := store.apiKeyCosts(testPriceSnapshot(t), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

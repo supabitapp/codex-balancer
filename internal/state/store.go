@@ -574,13 +574,13 @@ func (s *Store) UsageEventsSince(start time.Time) ([]UsageEvent, error) {
 	return events, rows.Err()
 }
 
-func (s *Store) APIKeyUsage() (map[string]Usage, error) {
+func (s *Store) APIKeyUsage(start time.Time) (map[string]Usage, error) {
 	rows, err := s.db.Query(`SELECT k.name,
 		coalesce(sum(r.input_tokens), 0), coalesce(sum(r.cached_tokens), 0),
 		coalesce(sum(r.cache_write_tokens), 0), coalesce(sum(r.output_tokens), 0),
 		coalesce(sum(r.reasoning_tokens), 0)
-		FROM api_keys AS k LEFT JOIN response_usage AS r ON r.api_key_name = k.name
-		GROUP BY k.name ORDER BY k.name`)
+		FROM api_keys AS k LEFT JOIN response_usage AS r ON r.api_key_name = k.name AND r.at_ns >= ?
+		GROUP BY k.name ORDER BY k.name`, encodeTime(start))
 	if err != nil {
 		return nil, err
 	}

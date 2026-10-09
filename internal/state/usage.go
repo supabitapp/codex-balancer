@@ -1,5 +1,7 @@
 package state
 
+import "time"
+
 type APIKeyUsageGroup struct {
 	APIKeyName  string
 	Model       string
@@ -8,11 +10,11 @@ type APIKeyUsageGroup struct {
 	Responses   int64
 }
 
-func (s *Store) APIKeyUsageGroups() ([]APIKeyUsageGroup, error) {
+func (s *Store) APIKeyUsageGroups(start time.Time) ([]APIKeyUsageGroup, error) {
 	rows, err := s.db.Query(`SELECT api_key_name, model, service_tier, input_tokens, cached_tokens,
 		cache_write_tokens, output_tokens, count(*) FROM response_usage
-		WHERE api_key_name IS NOT NULL
-		GROUP BY api_key_name, model, service_tier, input_tokens, cached_tokens, cache_write_tokens, output_tokens`)
+		WHERE api_key_name IS NOT NULL AND at_ns >= ?
+		GROUP BY api_key_name, model, service_tier, input_tokens, cached_tokens, cache_write_tokens, output_tokens`, encodeTime(start))
 	if err != nil {
 		return nil, err
 	}

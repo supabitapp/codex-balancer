@@ -1,7 +1,9 @@
 package app
 
-func (s *StateStore) apiKeyCosts(prices priceSnapshot) (map[string]usageCost, error) {
-	groups, err := s.raw.APIKeyUsageGroups()
+import "time"
+
+func (s *StateStore) apiKeyCosts(prices priceSnapshot, start time.Time) (map[string]usageCost, error) {
+	groups, err := s.raw.APIKeyUsageGroups(start)
 	if err != nil {
 		return nil, err
 	}
