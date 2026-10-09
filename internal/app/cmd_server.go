@@ -31,7 +31,7 @@ Point Codex at it by adding to ~/.codex/config.toml:
   name = "OpenAI"
   base_url = "http://127.0.0.1:8317/v1"
   env_key = "CODEX_BALANCER_API_KEY"
-  requires_openai_auth = true
+  requires_openai_auth = false
   supports_websockets = true
 
 Provision a key with "codex-balancer keys add <name>", then set

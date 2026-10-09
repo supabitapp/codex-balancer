@@ -84,7 +84,7 @@ name = "OpenAI"
 base_url = "http://127.0.0.1:8317/v1"
 model_catalog_url = "http://127.0.0.1:8317/v1/models"
 env_key = "CODEX_BALANCER_API_KEY"
-requires_openai_auth = true
+requires_openai_auth = false
 supports_websockets = true
 supports_standalone_web_search = true
 ```
@@ -93,6 +93,11 @@ Keep `name = "OpenAI"` for server-side compaction. `model_catalog_url` lets
 Codex discover the pool's models and service tiers, including Ultrafast where
 an account supports it. `supports_standalone_web_search` advertises the
 balancer's standalone search endpoint to Codex.
+`requires_openai_auth = false` keeps Codex from treating a local ChatGPT login
+as the provider account. With `true`, app-server clients such as the Codex app
+run `account/read` workspace discovery against ChatGPT and fail with
+`workspace routing discovery unauthorized (401)` once that login is signed out
+or expired, even though the balancer key still works.
 These keys are defined in [Codex 0.161.0's configuration schema](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/core/config.schema.json).
 
 ## Point pi at it
