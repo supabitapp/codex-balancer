@@ -81,7 +81,7 @@ func TestAdminAPIKeyUsageShowsMonthWithLifetimeCost(t *testing.T) {
 			t.Fatalf("admin status = %d", response.Code)
 		}
 		body := response.Body.String()
-		if !strings.Contains(body, `<th title="Estimated API cost this month at current model prices">USD burnt</th>`) ||
+		if !strings.Contains(body, `<th title="Estimated API cost this month at current model prices">USD burnt this month</th>`) ||
 			!strings.Contains(body, `<th title="Estimated lifetime API cost at current model prices">Total USD burnt</th>`) {
 			t.Fatal("admin table missing USD burnt columns")
 		}
