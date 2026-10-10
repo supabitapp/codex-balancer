@@ -183,7 +183,7 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 		`<td class="dim">pro</td>`,
 		`2private`,
 		`>🇺🇸</span> ret</td>`,
-		`<td>☀️ high</td>`,
+		`<td>gpt-5.6-sol high</td>`,
 		`<td class="status"><span class="status-mark status-checking">◌</span> checking</td>`,
 		`<span>1 checking</span>`,
 		`<th>WS</th>`,
@@ -871,7 +871,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Client.String() != "🇺🇸 ret" || thread.Model != "☀️ xhigh" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextUsed != "2.3K (1)" || thread.Latency != "2s" || thread.Requests != "1" || thread.Cost != "$0.012" {
+	if thread.Client.String() != "🇺🇸 ret" || thread.Model != "gpt-5.6-sol xhigh" || thread.UncachedInput != "500" || thread.CacheRate != "75" || thread.Output != "300" || thread.ContextUsed != "2.3K (1)" || thread.Latency != "2s" || thread.Requests != "1" || thread.Cost != "$0.012" {
 		t.Fatalf("routing row = %+v", thread)
 	}
 	if thread.Info != "Request: compaction\nCodex thread: 2private\nTurn: 0private\nAgent: compact" || thread.ContextInfo != "Latest response tokens: 2.3K\nCompactions: 1" || thread.LatencyInfo != "First byte: 500ms\nTotal: 2s" {
@@ -882,7 +882,7 @@ func TestDashboardRoutingShowsTokenUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	for _, expected := range []string{`class="has-tooltip client-location" data-tooltip="United States"`, `aria-label="United States"`, `>🇺🇸</span> ret</td>`, "<th>Model</th>", "<td>☀️ xhigh</td>", "<th>Cache %</th>", "<th>Context tokens<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 2private", "Latest response tokens: 2.3K", "Compactions: 1"} {
+	for _, expected := range []string{`class="has-tooltip client-location" data-tooltip="United States"`, `aria-label="United States"`, `>🇺🇸</span> ret</td>`, "<th>Model</th>", "<td>gpt-5.6-sol xhigh</td>", "<th>Cache %</th>", "<th>Context tokens<br>Compactions</th>", "<th>Cost</th>", "<td>$0.012</td>", "Codex thread: 2private", "Latest response tokens: 2.3K", "Compactions: 1"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("dashboard missing %q", expected)
 		}
@@ -923,7 +923,7 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 		t.Fatalf("routing rows = %d, want one", len(view.Threads))
 	}
 	thread := view.Threads[0]
-	if thread.Model != "🔀 mixed" || thread.ModelInfo != "gpt-5.6-sol xhigh\ngpt-5.6-luna low" {
+	if thread.Model != "mixed" || thread.ModelInfo != "gpt-5.6-sol xhigh\ngpt-5.6-luna low" {
 		t.Fatalf("mixed model = %q with info %q", thread.Model, thread.ModelInfo)
 	}
 	payload, err := renderDashboard("dashboard", view)
@@ -931,7 +931,7 @@ func TestDashboardRoutingShowsMixedModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(payload)
-	if !strings.Contains(body, "data-tooltip=\"gpt-5.6-sol xhigh\ngpt-5.6-luna low\"") || !strings.Contains(body, `>🔀 mixed</span>`) {
+	if !strings.Contains(body, "data-tooltip=\"gpt-5.6-sol xhigh\ngpt-5.6-luna low\"") || !strings.Contains(body, `>mixed</span>`) {
 		t.Fatalf("mixed model tooltip missing from dashboard: %s", body)
 	}
 }
@@ -942,10 +942,10 @@ func TestDashboardModel(t *testing.T) {
 		effort string
 		want   string
 	}{
-		{"gpt-5.6-sol", "xhigh", "☀️ xhigh"},
-		{"gpt-5.6-terra", "medium", "🌍 medium"},
-		{"gpt-5.6-luna", "low", "🌙 low"},
-		{"gpt-5.6-luna-2026-08-01", "", "🌙"},
+		{"gpt-5.6-sol", "xhigh", "gpt-5.6-sol xhigh"},
+		{"gpt-5.6-terra", "medium", "gpt-5.6-terra medium"},
+		{"gpt-5.6-luna", "low", "gpt-5.6-luna low"},
+		{"gpt-5.6-luna-2026-08-01", "", "gpt-5.6-luna-2026-08-01"},
 		{"gpt-5.4", "", "gpt-5.4"},
 	} {
 		if got := dashboardModel(test.model, test.effort); got != test.want {
