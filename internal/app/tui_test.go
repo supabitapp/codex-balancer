@@ -158,7 +158,7 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 	view := dashboard.threads(220, 8)
 	for _, expected := range []string{
 		"Thread", "Client", "IP", "Account", "Model", "Tier", "Uncached", "Cache%", "Output", "Tokens/Cmp", "Latency", "Reqs", "Cost", "Active",
-		"2private", "🇺🇸 ret", "203.0.113.42", "account-a@example.com", "gpt-5.6-sol xhigh", "priority", "500", "75", "300", "2.3K (2)", "5.42s", "39", "$0.025",
+		"2private", "🇺🇸 ret", "203.0.113.42", "account-a@example.com", "gpt-5.6-sol xhigh", "⚡", "500", "75", "300", "2.3K (2)", "5.42s", "39", "$0.025",
 	} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("routing missing %q:\n%s", expected, view)
@@ -180,8 +180,8 @@ func TestRoutingShowsFullThreadDetails(t *testing.T) {
 		}
 	}
 	dashboard.snap.Threads[0].ServiceTier = "ultrafast"
-	if view := dashboard.threads(120, 8); !strings.Contains(view, "ultrafast") {
-		t.Fatalf("compact routing missing ultrafast tier:\n%s", view)
+	if view := dashboard.threads(120, 8); !strings.Contains(view, "🚀") {
+		t.Fatalf("compact routing missing ultrafast icon:\n%s", view)
 	}
 	dashboard.snap.Threads[0].ServiceTier = "flex"
 	if view := dashboard.threads(120, 8); !strings.Contains(view, "flex") {

@@ -190,7 +190,7 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 		`<th>Via</th>`,
 		`<td>WS</td>`,
 		`<th>Tier</th>`,
-		`<td>ultrafast</td>`,
+		`<td><span role="img" aria-label="ultrafast">🚀</span></td>`,
 		`USD burnt this month`,
 		`$30.00`,
 		`<td>connection retry</td>`,

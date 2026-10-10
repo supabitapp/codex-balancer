@@ -119,25 +119,26 @@ type dashboardMetric struct {
 }
 
 type dashboardThreadView struct {
-	DOMID         string
-	Key           string
-	Info          string
-	Client        dashboardClientView
-	Account       string
-	Model         string
-	ModelInfo     string
-	Via           string
-	ServiceTier   string
-	UncachedInput string
-	CacheRate     string
-	Output        string
-	ContextUsed   string
-	ContextInfo   string
-	Latency       string
-	LatencyInfo   string
-	Requests      string
-	Cost          string
-	Last          string
+	DOMID           string
+	Key             string
+	Info            string
+	Client          dashboardClientView
+	Account         string
+	Model           string
+	ModelInfo       string
+	Via             string
+	ServiceTier     string
+	ServiceTierIcon string
+	UncachedInput   string
+	CacheRate       string
+	Output          string
+	ContextUsed     string
+	ContextInfo     string
+	Latency         string
+	LatencyInfo     string
+	Requests        string
+	Cost            string
+	Last            string
 }
 
 type dashboardEventView struct {
@@ -687,25 +688,26 @@ func newDashboardThreadView(thread ThreadSnapshot, account string, client dashbo
 	}
 	model, modelInfo := dashboardThreadModel(thread)
 	return dashboardThreadView{
-		DOMID:         dashboardDOMID("thread", thread.Key),
-		Key:           shortKeySuffix(thread.Key),
-		Info:          dashboardThreadInfo(thread.Metadata),
-		Client:        client,
-		Account:       account,
-		Model:         model,
-		ModelInfo:     modelInfo,
-		Via:           strings.ToUpper(string(thread.Via)),
-		ServiceTier:   displayServiceTier(thread.ServiceTier),
-		UncachedInput: formatTokenCount(thread.Usage.nonCachedInput()),
-		CacheRate:     dashboardCacheRate(thread.Usage),
-		Output:        formatTokenCount(thread.Usage.OutputTokens),
-		ContextUsed:   dashboardContextUsed(used, thread.Compactions),
-		ContextInfo:   dashboardContextInfo(used, thread.Compactions),
-		Latency:       formatLatency(thread.Latency),
-		LatencyInfo:   dashboardLatencyInfo(thread.TTFB, thread.Latency),
-		Requests:      dashboardNumber(thread.Turns),
-		Cost:          cost,
-		Last:          agoAt(now, thread.Last),
+		DOMID:           dashboardDOMID("thread", thread.Key),
+		Key:             shortKeySuffix(thread.Key),
+		Info:            dashboardThreadInfo(thread.Metadata),
+		Client:          client,
+		Account:         account,
+		Model:           model,
+		ModelInfo:       modelInfo,
+		Via:             strings.ToUpper(string(thread.Via)),
+		ServiceTier:     displayServiceTier(thread.ServiceTier),
+		ServiceTierIcon: displayServiceTierIcon(thread.ServiceTier),
+		UncachedInput:   formatTokenCount(thread.Usage.nonCachedInput()),
+		CacheRate:       dashboardCacheRate(thread.Usage),
+		Output:          formatTokenCount(thread.Usage.OutputTokens),
+		ContextUsed:     dashboardContextUsed(used, thread.Compactions),
+		ContextInfo:     dashboardContextInfo(used, thread.Compactions),
+		Latency:         formatLatency(thread.Latency),
+		LatencyInfo:     dashboardLatencyInfo(thread.TTFB, thread.Latency),
+		Requests:        dashboardNumber(thread.Turns),
+		Cost:            cost,
+		Last:            agoAt(now, thread.Last),
 	}
 }
 
@@ -718,6 +720,17 @@ func displayServiceTier(serviceTier string) string {
 		return "unknown"
 	}
 	return serviceTier
+}
+
+func displayServiceTierIcon(serviceTier string) string {
+	switch displayServiceTier(serviceTier) {
+	case serviceTierPriority:
+		return "⚡"
+	case priceModeUltrafast:
+		return "🚀"
+	default:
+		return ""
+	}
 }
 
 func privateDashboardClientView(thread ThreadSnapshot, client dashboardClientView) dashboardClientView {
