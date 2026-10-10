@@ -68,8 +68,13 @@ type priceTier struct {
 
 type modelPrice struct {
 	standard []priceTier
-	fast     []priceTier
+	modes    map[string][]priceTier
 }
+
+const (
+	priceModeFast      = "fast"
+	priceModeUltrafast = "ultrafast"
+)
 
 type priceSnapshot struct {
 	models    map[string]modelPrice
@@ -117,8 +122,8 @@ func (s priceSnapshot) estimate(model, serviceTier string, usage responseUsage) 
 	}
 
 	tiers := prices.standard
-	if isFastServiceTier(serviceTier) {
-		tiers = prices.fast
+	if mode := serviceTierPriceMode(serviceTier); mode != "" {
+		tiers = prices.modes[mode]
 	}
 	if len(tiers) == 0 {
 		return 0, false
@@ -138,7 +143,18 @@ func (s priceSnapshot) estimate(model, serviceTier string, usage responseUsage) 
 }
 
 func isFastServiceTier(serviceTier string) bool {
-	return serviceTier == serviceTierFast || serviceTier == "fast"
+	return serviceTierPriceMode(serviceTier) == priceModeFast
+}
+
+func serviceTierPriceMode(serviceTier string) string {
+	switch canonicalServiceTier(serviceTier) {
+	case serviceTierPriority:
+		return priceModeFast
+	case priceModeUltrafast:
+		return priceModeUltrafast
+	default:
+		return ""
+	}
 }
 
 func formatAPIPrice(nanoDollars int64, unpricedResponses int64) string {

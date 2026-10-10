@@ -508,12 +508,7 @@ func (d dashboard) threads(width, height int) string {
 		{"IP", ipWidth, styles.dim, func(view routingThreadView) string { return view.clientIP }},
 		{"Account", accountWidth, styles.spark, func(view routingThreadView) string { return view.Account }},
 		{"Model", modelWidth, styles.text, func(view routingThreadView) string { return view.Model }},
-		{"Fast", 4, styles.warn, func(view routingThreadView) string {
-			if view.Fast {
-				return "⚡"
-			}
-			return ""
-		}},
+		{"Tier", 10, styles.warn, func(view routingThreadView) string { return view.ServiceTier }},
 		{"Uncached", 8, styles.num, func(view routingThreadView) string { return view.UncachedInput }},
 		{"Cache%", 6, styles.dim, func(view routingThreadView) string { return view.CacheRate }},
 		{"Output", 7, styles.num, func(view routingThreadView) string { return view.Output }},

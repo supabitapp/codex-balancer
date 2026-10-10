@@ -152,7 +152,7 @@
 <th>Account</th>
 <th>Model</th>
 <th>Via</th>
-<th>Fast</th>
+<th>Tier</th>
 <th>Cache %</th>
 <th>Context tokens<br>Compactions</th>
 <th>Cost</th>
@@ -164,7 +164,7 @@
 <td>{{.Account}}</td>
 <td>{{if .ModelInfo}}<span id="{{.DOMID}}-model" class="has-tooltip" data-tooltip="{{.ModelInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.Model}}</span>{{else}}{{.Model}}{{end}}</td>
 <td>{{if .Via}}{{.Via}}{{else}}--{{end}}</td>
-<td>{{if .Fast}}<span role="img" aria-label="Fast">⚡️</span>{{end}}</td>
+<td>{{.ServiceTier}}</td>
 <td>{{.CacheRate}}</td>
 <td>{{if .ContextInfo}}<span id="{{.DOMID}}-context" class="has-tooltip" data-tooltip="{{.ContextInfo}}" aria-describedby="dashboard-tooltip" tabindex="0">{{.ContextUsed}}</span>{{else}}{{.ContextUsed}}{{end}}</td>
 <td>{{.Cost}}</td>

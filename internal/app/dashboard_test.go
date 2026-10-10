@@ -130,7 +130,7 @@ func TestWebAssetsAreServedFromBinary(t *testing.T) {
 func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.activateThread("019fe5c2private")
-	stats.accepted("", "019fe5c2private", "019fe5c2private", "203.0.113.42", apiKeyIdentity{name: "laptop", suffix: "ret"}, "unused", "gpt-5.6-sol", "high", serviceTierFast, transportWebSocket, turnMetadata{}, true)
+	stats.accepted("", "019fe5c2private", "019fe5c2private", "203.0.113.42", apiKeyIdentity{name: "laptop", suffix: "ret"}, "unused", "gpt-5.6-sol", "high", "ultrafast", transportWebSocket, turnMetadata{}, true)
 	stats.recordUsage("019fe5c2private", "unused", "gpt-5.6-sol", "high", "default", responseUsage{OutputTokens: 1_000_000})
 	stats.failedOver("unused", "<script>upstream unavailable</script>")
 	stats.note("admin account refresh", "unused", "Quota and banked credits refreshed for alice@example.com.")
@@ -189,7 +189,8 @@ func TestDashboardSSEStreamsEscapedHTML(t *testing.T) {
 		`<th>WS</th>`,
 		`<th>Via</th>`,
 		`<td>WS</td>`,
-		`<span role="img" aria-label="Fast">⚡️</span>`,
+		`<th>Tier</th>`,
+		`<td>ultrafast</td>`,
 		`USD burnt this month`,
 		`$30.00`,
 		`<td>connection retry</td>`,

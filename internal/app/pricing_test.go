@@ -112,6 +112,20 @@ func TestEstimateAPIPriceUsesFastBaseRateWithoutFastTiers(t *testing.T) {
 	}
 }
 
+func TestEstimateAPIPriceUsesUltrafastModeRates(t *testing.T) {
+	snapshot, err := parseModelsDevPriceCatalog([]byte(`{"openai":{"models":{"gpt-6.1-sol":{"cost":{"input":2,"output":10},"experimental":{"modes":{"ultrafast":{"cost":{"input":12,"output":60,"cache_read":0.6,"cache_write":15}}}}}}}}`), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
+	usage.InputDetails.CachedTokens = 100
+	usage.InputDetails.CacheWriteTokens = 50
+	got, known := snapshot.estimate("gpt-6.1-sol", "ultrafast", usage)
+	if !known || got != 17_010_000 {
+		t.Fatalf("estimate = %d, %t, want 17010000, true", got, known)
+	}
+}
+
 func TestEstimateAPIPriceUsesInputRateForCacheWritesWithoutSeparateRate(t *testing.T) {
 	usage := responseUsage{InputTokens: 1_000}
 	usage.InputDetails.CachedTokens = 200

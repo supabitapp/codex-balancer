@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const (
@@ -126,7 +127,7 @@ type dashboardThreadView struct {
 	Model         string
 	ModelInfo     string
 	Via           string
-	Fast          bool
+	ServiceTier   string
 	UncachedInput string
 	CacheRate     string
 	Output        string
@@ -694,7 +695,7 @@ func newDashboardThreadView(thread ThreadSnapshot, account string, client dashbo
 		Model:         model,
 		ModelInfo:     modelInfo,
 		Via:           strings.ToUpper(string(thread.Via)),
-		Fast:          isFastServiceTier(thread.ServiceTier),
+		ServiceTier:   displayServiceTier(thread.ServiceTier),
 		UncachedInput: formatTokenCount(thread.Usage.nonCachedInput()),
 		CacheRate:     dashboardCacheRate(thread.Usage),
 		Output:        formatTokenCount(thread.Usage.OutputTokens),
@@ -706,6 +707,17 @@ func newDashboardThreadView(thread ThreadSnapshot, account string, client dashbo
 		Cost:          cost,
 		Last:          agoAt(now, thread.Last),
 	}
+}
+
+func displayServiceTier(serviceTier string) string {
+	serviceTier = canonicalServiceTier(serviceTier)
+	if serviceTier == "" {
+		return "default"
+	}
+	if len(serviceTier) > 32 || strings.ContainsFunc(serviceTier, unicode.IsControl) {
+		return "unknown"
+	}
+	return serviceTier
 }
 
 func privateDashboardClientView(thread ThreadSnapshot, client dashboardClientView) dashboardClientView {

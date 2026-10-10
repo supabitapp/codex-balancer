@@ -45,10 +45,8 @@ type modelsDevCost struct {
 type modelsDevModel struct {
 	Cost         *modelsDevCost `json:"cost"`
 	Experimental struct {
-		Modes struct {
-			Fast *struct {
-				Cost *modelsDevCost `json:"cost"`
-			} `json:"fast"`
+		Modes map[string]struct {
+			Cost *modelsDevCost `json:"cost"`
 		} `json:"modes"`
 	} `json:"experimental"`
 }
@@ -187,14 +185,21 @@ func parseOpenAIPriceCatalog(payload []byte, fetchedAt time.Time) (priceSnapshot
 		if err != nil {
 			return priceSnapshot{}, fmt.Errorf("price %s: %w", id, err)
 		}
-		var fast []priceTier
-		if mode := model.Experimental.Modes.Fast; mode != nil && mode.Cost != nil {
-			fast, err = parsePriceTiers(*mode.Cost)
-			if err != nil {
-				return priceSnapshot{}, fmt.Errorf("fast price %s: %w", id, err)
+		modes := make(map[string][]priceTier)
+		for modeName, mode := range model.Experimental.Modes {
+			if modeName != priceModeFast && modeName != priceModeUltrafast {
+				continue
 			}
+			if mode.Cost == nil {
+				continue
+			}
+			modePrices, modeErr := parsePriceTiers(*mode.Cost)
+			if modeErr != nil {
+				return priceSnapshot{}, fmt.Errorf("%s price %s: %w", modeName, id, modeErr)
+			}
+			modes[modeName] = modePrices
 		}
-		models[id] = modelPrice{standard: standard, fast: fast}
+		models[id] = modelPrice{standard: standard, modes: modes}
 	}
 	if len(models) == 0 {
 		return priceSnapshot{}, fmt.Errorf("OpenAI price catalog has no priced models")

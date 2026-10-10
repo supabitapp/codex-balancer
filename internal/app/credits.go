@@ -44,6 +44,9 @@ func estimateCodexCredits(model, serviceTier string, usage responseUsage) (int64
 	if !known {
 		return 0, false
 	}
+	if serviceTierPriceMode(serviceTier) == priceModeUltrafast {
+		return 0, false
+	}
 	if isFastServiceTier(serviceTier) {
 		if rates.fastDenominator == 0 {
 			return 0, false

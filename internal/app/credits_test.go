@@ -21,6 +21,7 @@ func TestCodexCreditEstimateUsesModelTokenRates(t *testing.T) {
 		{model: "gpt-5.5", want: 110 * nanoCreditsPerCredit, known: true},
 		{model: "gpt-5.4-mini-2026-08-01", want: 16_550_000_000, known: true},
 		{model: "gpt-5.4", serviceTier: "fast", want: 110 * nanoCreditsPerCredit, known: true},
+		{model: "gpt-5.6-sol", serviceTier: "ultrafast", known: false},
 		{model: "unknown"},
 	} {
 		got, known := estimateCodexCredits(test.model, test.serviceTier, usage)
