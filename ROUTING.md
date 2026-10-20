@@ -68,7 +68,8 @@ Upstream sits behind a Cloudflare rule that admits only Codex Desktop, so the
 balancer sends `originator: Codex Desktop` and a `Codex Desktop/` User-Agent.
 A Cloudflare challenge (`cf-mitigated: challenge`) is a client-identity
 failure, not an account failure: the balancer returns `502` at once, logs a
-warning, and does not mark the account spent or cooling or try other accounts.
+warning, and does not refresh credentials, mark the account spent or cooling,
+or try other accounts, whatever the challenge's status.
 
 Placement and failure handling match the tool endpoints: fresh placement
 without claims, affinity, or a model filter; one credential refresh on `401`;
@@ -77,7 +78,7 @@ the next account is tried; transport failures return `502` or `504` without a
 second POST; and when every account rejects, the client receives the last
 status, `Retry-After`, and redacted body. Uploads are capped at 25 MiB, about
 nine minutes of mono 24 kHz PCM16 WAV. The body must arrive within 30
-seconds.
+seconds, and the client must accept the response within another 30.
 
 A successful response is `{"text": "…"}`. Upstream also returns a pointer to
 the stored upload, which ChatGPT retains for 30 days on the pool account; the

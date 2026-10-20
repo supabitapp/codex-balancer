@@ -82,7 +82,7 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 			writeHTTPResponseError(w, failure.Status, failure.Message)
 			return
 		}
-		if resp.Header.Get("Cf-Mitigated") == "challenge" {
+		if transcriptionChallenged(resp) {
 			resp.Body.Close()
 			s.log.Warn("transcription upstream challenged the client identity", "account", id, "status", resp.StatusCode)
 			writeHTTPResponseError(w, http.StatusBadGateway, "upstream challenged the balancer's transcription client identity")
@@ -111,7 +111,7 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rejection != nil {
-		s.writeToolResponse(w, rejection)
+		s.writeTranscription(w, rejection)
 		return
 	}
 	w.Header().Set("Retry-After", "1")
@@ -188,7 +188,7 @@ func transcriptionFilename(name string) string {
 func (s *server) sendTranscription(ctx context.Context, account *Account, upload transcriptionUpload) (*http.Response, error) {
 	account.accepted(time.Now())
 	resp, err := s.forwardTranscription(ctx, account, upload)
-	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+	if err != nil || resp.StatusCode != http.StatusUnauthorized || transcriptionChallenged(resp) {
 		return resp, err
 	}
 	resp.Body.Close()
@@ -202,6 +202,10 @@ func (s *server) sendTranscription(ctx context.Context, account *Account, upload
 	}
 	account.accepted(now)
 	return s.forwardTranscription(ctx, account, upload)
+}
+
+func transcriptionChallenged(resp *http.Response) bool {
+	return resp.Header.Get("Cf-Mitigated") == "challenge"
 }
 
 func (s *server) forwardTranscription(ctx context.Context, account *Account, upload transcriptionUpload) (*http.Response, error) {
@@ -222,6 +226,7 @@ func (s *server) forwardTranscription(ctx context.Context, account *Account, upl
 }
 
 func (s *server) writeTranscription(w http.ResponseWriter, resp *http.Response) {
+	http.NewResponseController(w).SetWriteDeadline(time.Now().Add(httpResponseIOWait))
 	if resp.StatusCode >= http.StatusBadRequest {
 		s.writeToolResponse(w, resp)
 		return

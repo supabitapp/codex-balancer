@@ -367,3 +367,27 @@ func TestTranscriptionCapsTrailingEpilogue(t *testing.T) {
 		t.Fatalf("status=%d body=%s calls=%d", resp.StatusCode, got, calls.Load())
 	}
 }
+
+func TestTranscriptionChallengedUnauthorizedSkipsRefresh(t *testing.T) {
+	refreshes := useOAuthRefreshServer(t)
+	var calls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		calls.Add(1)
+		w.Header().Set("Cf-Mitigated", "challenge")
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer upstream.Close()
+	a, b := testAccount("a", 0), testAccount("b", 0)
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b})
+	body, contentType := speechForm().encode(t)
+	resp, got := postTranscription(t, proxy.URL, body, contentType, nil)
+	if resp.StatusCode != http.StatusBadGateway || calls.Load() != 1 || refreshes() != 0 {
+		t.Fatalf("status=%d body=%s calls=%d refreshes=%d", resp.StatusCode, got, calls.Load(), refreshes())
+	}
+	for _, account := range []*Account{a, b} {
+		if account.needsReauth() {
+			t.Fatalf("%s marked for reauth after a client identity challenge", account.id())
+		}
+	}
+}
