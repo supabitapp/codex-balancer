@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -19,11 +20,11 @@ import (
 const (
 	maxTranscriptionBody     = 25 << 20
 	maxTranscriptionLanguage = 32
-	// The dictation endpoint sits behind a Cloudflare rule that only admits
-	// Codex Desktop's originator together with its User-Agent prefix.
-	transcriptionOriginator = "Codex Desktop"
-	transcriptionUserAgent  = "Codex Desktop/0.163.0 (Mac OS 27.0.0; arm64) unknown (Codex Desktop; 0.0.0)"
+	transcriptionOriginator  = "Codex Desktop"
+	transcriptionUserAgent   = "Codex Desktop/0.163.0 (Mac OS 27.0.0; arm64) unknown (Codex Desktop; 0.0.0)"
 )
+
+var transcriptionExtension = regexp.MustCompile(`^\.[a-z0-9]{1,4}$`)
 
 type transcriptionUpload struct {
 	body        []byte
@@ -50,7 +51,6 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 		writeHTTPResponseError(w, status, message)
 		return
 	}
-	// An expired read deadline would cancel the request context while upstream transcribes.
 	controller.SetReadDeadline(time.Time{})
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(r.Context(), upstreamWait)
@@ -58,6 +58,11 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 	skip := map[string]bool{}
 	reauthed := map[string]bool{}
 	var rejection *http.Response
+	defer func() {
+		if rejection != nil {
+			rejection.Body.Close()
+		}
+	}()
 	var retryAccount *Account
 	for range 2 * len(s.pool.all()) {
 		account := retryAccount
@@ -79,9 +84,6 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 		account.accepted(time.Now())
 		resp, err := s.forwardTranscription(ctx, account, upload)
 		if err != nil {
-			if rejection != nil {
-				rejection.Body.Close()
-			}
 			failure := httpTransportFailure(ctx, err)
 			s.log.Warn("transcription upstream failed", "account", id, "audio_bytes", upload.audioBytes, "error_class", failure.Code)
 			writeHTTPResponseError(w, failure.Status, failure.Message)
@@ -89,9 +91,6 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 		}
 		if resp.Header.Get("Cf-Mitigated") == "challenge" {
 			resp.Body.Close()
-			if rejection != nil {
-				rejection.Body.Close()
-			}
 			s.log.Warn("transcription upstream challenged the client identity", "account", id, "status", resp.StatusCode)
 			writeHTTPResponseError(w, http.StatusBadGateway, "upstream challenged the balancer's transcription client identity")
 			return
@@ -125,9 +124,6 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 			skip[id] = true
 			continue
 		}
-		if rejection != nil {
-			rejection.Body.Close()
-		}
 		s.log.Debug("transcription proxied", "account", id, "status", resp.StatusCode, "audio_bytes", upload.audioBytes, "elapsed_ms", time.Since(started).Milliseconds())
 		s.writeTranscription(w, resp)
 		return
@@ -148,7 +144,8 @@ func readTranscriptionUpload(w http.ResponseWriter, r *http.Request) (transcript
 	}
 	var body bytes.Buffer
 	form := multipart.NewWriter(&body)
-	audioBytes := int64(-1)
+	var audioBytes int64
+	fileSeen := false
 	language := ""
 	for {
 		part, err := reader.NextPart()
@@ -160,9 +157,10 @@ func readTranscriptionUpload(w http.ResponseWriter, r *http.Request) (transcript
 		}
 		switch part.FormName() {
 		case "file":
-			if audioBytes >= 0 {
+			if fileSeen {
 				return transcriptionUpload{}, errors.New("multipart field file must appear once")
 			}
+			fileSeen = true
 			header := textproto.MIMEHeader{}
 			header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": transcriptionFilename(part.FileName())}))
 			header.Set("Content-Type", cmp.Or(part.Header.Get("Content-Type"), "application/octet-stream"))
@@ -184,7 +182,7 @@ func readTranscriptionUpload(w http.ResponseWriter, r *http.Request) (transcript
 			language = strings.TrimSpace(string(value))
 		}
 	}
-	if audioBytes <= 0 {
+	if audioBytes == 0 {
 		return transcriptionUpload{}, errors.New("multipart field file is required and must not be empty")
 	}
 	if language != "" {
@@ -194,13 +192,9 @@ func readTranscriptionUpload(w http.ResponseWriter, r *http.Request) (transcript
 	return transcriptionUpload{body: body.Bytes(), contentType: form.FormDataContentType(), audioBytes: audioBytes}, nil
 }
 
-// transcriptionFilename keeps the client's container extension but not its
-// file name, matching the codex.webm name Codex Desktop uploads.
 func transcriptionFilename(name string) string {
 	ext := strings.ToLower(path.Ext(name))
-	if len(ext) < 2 || len(ext) > 5 || strings.ContainsFunc(ext[1:], func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
-	}) {
+	if !transcriptionExtension.MatchString(ext) {
 		ext = ".webm"
 	}
 	return "codex" + ext
@@ -223,8 +217,6 @@ func (s *server) forwardTranscription(ctx context.Context, account *Account, upl
 	return client.Do(req)
 }
 
-// writeTranscription returns only the transcript; upstream also reports the
-// retained upload's asset pointer, which stays private to the pool account.
 func (s *server) writeTranscription(w http.ResponseWriter, resp *http.Response) {
 	if resp.StatusCode != http.StatusOK {
 		s.writeToolResponse(w, resp)
