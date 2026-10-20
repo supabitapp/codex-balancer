@@ -163,18 +163,24 @@ func TestPoolRoutesSelfServeBusinessProlite(t *testing.T) {
 	}
 }
 
-func TestPoolRouteExcludesDisplayOnlyWorkspacePlans(t *testing.T) {
-	for _, plan := range []string{"business", "enterprise"} {
+func TestPoolRouteExcludesNonRoutablePlans(t *testing.T) {
+	for _, plan := range []string{"free", " FREE ", "business", "enterprise"} {
 		t.Run(plan, func(t *testing.T) {
-			workspace := testAccountWithPlan("workspace", 0, plan)
+			excluded := testAccountWithPlan("excluded", 0, plan)
+			excluded.RoutingMode = routingModePriority
 			routable := testAccount("routable", 20)
-			pool := &Pool{accounts: []*Account{workspace, routable}}
+			pool := &Pool{accounts: []*Account{excluded, routable}}
 
-			decision := pool.route([]string{workspace.id()}, nil)
-			if decision.account != routable || decision.blocked != "" {
-				t.Fatalf("decision = %+v, want the managed workspace excluded and the routable account selected", decision)
+			for _, owners := range [][]string{nil, {excluded.id()}} {
+				decision := pool.route(owners, nil)
+				if decision.account != routable || decision.blocked != "" {
+					t.Fatalf("decision = %+v, want the routable account selected", decision)
+				}
+				if decision := pool.route(owners, map[string]bool{routable.id(): true}); decision.account != nil || decision.blocked != "" {
+					t.Fatalf("decision = %+v, want no eligible account", decision)
+				}
 			}
-			if got := workspace.status(time.Now()); got != accountNotRouted {
+			if got := excluded.status(time.Now()); got != accountNotRouted {
 				t.Fatalf("status = %s, want not routed", got)
 			}
 		})

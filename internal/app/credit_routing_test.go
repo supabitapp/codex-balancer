@@ -75,6 +75,7 @@ func TestCreditRoutingRejectsIneligibleAccounts(t *testing.T) {
 	}{
 		{"paused", func(a *Account) { a.Paused = true }},
 		{"reauth", func(a *Account) { a.Reauth = "login required" }},
+		{"free plan", func(a *Account) { a.planType = "free" }},
 		{"managed business", func(a *Account) { a.planType = "business" }},
 		{"enterprise", func(a *Account) { a.planType = "enterprise" }},
 		{"cooldown", func(a *Account) { a.cooldown = time.Now().Add(time.Hour) }},

@@ -70,6 +70,7 @@ func TestSelfServeBusinessRoutingFollowsUsage(t *testing.T) {
 		{name: "rate cap after spend recovery", plan: plan, rateReached: true, wantStatus: accountCooling},
 		{name: "recovered", plan: plan, wantStatus: accountLive},
 		{name: "display-only workspace", plan: "business", wantStatus: accountNotRouted},
+		{name: "downgraded to free", plan: "free", wantStatus: accountNotRouted},
 		{name: "self-serve plan restored", plan: plan, wantStatus: accountLive},
 	} {
 		t.Run(step.name, func(t *testing.T) {

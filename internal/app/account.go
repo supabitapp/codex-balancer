@@ -150,7 +150,7 @@ func creditCycleStart(now time.Time, windows ...window) (time.Time, bool) {
 
 func routablePlan(plan string) bool {
 	switch strings.ToLower(strings.TrimSpace(plan)) {
-	case "business", "enterprise":
+	case "free", "business", "enterprise":
 		return false
 	default:
 		return true

@@ -105,8 +105,10 @@ server considers accounts in this order:
    then account ID. The result is independent of account-list order.
 
 Self-serve Business Pro Lite (`self_serve_business_prolite`) participates in
-normal per-account routing once quota is known. Other Business and Enterprise
-workspace plans remain excluded from routing.
+normal per-account routing once quota is known. Free accounts and managed Business
+and Enterprise workspace plans are excluded from routing, including retained
+owners and credit fallback. A socket whose account becomes free retires before
+forwarding another message.
 
 A reported `spend_control.reached` makes an account unavailable for fresh and
 retained routing even if its rate-limit windows have capacity. A pinned socket

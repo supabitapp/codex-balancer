@@ -70,6 +70,7 @@ func (r *responsesWebSocketRelay) run() {
 	r.server.websocketOpened(r.thread, r.current.account)
 	defer r.close()
 	if !r.server.accountRoutable(r.current.account.id()) || !r.current.claim.active() {
+		r.server.preserveResponseOwner(r.current.responseAccount)
 		r.closeDownstream(websocket.StatusServiceRestart, "account became unavailable during connection setup")
 		return
 	}
@@ -207,6 +208,11 @@ func (r *responsesWebSocketRelay) switchAccount(next *websocketDial, model, serv
 }
 
 func (r *responsesWebSocketRelay) writeUpstream(message websocketMessage) bool {
+	if !r.server.accountRoutable(r.current.account.id()) {
+		r.server.preserveResponseOwner(r.current.responseAccount)
+		r.closeDownstream(websocket.StatusServiceRestart, "account became unavailable before transmission")
+		return false
+	}
 	ctx, cancel := context.WithTimeout(r.ctx, upstreamWait)
 	defer cancel()
 	observed := observation(r.ctx)
