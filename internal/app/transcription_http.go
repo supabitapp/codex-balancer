@@ -24,7 +24,10 @@ const (
 	transcriptionUserAgent   = "Codex Desktop/0.163.0 (Mac OS 27.0.0; arm64) unknown (Codex Desktop; 0.0.0)"
 )
 
-var transcriptionExtension = regexp.MustCompile(`^\.[a-z0-9]{1,4}$`)
+var (
+	transcriptionExtension              = regexp.MustCompile(`^\.[a-z0-9]{1,4}$`)
+	errTranscriptionCredentialsRejected = errors.New("transcription account credentials were rejected")
+)
 
 type transcriptionUpload struct {
 	body        []byte
@@ -56,33 +59,23 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), upstreamWait)
 	defer cancel()
 	skip := map[string]bool{}
-	reauthed := map[string]bool{}
 	var rejection *http.Response
 	defer func() {
 		if rejection != nil {
 			rejection.Body.Close()
 		}
 	}()
-	var retryAccount *Account
-	for range 2 * len(s.pool.all()) {
-		account := retryAccount
-		retryAccount = nil
-		if account != nil {
-			candidate := account.routingCandidate()
-			now := time.Now()
-			if s.pool.find(candidate.id) != account || !candidate.available(now) && !candidate.creditAvailable(now) {
-				account = nil
-			}
-		}
-		if account == nil {
-			account = s.pool.route(nil, skip).account
-		}
+	for {
+		account := s.pool.route(nil, skip).account
 		if account == nil {
 			break
 		}
 		id := account.id()
-		account.accepted(time.Now())
-		resp, err := s.forwardTranscription(ctx, account, upload)
+		skip[id] = true
+		resp, err := s.sendTranscription(ctx, account, upload)
+		if errors.Is(err, errTranscriptionCredentialsRejected) {
+			continue
+		}
 		if err != nil {
 			failure := httpTransportFailure(ctx, err)
 			s.log.Warn("transcription upstream failed", "account", id, "audio_bytes", upload.audioBytes, "error_class", failure.Code)
@@ -97,17 +90,7 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 		}
 		account.observe(resp.Header)
 		usageLimit := (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden) && responseUsageLimitReached(resp)
-		switch {
-		case resp.StatusCode == http.StatusUnauthorized && !reauthed[id]:
-			resp.Body.Close()
-			reauthed[id] = true
-			if !s.refreshedContext(ctx, account, id) {
-				skip[id] = true
-			} else {
-				retryAccount = account
-			}
-			continue
-		case usageLimit || resp.StatusCode == http.StatusTooManyRequests:
+		if usageLimit || resp.StatusCode == http.StatusTooManyRequests {
 			if usageLimit {
 				account.rejectCredits()
 				account.markSpent()
@@ -121,7 +104,6 @@ func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 				rejection.Body.Close()
 			}
 			rejection = resp
-			skip[id] = true
 			continue
 		}
 		s.log.Debug("transcription proxied", "account", id, "status", resp.StatusCode, "audio_bytes", upload.audioBytes, "elapsed_ms", time.Since(started).Milliseconds())
@@ -182,6 +164,9 @@ func readTranscriptionUpload(w http.ResponseWriter, r *http.Request) (transcript
 			language = strings.TrimSpace(string(value))
 		}
 	}
+	if _, err := io.Copy(io.Discard, r.Body); err != nil {
+		return transcriptionUpload{}, err
+	}
 	if audioBytes == 0 {
 		return transcriptionUpload{}, errors.New("multipart field file is required and must not be empty")
 	}
@@ -198,6 +183,25 @@ func transcriptionFilename(name string) string {
 		ext = ".webm"
 	}
 	return "codex" + ext
+}
+
+func (s *server) sendTranscription(ctx context.Context, account *Account, upload transcriptionUpload) (*http.Response, error) {
+	account.accepted(time.Now())
+	resp, err := s.forwardTranscription(ctx, account, upload)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+	resp.Body.Close()
+	if !s.refreshedContext(ctx, account, account.id()) {
+		return nil, errTranscriptionCredentialsRejected
+	}
+	candidate := account.routingCandidate()
+	now := time.Now()
+	if s.pool.find(candidate.id) != account || !candidate.available(now) && !candidate.creditAvailable(now) {
+		return nil, errTranscriptionCredentialsRejected
+	}
+	account.accepted(now)
+	return s.forwardTranscription(ctx, account, upload)
 }
 
 func (s *server) forwardTranscription(ctx context.Context, account *Account, upload transcriptionUpload) (*http.Response, error) {
@@ -218,7 +222,7 @@ func (s *server) forwardTranscription(ctx context.Context, account *Account, upl
 }
 
 func (s *server) writeTranscription(w http.ResponseWriter, resp *http.Response) {
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode >= http.StatusBadRequest {
 		s.writeToolResponse(w, resp)
 		return
 	}
@@ -226,7 +230,7 @@ func (s *server) writeTranscription(w http.ResponseWriter, resp *http.Response) 
 	var result struct {
 		Text *string `json:"text"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxTranscriptionBody)).Decode(&result); err != nil || result.Text == nil {
+	if resp.StatusCode/100 != 2 || json.NewDecoder(io.LimitReader(resp.Body, maxTranscriptionBody)).Decode(&result) != nil || result.Text == nil {
 		writeHTTPResponseError(w, http.StatusBadGateway, "invalid upstream transcription response")
 		return
 	}

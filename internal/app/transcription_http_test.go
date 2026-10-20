@@ -293,3 +293,77 @@ func TestTranscriptionFilenameKeepsOnlyExtension(t *testing.T) {
 		}
 	}
 }
+
+func TestTranscriptionFailedRefreshMovesToNextAccount(t *testing.T) {
+	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":"invalid_grant"}`)
+	}))
+	defer oauth.Close()
+	previous := oauthEndpoint
+	oauthEndpoint = oauth.URL
+	t.Cleanup(func() { oauthEndpoint = previous })
+	var mu sync.Mutex
+	calls := []string{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		account := r.Header.Get("Chatgpt-Account-Id")
+		mu.Lock()
+		calls = append(calls, account)
+		mu.Unlock()
+		if account == "a" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		io.WriteString(w, `{"text":"from b"}`)
+	}))
+	defer upstream.Close()
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("a", 0), testAccount("b", 10)})
+	body, contentType := speechForm().encode(t)
+	resp, got := postTranscription(t, proxy.URL, body, contentType, nil)
+	mu.Lock()
+	order := fmt.Sprint(calls)
+	mu.Unlock()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(got, "from b") || order != "[a b]" {
+		t.Fatalf("status=%d body=%s calls=%s", resp.StatusCode, got, order)
+	}
+}
+
+func TestTranscriptionProjectsOnlyTextFromUpstreamSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		status     int
+		wantStatus int
+	}{
+		{http.StatusCreated, http.StatusOK},
+		{http.StatusFound, http.StatusBadGateway},
+	} {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Location", "/elsewhere")
+			w.WriteHeader(tc.status)
+			io.WriteString(w, `{"text":"hi","asset_pointer":"sediment://file_123"}`)
+		}))
+		_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("a", 0)})
+		body, contentType := speechForm().encode(t)
+		resp, got := postTranscription(t, proxy.URL, body, contentType, nil)
+		upstream.Close()
+		if resp.StatusCode != tc.wantStatus || strings.Contains(got, "sediment") {
+			t.Errorf("upstream %d: status=%d body=%s", tc.status, resp.StatusCode, got)
+		}
+	}
+}
+
+func TestTranscriptionCapsTrailingEpilogue(t *testing.T) {
+	var calls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	}))
+	defer upstream.Close()
+	_, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("a", 0)})
+	body, contentType := speechForm().encode(t)
+	body.Write(make([]byte, maxTranscriptionBody))
+	if resp, got := postTranscription(t, proxy.URL, body, contentType, nil); resp.StatusCode != http.StatusRequestEntityTooLarge || calls.Load() != 0 {
+		t.Fatalf("status=%d body=%s calls=%d", resp.StatusCode, got, calls.Load())
+	}
+}
