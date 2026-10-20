@@ -174,6 +174,7 @@ func (s *server) routes() http.Handler {
 	for _, path := range toolEndpoints {
 		mux.Handle("POST "+path, tools)
 	}
+	mux.Handle("POST /v1/audio/transcriptions", s.admitted(s.transcribe))
 	return mux
 }
 
