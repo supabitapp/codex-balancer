@@ -23,6 +23,7 @@ The server runs at http://127.0.0.1:8317
 - `/v1/responses` — HTTP `POST` (SSE or JSON) and WebSocket `GET`
 - `/codex/responses` and `/v1/codex/responses` — equivalent HTTP `POST` and WebSocket `GET` aliases for pi
 - `/v1/alpha/search`, `/v1/images/generations` and `/v1/images/edits` — unary `POST` proxies for Codex's standalone web search and image tools, sent with a pool account's credentials
+- `/v1/audio/transcriptions` — OpenAI-compatible dictation `POST` (`multipart/form-data` with `file` and optional `language`, returns `{"text": …}`), transcribed by ChatGPT with a pool account; see [ROUTING.md](ROUTING.md#dictation-transcription)
 - `/dashboard` — HTML dashboard
 - `/stats` — JSON stats of the server, including the dashboard's estimated monthly API-price value, formatted monthly input and output token totals, and each account's reset countdown and 24-hour traffic share
 - `/accounts` — add an account. On a real server, send this to your friends so they join the pool without exposing credentials.

@@ -52,6 +52,39 @@ the call, the client receives the last upstream
 rejection with its status, `Retry-After` and redacted body. Request bodies are
 capped at 256 MiB and responses stream through unchanged up to 256 MiB.
 
+## Dictation transcription
+
+`POST /v1/audio/transcriptions` accepts an OpenAI-compatible subset:
+`multipart/form-data` with a required `file` and an optional `language`. Other
+fields such as `model` and `response_format` are accepted and ignored. The
+balancer rebuilds the upload as Codex Desktop sends it: the `file` part keeps its
+content type and extension under the name `codex.<ext>` (`codex.webm` when the
+client sends no usable extension), followed by `language` when present. It posts
+that form to `/transcribe` beside the configured Codex base URL
+(`https://chatgpt.com/backend-api/transcribe` by default) with the pool
+account's bearer and account ID. No client headers are forwarded.
+
+Upstream sits behind a Cloudflare rule that admits only Codex Desktop, so the
+balancer sends `originator: Codex Desktop` and a `Codex Desktop/` User-Agent.
+A Cloudflare challenge (`cf-mitigated: challenge`) is a client-identity
+failure, not an account failure: the balancer returns `502` at once, logs a
+warning, and does not refresh credentials, mark the account spent or cooling,
+or try other accounts, whatever the challenge's status.
+
+Placement and failure handling match the tool endpoints: fresh placement
+without claims, affinity, or a model filter; one credential refresh on `401`;
+a usage limit marks the account spent and a transient `429` cools it before
+the next account is tried; transport failures return `502` or `504` without a
+second POST; and when every account rejects, the client receives the last
+status, `Retry-After`, and redacted body. Uploads are capped at 25 MiB, about
+nine minutes of mono 24 kHz PCM16 WAV. The body must arrive within 30
+seconds, and the client must accept the response within another 30.
+
+A successful response is `{"text": "…"}`. Upstream also returns a pointer to
+the stored upload, which ChatGPT retains for 30 days on the pool account; the
+balancer drops it. Logs record the account, status, audio byte count and
+latency, never audio or transcript text.
+
 ## Fresh placement
 
 For a session tree with neither an accepted route nor a provisional claim, the
