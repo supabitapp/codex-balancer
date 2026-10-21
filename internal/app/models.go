@@ -179,6 +179,22 @@ func numberValue(value any) int64 {
 	}
 }
 
+func (c *modelCatalog) serves(clientVersion string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if newerClientVersion(c.clientVersion, clientVersion) {
+		return false
+	}
+	for _, models := range c.accounts {
+		for _, model := range models {
+			if modelVisibleTo(model, clientVersion) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (c *modelCatalog) needsRefresh(active []string, clientVersion string, now time.Time) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

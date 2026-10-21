@@ -208,6 +208,9 @@ func (s *server) models(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) refreshModelsWithin(requestCtx context.Context, clientVersion string) {
+	if s.catalog == nil {
+		return
+	}
 	ctx := requestCtx
 	if s.ctx != nil {
 		ctx = s.ctx
@@ -216,13 +219,19 @@ func (s *server) refreshModelsWithin(requestCtx context.Context, clientVersion s
 	if wait == 0 {
 		wait = modelsResponseWait
 	}
-	done := make(chan error, 1)
-	go func() { done <- s.refreshModels(ctx, clientVersion) }()
-	select {
-	case err := <-done:
-		if err != nil && s.log != nil {
+	serveCached := s.catalog.serves(clientVersion)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := s.refreshModels(ctx, clientVersion); err != nil && s.log != nil {
 			s.log.Warn("model refresh failed", "error", err)
 		}
+	}()
+	if serveCached {
+		return
+	}
+	select {
+	case <-done:
 	case <-time.After(wait):
 		if s.log != nil {
 			s.log.Debug("serving cached model catalog while the refresh continues", "client_version", clientVersion, "wait", wait)

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -609,7 +610,7 @@ func TestModelsFilterByRequestingClientVersion(t *testing.T) {
 	}
 }
 
-func TestModelsServeCachedCatalogWhileRefreshStalls(t *testing.T) {
+func TestModelsBoundColdCatalogWaitWhileRefreshStalls(t *testing.T) {
 	a := testAccount("account-a", 0)
 	release := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -644,6 +645,115 @@ func TestModelsServeCachedCatalogWhileRefreshStalls(t *testing.T) {
 	server.models(response, httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.1.0", nil))
 	if !strings.Contains(response.Body.String(), "gpt-late") {
 		t.Fatalf("catalog not served after refresh: %s", response.Body.String())
+	}
+}
+
+func TestModelsWaitForSeededEmptyCatalog(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{}, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"models":[{"slug":"gpt-discovered"}]}`)
+	}))
+	defer upstream.Close()
+	defer close(release)
+	srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("a", 0)})
+	srv.catalog.seed("0.163.0")
+	responses := make(chan *http.Response, 1)
+	failures := make(chan error, 1)
+	go func() {
+		response, err := proxy.Client().Get(proxy.URL + "/v1/models?client_version=0.163.0")
+		if err != nil {
+			failures <- err
+			return
+		}
+		responses <- response
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("model discovery did not start")
+	}
+	select {
+	case response := <-responses:
+		response.Body.Close()
+		t.Fatal("seeded catalog returned before discovering any models")
+	case err := <-failures:
+		t.Fatal(err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	release <- struct{}{}
+	select {
+	case response := <-responses:
+		defer response.Body.Close()
+		var payload struct {
+			Models []modelEntry `json:"models"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK || fmt.Sprint(modelSlugs(payload.Models)) != "[gpt-discovered]" {
+			t.Fatalf("status=%d models=%v", response.StatusCode, payload.Models)
+		}
+	case err := <-failures:
+		t.Fatal(err)
+	case <-time.After(time.Second):
+		t.Fatal("model discovery did not reach the waiting client")
+	}
+}
+
+func TestModelsServeCachedCapabilitiesWithoutWaitingForRefresh(t *testing.T) {
+	release := make(chan struct{})
+	refreshStarted := make(chan struct{}, 1)
+	var stalled atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if stalled.Load() {
+			select {
+			case refreshStarted <- struct{}{}:
+			default:
+			}
+			<-release
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"models":[{"slug":"gpt-test","use_responses_lite":true,"supports_search_tool":true,"tool_mode":"code_mode_only"}]}`)
+	}))
+	defer upstream.Close()
+	defer close(release)
+	srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{testAccount("a", 0)})
+	get := func() {
+		t.Helper()
+		started := time.Now()
+		response, err := proxy.Client().Get(proxy.URL + "/v1/models?client_version=0.163.0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var payload struct {
+			Models []modelEntry `json:"models"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK || len(payload.Models) != 1 {
+			t.Fatalf("status=%d catalog=%+v", response.StatusCode, payload)
+		}
+		model := payload.Models[0]
+		if model["slug"] != "gpt-test" || model["use_responses_lite"] != true || model["supports_search_tool"] != true || model["tool_mode"] != "code_mode_only" {
+			t.Fatalf("model capabilities = %+v", model)
+		}
+		if elapsed := time.Since(started); elapsed >= time.Second {
+			t.Fatalf("cached catalog waited for upstream refresh: %s", elapsed)
+		}
+	}
+	get()
+	stalled.Store(true)
+	srv.catalog.invalidate()
+	get()
+	select {
+	case <-refreshStarted:
+	case <-time.After(time.Second):
+		t.Fatal("cached catalog was served without starting the refresh")
 	}
 }
 

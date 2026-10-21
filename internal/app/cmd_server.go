@@ -24,15 +24,21 @@ const serverHelp = `Serve the balancing proxy.
 Usage:
   codex-balancer server [flags]
 
-Point Codex at it by adding to ~/.codex/config.toml:
+Merge these settings into ~/.codex/config.toml, keeping existing table entries:
 
   model_provider = "balancer"
+
+  [features]
+  standalone_web_search = true
+
   [model_providers.balancer]
   name = "OpenAI"
   base_url = "http://127.0.0.1:8317/v1"
+  model_catalog_url = "http://127.0.0.1:8317/v1/models"
   env_key = "CODEX_BALANCER_API_KEY"
   requires_openai_auth = true
   supports_websockets = true
+  supports_standalone_web_search = true
 
 Provision a key with "codex-balancer keys add <name>", then set
 CODEX_BALANCER_API_KEY to that key before launching Codex.
