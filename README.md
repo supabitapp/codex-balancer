@@ -75,10 +75,13 @@ export CODEX_BALANCER_API_KEY="<server-key>"
 
 add that to your `~/.zshrc` or whatever env loading mechanism or shell you use.
 
-Then in `~/.codex/config.toml`:
+Merge these settings into `~/.codex/config.toml`, keeping existing table entries:
 
 ```toml
 model_provider = "balancer"
+
+[features]
+standalone_web_search = true
 
 [model_providers.balancer]
 name = "OpenAI"
@@ -94,6 +97,13 @@ Keep `name = "OpenAI"` for server-side compaction. `model_catalog_url` lets
 Codex discover the pool's models and service tiers, including Ultrafast where
 an account supports it. `supports_standalone_web_search` advertises the
 balancer's standalone search endpoint to Codex.
+Enable `features.standalone_web_search` to use `/v1/alpha/search` without
+depending on model metadata. This prevents fallback metadata from selecting
+hosted `web_search`, which `rustponsesapi` rejects. Codex 0.163.0 marks this
+feature as under development and prints a startup warning when it is enabled.
+The setting applies to every profile that inherits it. Set
+`suppress_unstable_features_warning = true` at the top level to hide the warning.
+
 These keys are defined in [Codex 0.161.0's configuration schema](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/core/config.schema.json).
 
 ## Point pi at it

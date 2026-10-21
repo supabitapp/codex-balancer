@@ -126,9 +126,11 @@ withdraws the models a newer client uses. Codex does not read
 `minimal_client_version`, so the model endpoint filters the union by the
 requesting `client_version` itself. The newest version persists in SQLite and
 seeds the catalog at startup, so the first refresh runs before any client
-asks. A request waits at most four seconds for a refresh in progress and
-otherwise serves the cached catalog, staying inside Codex's five-second
-fetch timeout.
+asks. Clients at or below the cached catalog version receive visible cached
+models immediately while a refresh continues in the background. Requests
+without visible cached models and newer client versions wait at most four
+seconds for a refresh, then serve the available catalog, staying inside
+Codex's five-second fetch timeout.
 
 When no eligible account with included quota is available, routing can use an
 account's credit balance. The account must have a known quota window lasting at

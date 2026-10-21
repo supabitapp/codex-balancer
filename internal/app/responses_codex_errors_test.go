@@ -180,8 +180,12 @@ func testCodexAppServerUpstreamFailure(t *testing.T, websockets bool, scenario s
 	})
 	defer upstream.Close()
 	upstreamURL := upstream.URL
-	if !websockets {
+	if !websockets || scenario == "policy" {
 		httpUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if websockets && r.Method == http.MethodGet {
+				upstream.Config.Handler.ServeHTTP(w, r)
+				return
+			}
 			if r.Method != http.MethodPost || r.Header.Get("Upgrade") != "" {
 				t.Errorf("HTTP client reached upstream as %s", r.Method)
 			}
@@ -194,7 +198,7 @@ func testCodexAppServerUpstreamFailure(t *testing.T, websockets bool, scenario s
 				return
 			case "policy":
 				w.WriteHeader(400)
-				io.WriteString(w, `{"error":{"code":"invalid_request","message":"upstream policy detail"}}`)
+				io.WriteString(w, `{"error":{"code":"invalid_request","message":"http fallback detail"}}`)
 				return
 			case "authentication":
 				if attempt == 1 {
@@ -216,14 +220,14 @@ func testCodexAppServerUpstreamFailure(t *testing.T, websockets bool, scenario s
 	_, proxy := newWebSocketProxy(t, upstreamURL, []*Account{testAccount("a", 0)})
 	turn, events := runCodexErrorTurn(t, proxy.URL, websockets)
 	if scenario == "policy" && websockets {
-		if turn["status"] != "failed" || attempts.Load() != 3 || !strings.Contains(events, "upstream policy detail") || strings.Contains(events, "websocket closed by server") {
+		if turn["status"] != "failed" || attempts.Load() != 4 || !strings.Contains(events, "upstream policy detail") || !strings.Contains(events, "Falling back from WebSockets to HTTPS transport") || strings.Contains(events, "websocket closed by server") {
 			t.Fatalf("attempts=%d turn=%v events=%s", attempts.Load(), turn, events)
 		}
 	} else if scenario == "message too big" || scenario == "policy" {
 		want := "request_too_large"
 		switch scenario {
 		case "policy":
-			want = "upstream policy detail"
+			want = "http fallback detail"
 		}
 		if turn["status"] != "failed" || attempts.Load() != 1 || !strings.Contains(events, want) || strings.Contains(events, "websocket closed by server") {
 			t.Fatalf("attempts=%d turn=%v events=%s", attempts.Load(), turn, events)
@@ -244,13 +248,8 @@ func testCodexAppServerUpstreamFailure(t *testing.T, websockets bool, scenario s
 
 func runCodexErrorTurn(t *testing.T, url string, websockets bool) (map[string]any, string) {
 	t.Helper()
-	binary := os.Getenv("CODEX_BALANCER_TEST_CODEX")
-	home, cwd := t.TempDir(), t.TempDir()
 	config := fmt.Sprintf(`model = "gpt-5.4"
 model_provider = "balancer"
-[features]
-plugins = false
-unbounded_connection_retries = false
 [model_providers.balancer]
 name = "OpenAI"
 base_url = %q
@@ -260,12 +259,23 @@ requires_openai_auth = false
 request_max_retries = 2
 stream_max_retries = 2
 `, url+"/v1", websockets)
+	return runCodexAppServerTurn(t, config, "test upstream errors")
+}
+
+func runCodexAppServerTurn(t *testing.T, config, prompt string, overrides ...string) (map[string]any, string) {
+	t.Helper()
+	binary := os.Getenv("CODEX_BALANCER_TEST_CODEX")
+	home, cwd := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, "app-server")
+	args := []string{"app-server", "-c", "features.plugins=false", "-c", "features.unbounded_connection_retries=false"}
+	for _, override := range overrides {
+		args = append(args, "-c", override)
+	}
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Env = append(os.Environ(), "CODEX_HOME="+home)
 	cmd.Dir = cwd
 	stdin, err := cmd.StdinPipe()
@@ -320,7 +330,7 @@ stream_max_retries = 2
 	send(2, "thread/start", map[string]any{"cwd": cwd, "approvalPolicy": "never", "sandbox": "read-only"})
 	started := read("", 2)
 	thread := started["result"].(map[string]any)["thread"].(map[string]any)["id"]
-	send(3, "turn/start", map[string]any{"threadId": thread, "input": []any{map[string]string{"type": "text", "text": "test upstream errors"}}})
+	send(3, "turn/start", map[string]any{"threadId": thread, "input": []any{map[string]string{"type": "text", "text": prompt}}})
 	completed := read("turn/completed", 0)
 	return completed["params"].(map[string]any)["turn"].(map[string]any), events.String()
 }
