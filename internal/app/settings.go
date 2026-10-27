@@ -34,7 +34,7 @@ func (m fastMode) label() string {
 func (m fastMode) description() string {
 	switch m {
 	case fastModeOn:
-		return "Forces fast mode for all requests, overriding the client's preference."
+		return "Forces fast mode unless the client requests ultrafast."
 	case fastModeOff:
 		return "Forces standard mode for all requests, overriding the client's preference."
 	default:
@@ -42,9 +42,11 @@ func (m fastMode) description() string {
 	}
 }
 
-// Preserve all request fields, including fields unknown to websocketEnvelope.
 func (m fastMode) override(data []byte, tier string) ([]byte, string, error) {
 	if m != fastModeOn && m != fastModeOff {
+		return data, tier, nil
+	}
+	if m == fastModeOn && canonicalServiceTier(tier) == priceModeUltrafast {
 		return data, tier, nil
 	}
 	tier = "default"

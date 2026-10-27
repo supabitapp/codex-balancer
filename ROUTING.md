@@ -335,7 +335,7 @@ them. Codex reconnects, and the server rebuilds affinity from SQLite routes.
 The global `fast-mode` setting has three values:
 
 - `default`: forward the client's service tier unchanged (the initial setting).
-- `on`: force `service_tier: "priority"` on every `response.create`.
+- `on`: force `service_tier: "priority"` unless the client requests `ultrafast`.
 - `off`: force `service_tier: "default"` on every `response.create`.
 
 ```sh

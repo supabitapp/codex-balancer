@@ -75,27 +75,35 @@ func TestSettingsMigrationPreservesRoutes(t *testing.T) {
 }
 
 func TestFastModePreservesRequestFields(t *testing.T) {
-	original := []byte(`{"type":"response.create","service_tier":"flex","input":[{"encrypted_content":"opaque"}],"unknown":{"number":9007199254740993},"previous_response_id":"resp-1","client_metadata":{"x-codex-turn-state":"state"}}`)
-	for _, mode := range []fastMode{fastModeDefault, fastModeOn, fastModeOff} {
-		data, tier, err := mode.override(original, "flex")
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := map[fastMode]string{fastModeDefault: "flex", fastModeOn: "priority", fastModeOff: "default"}[mode]
-		if tier != want {
-			t.Fatalf("%s tier = %s", mode, tier)
-		}
-		if mode == fastModeDefault && string(data) != string(original) {
-			t.Fatal("default changed request bytes")
-		}
-		var before, after map[string]json.RawMessage
-		json.Unmarshal(original, &before)
-		json.Unmarshal(data, &after)
-		delete(before, "service_tier")
-		delete(after, "service_tier")
-		if !reflect.DeepEqual(before, after) {
-			t.Fatalf("override changed other fields: %s", data)
-		}
+	for _, test := range []struct{ requestedTier, fastTier string }{
+		{"flex", "priority"},
+		{"ultrafast", "ultrafast"},
+		{" UltraFast ", " UltraFast "},
+	} {
+		t.Run(test.requestedTier, func(t *testing.T) {
+			original := []byte(fmt.Sprintf(`{"type":"response.create","service_tier":%q,"input":[{"encrypted_content":"opaque"}],"unknown":{"number":9007199254740993},"previous_response_id":"resp-1","client_metadata":{"x-codex-turn-state":"state"}}`, test.requestedTier))
+			for _, mode := range []fastMode{fastModeDefault, fastModeOn, fastModeOff} {
+				data, tier, err := mode.override(original, test.requestedTier)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := map[fastMode]string{fastModeDefault: test.requestedTier, fastModeOn: test.fastTier, fastModeOff: "default"}[mode]
+				if tier != want {
+					t.Fatalf("%s tier = %s", mode, tier)
+				}
+				if tier == test.requestedTier && string(data) != string(original) {
+					t.Fatalf("%s changed request bytes", mode)
+				}
+				var before, after map[string]json.RawMessage
+				json.Unmarshal(original, &before)
+				json.Unmarshal(data, &after)
+				delete(before, "service_tier")
+				delete(after, "service_tier")
+				if !reflect.DeepEqual(before, after) {
+					t.Fatalf("override changed other fields: %s", data)
+				}
+			}
+		})
 	}
 }
 
@@ -156,28 +164,56 @@ func TestFastModeReconnectPreservesOwners(t *testing.T) {
 }
 
 func TestFastModeOverridesBeforeModelSelection(t *testing.T) {
-	for _, mode := range []fastMode{fastModeOn, fastModeOff} {
-		t.Run(string(mode), func(t *testing.T) {
-			upstream := newWebSocketUpstream(t, func(_ string, conn *websocket.Conn, _ websocketEnvelope) {
-				writeWebSocketEvent(t, conn, map[string]any{"type": "response.created"})
-				writeWebSocketEvent(t, conn, map[string]any{"type": "response.completed"})
+	for _, test := range []struct {
+		mode                             fastMode
+		requestedTier, wantTier, account string
+	}{
+		{fastModeOn, "default", "priority", "fast"},
+		{fastModeOn, "ultrafast", "ultrafast", "ultrafast"},
+		{fastModeOff, "priority", "default", "standard"},
+		{fastModeOff, "ultrafast", "default", "standard"},
+	} {
+		for _, via := range []transport{transportHTTP, transportWebSocket} {
+			t.Run(fmt.Sprintf("%s/%s/%s", test.mode, test.requestedTier, via), func(t *testing.T) {
+				upstream := newHTTPUpstream(t, func(r *http.Request, conn *testResponseStream, data []byte) {
+					var request websocketEnvelope
+					if err := json.Unmarshal(data, &request); err != nil {
+						t.Error(err)
+					}
+					if account := r.Header.Get("Chatgpt-Account-Id"); account != test.account || request.ServiceTier != test.wantTier {
+						t.Errorf("upstream account/tier = %s/%s, want %s/%s", account, request.ServiceTier, test.account, test.wantTier)
+					}
+					sendHTTPEvents(t, conn, httpCreatedEvent, httpCompletedEvent)
+				})
+				a, b, c := testAccount("standard", 0), testAccount("fast", 20), testAccount("ultrafast", 40)
+				srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b, c})
+				srv.catalog.replace([]string{a.id(), b.id(), c.id()}, map[string][]modelEntry{
+					a.id(): {testModelEntry("gpt-sol")},
+					b.id(): {testModelEntry("gpt-sol", "priority")},
+					c.id(): {testModelEntry("gpt-sol", "priority", "ultrafast")},
+				}, "0.1.0")
+				srv.fastMode.set(test.mode)
+				request := map[string]any{"type": "response.create", "model": "gpt-sol", "service_tier": test.requestedTier, "input": []any{}}
+				if via == transportWebSocket {
+					conn, _ := dialWebSocket(t, proxy.URL, nil)
+					defer conn.CloseNow()
+					completeWebSocketTurn(t, conn, request)
+				} else {
+					data, err := json.Marshal(request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					response := postResponse(t, proxy.URL, string(data), nil)
+					if body := readHTTPBody(t, response); response.StatusCode != http.StatusOK {
+						t.Fatalf("status=%d body=%s", response.StatusCode, body)
+					}
+				}
+				usage, err := srv.pool.store.usageEventsSince(time.Now().Add(-time.Hour))
+				if err != nil || len(usage) != 1 || usage[0].ServiceTier != test.wantTier {
+					t.Fatalf("usage=%v err=%v", usage, err)
+				}
 			})
-			defer upstream.Close()
-			a, b := testAccount("standard", 0), testAccount("fast", 20)
-			srv, proxy := newWebSocketProxy(t, upstream.URL, []*Account{a, b})
-			srv.catalog.replace([]string{a.id(), b.id()}, map[string][]modelEntry{a.id(): {testModelEntry("gpt-sol")}, b.id(): {testModelEntry("gpt-sol", "priority")}}, "0.1.0")
-			srv.fastMode.set(mode)
-			conn, _ := dialWebSocket(t, proxy.URL, nil)
-			defer conn.CloseNow()
-			tier, want := "default", "fast"
-			if mode == fastModeOff {
-				tier, want = "priority", "standard"
-			}
-			completeWebSocketTurn(t, conn, map[string]any{"type": "response.create", "model": "gpt-sol", "service_tier": tier, "input": []any{}})
-			if got := fmt.Sprint(upstream.RequestAccounts()); got != "["+want+"]" {
-				t.Fatalf("accounts=%s", got)
-			}
-		})
+		}
 	}
 }
 
