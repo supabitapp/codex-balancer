@@ -93,17 +93,6 @@ supports_websockets = true
 supports_standalone_web_search = true
 ```
 
-Keep `name = "OpenAI"` for server-side compaction. `model_catalog_url` lets
-Codex discover the pool's models and service tiers, including Ultrafast where
-an account supports it. `supports_standalone_web_search` advertises the
-balancer's standalone search endpoint to Codex.
-Enable `features.standalone_web_search` to use `/v1/alpha/search` without
-depending on model metadata. This prevents fallback metadata from selecting
-hosted `web_search`, which `rustponsesapi` rejects. Codex 0.163.0 marks this
-feature as under development and prints a startup warning when it is enabled.
-The setting applies to every profile that inherits it. Set
-`suppress_unstable_features_warning = true` at the top level to hide the warning.
-
 These keys are defined in [Codex 0.161.0's configuration schema](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/core/config.schema.json).
 
 ## Point pi at it
@@ -126,10 +115,6 @@ Merge this into `~/.pi/agent/models.json`, keeping any unrelated providers:
 ```
 
 ## Observability
-
-HTTP Responses has verbose, request-correlated logs. Use `server -no-tui -json`
-for JSON logs; clients can report `X-Codex-Balancer-Request-Id` from response
-headers. Add `-otel` to export real traces to a configured OTLP HTTP collector:
 
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 codex-balancer server -no-tui -json -otel
