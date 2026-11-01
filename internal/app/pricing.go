@@ -142,10 +142,6 @@ func (s priceSnapshot) estimate(model, serviceTier string, usage responseUsage) 
 	return input*rates.input + cached*rates.cached + cacheWrite*rates.cacheWrite + usage.OutputTokens*rates.output, true
 }
 
-func isFastServiceTier(serviceTier string) bool {
-	return serviceTierPriceMode(serviceTier) == priceModeFast
-}
-
 func serviceTierPriceMode(serviceTier string) string {
 	switch canonicalServiceTier(serviceTier) {
 	case serviceTierPriority:

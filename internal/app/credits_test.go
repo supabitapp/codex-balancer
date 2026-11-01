@@ -21,6 +21,13 @@ func TestCodexCreditEstimateUsesModelTokenRates(t *testing.T) {
 		{model: "gpt-5.5", want: 110 * nanoCreditsPerCredit, known: true},
 		{model: "gpt-5.4-mini-2026-08-01", want: 16_550_000_000, known: true},
 		{model: "gpt-5.4", serviceTier: "fast", want: 110 * nanoCreditsPerCredit, known: true},
+		{model: "gpt-6-astra-2026-10-01", serviceTier: "ultrafast", want: 1_560 * nanoCreditsPerCredit, known: true},
+		{model: "gpt-6.1-sol", want: 37 * nanoCreditsPerCredit, known: true},
+		{model: "gpt-6.1-sol", serviceTier: "ultrafast", want: 296 * nanoCreditsPerCredit, known: true},
+		{model: "gpt-6.1-terra", serviceTier: "priority", want: 46_250_000_000, known: true},
+		{model: "gpt-6-sol", want: 39 * nanoCreditsPerCredit, known: true},
+		{model: "gpt-6-luna", want: 1_950_000_000, known: true},
+		{model: "gpt-6.1-terra", serviceTier: "ultrafast", known: false},
 		{model: "gpt-5.6-sol", serviceTier: "ultrafast", known: false},
 		{model: "unknown"},
 	} {
@@ -59,6 +66,18 @@ func TestRoutedCreditsUseCycleAndRejectUnknownModels(t *testing.T) {
 	stats.applyUsageAt(start.Add(3*time.Hour), "", "account", "unknown", "", "default", usage)
 	if credits, since, known = stats.routedCreditsSince("account", start); known {
 		t.Fatalf("unpriced credits = %v since %v, true", credits, since)
+	}
+}
+
+func TestRoutedCreditsCountUltrafastResponses(t *testing.T) {
+	stats := newStatsWithPrices(priceSnapshot{})
+	start := time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)
+	stats.applyUsageAt(start.Add(time.Hour), "", "account", "gpt-6.1-sol", "", "default", responseUsage{InputTokens: 1_000_000})
+	stats.applyUsageAt(start.Add(2*time.Hour), "", "account", "gpt-6.1-sol", "", "ultrafast", responseUsage{InputTokens: 1_000_000})
+
+	credits, _, known := stats.routedCreditsSince("account", start)
+	if !known || credits != 450 {
+		t.Fatalf("credits = %v, %t, want 450", credits, known)
 	}
 }
 

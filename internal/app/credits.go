@@ -11,24 +11,39 @@ const (
 	routedCreditHistory  = 8 * 24 * time.Hour
 )
 
-type creditRates struct {
-	model           string
-	input           int64
-	cached          int64
-	output          int64
-	fastNumerator   int64
-	fastDenominator int64
+type creditMultiplier struct {
+	numerator   int64
+	denominator int64
 }
 
-var codexCreditRates20260829 = []creditRates{
-	{model: "gpt-5.6-sol", input: 100_000, cached: 10_000, output: 500_000, fastNumerator: 5, fastDenominator: 2},
-	{model: "gpt-5.6-terra", input: 50_000, cached: 5_000, output: 300_000, fastNumerator: 5, fastDenominator: 2},
-	{model: "gpt-5.6-luna", input: 5_000, cached: 500, output: 30_000, fastNumerator: 5, fastDenominator: 2},
-	{model: "gpt-5.5", input: 125_000, cached: 12_500, output: 750_000, fastNumerator: 5, fastDenominator: 2},
-	{model: "gpt-5.4-mini", input: 18_750, cached: 1_875, output: 113_000, fastNumerator: 2, fastDenominator: 1},
-	{model: "gpt-5.4", input: 62_500, cached: 6_250, output: 375_000, fastNumerator: 2, fastDenominator: 1},
+type creditRates struct {
+	model     string
+	input     int64
+	cached    int64
+	output    int64
+	fast      creditMultiplier
+	ultrafast creditMultiplier
+}
+
+var (
+	includedFast      = creditMultiplier{5, 2}
+	includedUltrafast = creditMultiplier{8, 1}
+)
+
+var codexCreditRates = []creditRates{
+	{model: "gpt-5.6-sol", input: 100_000, cached: 10_000, output: 500_000, fast: includedFast},
+	{model: "gpt-5.6-terra", input: 50_000, cached: 5_000, output: 300_000, fast: includedFast},
+	{model: "gpt-5.6-luna", input: 5_000, cached: 500, output: 30_000, fast: includedFast},
+	{model: "gpt-5.5", input: 125_000, cached: 12_500, output: 750_000, fast: includedFast},
+	{model: "gpt-5.4-mini", input: 18_750, cached: 1_875, output: 113_000, fast: creditMultiplier{2, 1}},
+	{model: "gpt-5.4", input: 62_500, cached: 6_250, output: 375_000, fast: creditMultiplier{2, 1}},
 	{model: "daybreak-blue", input: 100_000, cached: 10_000, output: 500_000},
 	{model: "daybreak-red", input: 312_500, cached: 31_250, output: 1_875_000},
+	{model: "gpt-6-astra", input: 250_000, cached: 25_000, output: 1_250_000, fast: includedFast, ultrafast: includedUltrafast},
+	{model: "gpt-6.1-sol", input: 50_000, cached: 2_500, output: 250_000, fast: includedFast, ultrafast: includedUltrafast},
+	{model: "gpt-6.1-terra", input: 25_000, cached: 1_250, output: 125_000, fast: includedFast},
+	{model: "gpt-6-sol", input: 50_000, cached: 5_000, output: 250_000, fast: includedFast},
+	{model: "gpt-6-luna", input: 2_500, cached: 250, output: 12_500, fast: includedFast},
 }
 
 type routedCreditPoint struct {
@@ -44,27 +59,27 @@ func estimateCodexCredits(model, serviceTier string, usage responseUsage) (int64
 	if !known {
 		return 0, false
 	}
-	if serviceTierPriceMode(serviceTier) == priceModeUltrafast {
-		return 0, false
+	multiplier := creditMultiplier{1, 1}
+	switch serviceTierPriceMode(serviceTier) {
+	case priceModeFast:
+		multiplier = rates.fast
+	case priceModeUltrafast:
+		multiplier = rates.ultrafast
 	}
-	if isFastServiceTier(serviceTier) {
-		if rates.fastDenominator == 0 {
-			return 0, false
-		}
-		rates.input = rates.input * rates.fastNumerator / rates.fastDenominator
-		rates.cached = rates.cached * rates.fastNumerator / rates.fastDenominator
-		rates.output = rates.output * rates.fastNumerator / rates.fastDenominator
+	if multiplier.denominator == 0 {
+		return 0, false
 	}
 	cached := max(usage.InputDetails.CachedTokens, 0)
 	input := max(usage.InputTokens-cached, 0)
-	return input*rates.input + cached*rates.cached + usage.OutputTokens*rates.output, true
+	credits := input*rates.input + cached*rates.cached + usage.OutputTokens*rates.output
+	return credits * multiplier.numerator / multiplier.denominator, true
 }
 
 func codexRatesForModel(model string) (creditRates, bool) {
 	if model == "gpt-5.6" {
-		return codexCreditRates20260829[0], true
+		return codexCreditRates[0], true
 	}
-	for _, rates := range codexCreditRates20260829 {
+	for _, rates := range codexCreditRates {
 		if model == rates.model || strings.HasPrefix(model, rates.model+"-") {
 			return rates, true
 		}
