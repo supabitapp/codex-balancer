@@ -515,7 +515,7 @@ func TestLastMonthCostsLoadFromStoreAndReprice(t *testing.T) {
 	}
 	want, _ := prices.estimate("gpt-5.4", "default", usage)
 	snapshot := stats.snapshot()
-	if got := snapshot.LastMonth; got.APICostNanoDollars != want || got.UnpricedResponses != 0 || len(got.ModelCosts) != 1 || got.ModelCosts[0] != (ModelCostSnapshot{Model: "gpt-5.4", APICostNanoDollars: want}) {
+	if got := snapshot.LastMonth; got.Month != calendarMonthStart(time.Now()).AddDate(0, -1, 0).Month() || got.APICostNanoDollars != want || got.UnpricedResponses != 0 || len(got.ModelCosts) != 1 || got.ModelCosts[0] != (ModelCostSnapshot{Model: "gpt-5.4", APICostNanoDollars: want}) {
 		t.Fatalf("last month after refresh = %+v, want gpt-5.4 cost %d", got, want)
 	}
 	if snapshot.APICostNanoDollars != 0 || snapshot.UnpricedResponses != 0 || len(snapshot.ModelCosts) != 0 {

@@ -526,6 +526,7 @@ type ModelCostSnapshot struct {
 }
 
 type MonthCostSnapshot struct {
+	Month              time.Month
 	APICostNanoDollars int64
 	UnpricedResponses  int64
 	ModelCosts         []ModelCostSnapshot
@@ -581,6 +582,7 @@ func (s *Stats) snapshot() Snapshot {
 		UnpricedResponses:  s.month.cost.unpricedResponses,
 		ModelCosts:         modelCostSnapshots(s.month.models),
 		LastMonth: MonthCostSnapshot{
+			Month:              time.Month(s.lastMonth.month%12 + 1),
 			APICostNanoDollars: s.lastMonth.cost.apiCostNanoDollars,
 			UnpricedResponses:  s.lastMonth.cost.unpricedResponses,
 			ModelCosts:         modelCostSnapshots(s.lastMonth.models),

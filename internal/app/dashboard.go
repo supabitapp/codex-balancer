@@ -527,8 +527,7 @@ func (s *server) dashboardAt(now time.Time, private bool) dashboardView {
 		priceInfo = modelCosts + "\n" + priceInfo
 	}
 	if lastMonth := snapshot.LastMonth; len(lastMonth.ModelCosts) > 0 {
-		name := calendarMonthStart(now).AddDate(0, -1, 0).Format("January")
-		priceInfo += "\n\n" + name + ": " + formatAPIPrice(lastMonth.APICostNanoDollars, lastMonth.UnpricedResponses) + "\n" + formatModelCosts(lastMonth.ModelCosts)
+		priceInfo += "\n\n" + lastMonth.Month.String() + ": " + formatAPIPrice(lastMonth.APICostNanoDollars, lastMonth.UnpricedResponses) + "\n" + formatModelCosts(lastMonth.ModelCosts)
 	}
 	mode, _ := s.fastMode.snapshot()
 	overview := []dashboardMetric{{Name: "fast mode", Value: mode.label(), Info: mode.description()}, {Name: "active WS", Value: strconv.FormatInt(snapshot.WSOpen, 10)}}
