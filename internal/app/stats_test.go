@@ -58,9 +58,9 @@ func TestStatsEndpointReportsRoutingMode(t *testing.T) {
 			account.RoutingMode = routingModePriority
 			account.Paused = mode == routingModePaused
 			server := &server{pool: &Pool{accounts: []*Account{account}}, stats: newStatsWithPrices(priceSnapshot{})}
-			server.stats.apiCostNanoDollars = 12_340_000_000
-			server.stats.monthlyUsage.InputTokens = 1_234_567
-			server.stats.monthlyUsage.OutputTokens = 2_345_678
+			server.stats.month.cost.apiCostNanoDollars = 12_340_000_000
+			server.stats.month.usage.InputTokens = 1_234_567
+			server.stats.month.usage.OutputTokens = 2_345_678
 			request := httptest.NewRequest(http.MethodGet, "/stats", nil)
 			response := httptest.NewRecorder()
 
@@ -449,7 +449,7 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	stats := newStatsWithPrices(prices)
 	previousMonth := time.Date(2026, time.July, 31, 23, 59, 0, 0, time.UTC)
 	currentMonth := previousMonth.Add(time.Minute)
-	stats.usageMonth = calendarMonth(previousMonth)
+	stats.syncUsageMonth(calendarMonth(previousMonth))
 	stats.applyUsageAt(previousMonth, "", "old-account", "old-unknown", "", "default", responseUsage{InputTokens: 1_000})
 	stats.applyUsageAt(previousMonth, "", "account", "gpt-5.6-sol", "", "default", responseUsage{InputTokens: 1_000})
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
@@ -461,23 +461,27 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	wantUsage.InputTokens += unpricedUsage.InputTokens
 	wantUsage.OutputTokens += unpricedUsage.OutputTokens
 	want, _ := prices.estimate("gpt-5.6-sol", "default", usage)
-	if stats.monthlyUsage != wantUsage {
-		t.Fatalf("monthly usage = %+v, want %+v", stats.monthlyUsage, wantUsage)
+	if stats.month.usage != wantUsage {
+		t.Fatalf("monthly usage = %+v, want %+v", stats.month.usage, wantUsage)
 	}
-	if stats.apiCostNanoDollars != want || stats.unpricedResponses != 1 {
-		t.Fatalf("API estimate = %d with %d unpriced, want %d with one", stats.apiCostNanoDollars, stats.unpricedResponses, want)
+	if stats.month.cost != (usageCost{apiCostNanoDollars: want, unpricedResponses: 1}) {
+		t.Fatalf("API estimate = %+v, want %d with one unpriced", stats.month.cost, want)
 	}
-	if len(stats.monthlyModelCosts) != 2 {
-		t.Fatalf("monthly model costs = %+v, want current priced and unpriced models", stats.monthlyModelCosts)
+	if len(stats.month.models) != 2 {
+		t.Fatalf("monthly model costs = %+v, want current priced and unpriced models", stats.month.models)
 	}
-	if _, exists := stats.monthlyModelCosts["old-unknown"]; exists {
-		t.Fatalf("monthly model costs retained previous month: %+v", stats.monthlyModelCosts)
+	if _, exists := stats.month.models["old-unknown"]; exists {
+		t.Fatalf("monthly model costs retained previous month: %+v", stats.month.models)
 	}
-	if got := stats.monthlyModelCosts["gpt-5.6-sol"]; got.apiCostNanoDollars != want || got.unpricedResponses != 0 {
+	if got := stats.month.models["gpt-5.6-sol"]; got.apiCostNanoDollars != want || got.unpricedResponses != 0 {
 		t.Fatalf("priced model cost = %+v, want %d with none unpriced", got, want)
 	}
-	if got := stats.monthlyModelCosts["unknown"]; got.apiCostNanoDollars != 0 || got.unpricedResponses != 1 {
+	if got := stats.month.models["unknown"]; got.apiCostNanoDollars != 0 || got.unpricedResponses != 1 {
 		t.Fatalf("unpriced model cost = %+v, want zero with one unpriced", got)
+	}
+	previous, _ := prices.estimate("gpt-5.6-sol", "default", responseUsage{InputTokens: 1_000})
+	if got := stats.lastMonth; got.month != calendarMonth(previousMonth) || got.cost != (usageCost{apiCostNanoDollars: previous, unpricedResponses: 1}) || len(got.models) != 2 {
+		t.Fatalf("last month = %+v, want July cost %d with one unpriced across two models", got, previous)
 	}
 	if got := stats.accounts["account"].monthlyCost; got.apiCostNanoDollars != want || got.unpricedResponses != 1 {
 		t.Fatalf("account monthly cost = %+v, want %d with one unpriced", got, want)
@@ -487,9 +491,41 @@ func TestMonthlyUsageResetsAtMonthBoundary(t *testing.T) {
 	}
 }
 
+func TestLastMonthCostsLoadFromStoreAndReprice(t *testing.T) {
+	store, err := openStateStore(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	usage := responseUsage{InputTokens: 1_000, OutputTokens: 100}
+	if err := store.recordUsage(storedUsage{At: calendarMonthStart(time.Now()).Add(-time.Hour), Model: "gpt-5.4", ServiceTier: "default", Usage: usage}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := newPersistentStats(store, priceSnapshot{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stats.snapshot().LastMonth; got.APICostNanoDollars != 0 || got.UnpricedResponses != 1 {
+		t.Fatalf("last month before refresh = %+v, want one unpriced response", got)
+	}
+
+	prices := testPriceSnapshot(t)
+	if err := stats.reprice(prices); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := prices.estimate("gpt-5.4", "default", usage)
+	snapshot := stats.snapshot()
+	if got := snapshot.LastMonth; got.Month != calendarMonthStart(time.Now()).AddDate(0, -1, 0).Month() || got.APICostNanoDollars != want || got.UnpricedResponses != 0 || len(got.ModelCosts) != 1 || got.ModelCosts[0] != (ModelCostSnapshot{Model: "gpt-5.4", APICostNanoDollars: want}) {
+		t.Fatalf("last month after refresh = %+v, want gpt-5.4 cost %d", got, want)
+	}
+	if snapshot.APICostNanoDollars != 0 || snapshot.UnpricedResponses != 0 || len(snapshot.ModelCosts) != 0 {
+		t.Fatalf("current month = %d with %d unpriced and models %+v, want empty", snapshot.APICostNanoDollars, snapshot.UnpricedResponses, snapshot.ModelCosts)
+	}
+}
+
 func TestMonthlyAccountCostsResetWithoutNewUsage(t *testing.T) {
 	stats := newStatsWithPrices(testPriceSnapshot(t))
-	stats.usageMonth = calendarMonth(time.Now()) - 1
+	stats.syncUsageMonth(calendarMonth(time.Now()) - 1)
 	stats.account("account").monthlyCost = usageCost{apiCostNanoDollars: 1_000_000_000, unpricedResponses: 1}
 	account := stats.snapshot().Accounts["account"]
 	if account.APICostNanoDollars != 0 || account.UnpricedResponses != 0 {

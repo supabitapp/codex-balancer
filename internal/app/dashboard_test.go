@@ -767,7 +767,7 @@ func TestDashboardOverview(t *testing.T) {
 	now := time.Now().In(time.FixedZone("BST", 60*60))
 	stats := newStatsWithPrices(testPriceSnapshot(t))
 	stats.started = time.Now().Add(-28 * time.Minute)
-	stats.usageMonth = calendarMonth(now)
+	stats.syncUsageMonth(calendarMonth(now))
 	usage := responseUsage{InputTokens: 2_000, OutputTokens: 300}
 	usage.InputDetails.CachedTokens = 1_500
 	stats.applyUsageAt(now, "", "", "gpt-5.6-sol", "", "default", usage)
@@ -824,6 +824,28 @@ func TestDashboardOverview(t *testing.T) {
 	if !monthlyBurnFound {
 		t.Fatal("monthly burn overview metric missing")
 	}
+}
+
+func TestDashboardMonthlyBurnShowsLastMonth(t *testing.T) {
+	now := time.Now()
+	stats := newStatsWithPrices(testPriceSnapshot(t))
+	lastMonth := calendarMonthStart(now).Add(-time.Hour)
+	stats.applyUsageAt(lastMonth, "", "account", "gpt-5.6-sol", "", "default", responseUsage{InputTokens: 200_000})
+	stats.applyUsageAt(lastMonth, "", "account", "gpt-5.4-mini", "", "default", responseUsage{InputTokens: 1_000_000})
+	stats.applyUsageAt(now, "", "account", "gpt-5.4-mini", "", "default", responseUsage{InputTokens: 1_000})
+	server := &server{pool: &Pool{}, stats: stats}
+
+	want := "\n\n" + lastMonth.Format("January") + ": $1.75\ngpt-5.6-sol: $1.00\ngpt-5.4-mini: $0.750"
+	for _, metric := range server.currentDashboard(now).Overview {
+		if metric.Name != "USD burnt this month" {
+			continue
+		}
+		if metric.Value != "$0.0008" || !strings.HasSuffix(metric.Info, want) {
+			t.Fatalf("monthly burn = %q with info %q, want last month suffix %q", metric.Value, metric.Info, want)
+		}
+		return
+	}
+	t.Fatal("monthly burn overview metric missing")
 }
 
 func TestFormatModelCosts(t *testing.T) {
