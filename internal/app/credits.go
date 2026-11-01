@@ -71,7 +71,8 @@ func estimateCodexCredits(model, serviceTier string, usage responseUsage) (int64
 	}
 	cached := max(usage.InputDetails.CachedTokens, 0)
 	input := max(usage.InputTokens-cached, 0)
-	return (input*rates.input + cached*rates.cached + usage.OutputTokens*rates.output) * multiplier.numerator / multiplier.denominator, true
+	credits := input*rates.input + cached*rates.cached + usage.OutputTokens*rates.output
+	return credits * multiplier.numerator / multiplier.denominator, true
 }
 
 func codexRatesForModel(model string) (creditRates, bool) {
