@@ -2,31 +2,34 @@ package state
 
 import "time"
 
-type APIKeyUsageGroup struct {
+type UsageRow struct {
+	ID          int64
 	APIKeyName  string
+	At          time.Time
 	Model       string
 	ServiceTier string
 	Usage       Usage
-	Responses   int64
 }
 
-func (s *Store) APIKeyUsageGroups(start time.Time) ([]APIKeyUsageGroup, error) {
-	rows, err := s.db.Query(`SELECT api_key_name, model, service_tier, input_tokens, cached_tokens,
-		cache_write_tokens, output_tokens, count(*) FROM response_usage
-		WHERE api_key_name IS NOT NULL AND at_ns >= ?
-		GROUP BY api_key_name, model, service_tier, input_tokens, cached_tokens, cache_write_tokens, output_tokens`, encodeTime(start))
+func (s *Store) UsageRowsAfter(id int64, limit int) ([]UsageRow, error) {
+	rows, err := s.db.Query(`SELECT id, coalesce(api_key_name, ''), at_ns, model, service_tier, input_tokens, cached_tokens,
+		cache_write_tokens, output_tokens, reasoning_tokens FROM response_usage
+		WHERE id > ? ORDER BY id LIMIT ?`, id, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var groups []APIKeyUsageGroup
+	var records []UsageRow
 	for rows.Next() {
-		var group APIKeyUsageGroup
-		if err := rows.Scan(&group.APIKeyName, &group.Model, &group.ServiceTier, &group.Usage.InputTokens,
-			&group.Usage.CachedTokens, &group.Usage.CacheWriteTokens, &group.Usage.OutputTokens, &group.Responses); err != nil {
+		var record UsageRow
+		var at int64
+		if err := rows.Scan(&record.ID, &record.APIKeyName, &at, &record.Model, &record.ServiceTier,
+			&record.Usage.InputTokens, &record.Usage.CachedTokens, &record.Usage.CacheWriteTokens,
+			&record.Usage.OutputTokens, &record.Usage.ReasoningTokens); err != nil {
 			return nil, err
 		}
-		groups = append(groups, group)
+		record.At = decodeTime(at)
+		records = append(records, record)
 	}
-	return groups, rows.Err()
+	return records, rows.Err()
 }

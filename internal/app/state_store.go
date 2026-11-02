@@ -201,11 +201,7 @@ func (s *StateStore) usageEventsSince(start time.Time) ([]storedUsage, error) {
 }
 
 func (s *StateStore) apiKeyUsage() (map[string]responseUsage, error) {
-	return s.apiKeyUsageSince(time.Time{})
-}
-
-func (s *StateStore) apiKeyUsageSince(start time.Time) (map[string]responseUsage, error) {
-	records, err := s.raw.APIKeyUsage(start)
+	records, err := s.raw.APIKeyUsage()
 	if err != nil {
 		return nil, err
 	}
@@ -214,10 +210,6 @@ func (s *StateStore) apiKeyUsageSince(start time.Time) (map[string]responseUsage
 		usage[name] = responseUsageFromState(record)
 	}
 	return usage, nil
-}
-
-func (s *StateStore) apiKeyLastUsed() (map[string]time.Time, error) {
-	return s.raw.APIKeyLastUsed()
 }
 
 func stateUsageEvent(event storedUsage) statepkg.UsageEvent {

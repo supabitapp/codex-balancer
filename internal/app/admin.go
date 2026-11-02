@@ -120,21 +120,7 @@ func (s *server) adminKeys(now time.Time) ([]adminKeyView, error) {
 	if err != nil || len(keys) == 0 {
 		return nil, err
 	}
-	monthStart := calendarMonthStart(now)
-	usage, err := s.pool.store.apiKeyUsageSince(monthStart)
-	if err != nil {
-		return nil, err
-	}
-	lastUsed, err := s.pool.store.apiKeyLastUsed()
-	if err != nil {
-		return nil, err
-	}
-	prices := s.prices.current()
-	costs, err := s.pool.store.apiKeyCosts(prices, monthStart)
-	if err != nil {
-		return nil, err
-	}
-	lifetimeCosts, err := s.pool.store.apiKeyCosts(prices, time.Time{})
+	totals, err := s.apiKeyLedger.totals(s.pool.store, s.prices.current(), now)
 	if err != nil {
 		return nil, err
 	}
@@ -146,26 +132,23 @@ func (s *server) adminKeys(now time.Time) ([]adminKeyView, error) {
 	})
 	views := make([]adminKeyView, 0, len(keys))
 	for _, key := range keys {
-		used := usage[key.Name]
-		cost := costs[key.Name]
-		lifetimeCost := lifetimeCosts[key.Name]
-		lastUsedAt := lastUsed[key.Name]
-		lastUsedValue := "--"
-		if !lastUsedAt.IsZero() {
-			lastUsedValue = formatRelativeDate(now, lastUsedAt)
+		total := totals[key.Name]
+		lastUsed := "--"
+		if !total.lastUsed.IsZero() {
+			lastUsed = formatRelativeDate(now, total.lastUsed)
 		}
 		views = append(views, adminKeyView{
 			DOMID:        dashboardDOMID("key", key.Name),
 			Name:         key.Name,
 			Active:       key.RevokedAt.IsZero(),
 			Created:      key.CreatedAt.Format("2006-01-02"),
-			LastUsed:     lastUsedValue,
-			Input:        formatTokenCount(used.InputTokens),
-			Cached:       formatTokenCount(used.InputDetails.CachedTokens),
-			Output:       formatTokenCount(used.OutputTokens),
-			Total:        formatTokenCount(used.TotalTokens),
-			Cost:         formatAPIPrice(cost.apiCostNanoDollars, cost.unpricedResponses),
-			LifetimeCost: formatAPIPrice(lifetimeCost.apiCostNanoDollars, lifetimeCost.unpricedResponses),
+			LastUsed:     lastUsed,
+			Input:        formatTokenCount(total.month.InputTokens),
+			Cached:       formatTokenCount(total.month.InputDetails.CachedTokens),
+			Output:       formatTokenCount(total.month.OutputTokens),
+			Total:        formatTokenCount(total.month.TotalTokens),
+			Cost:         formatAPIPrice(total.monthCost.apiCostNanoDollars, total.monthCost.unpricedResponses),
+			LifetimeCost: formatAPIPrice(total.lifetimeCost.apiCostNanoDollars, total.lifetimeCost.unpricedResponses),
 		})
 	}
 	return views, nil
