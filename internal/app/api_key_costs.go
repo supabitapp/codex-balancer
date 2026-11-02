@@ -28,7 +28,10 @@ func (l *apiKeyLedger) totals(store *StateStore, prices priceSnapshot, now time.
 	defer l.mu.Unlock()
 	monthStart := calendarMonthStart(now)
 	if l.keys == nil || !l.monthStart.Equal(monthStart) || !l.pricedAt.Equal(prices.fetchedAt) {
-		l.monthStart, l.pricedAt, l.lastID, l.keys = monthStart, prices.fetchedAt, 0, make(map[string]apiKeyTotals)
+		l.monthStart = monthStart
+		l.pricedAt = prices.fetchedAt
+		l.lastID = 0
+		l.keys = make(map[string]apiKeyTotals)
 	}
 	for {
 		rows, err := store.raw.APIKeyUsageAfter(l.lastID, apiKeyLedgerBatch)

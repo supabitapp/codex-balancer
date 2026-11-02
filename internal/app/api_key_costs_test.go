@@ -43,7 +43,7 @@ func TestAdminAPIKeyUsageShowsMonthWithLifetimeCost(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	totals, err := srv.apiKeyTotals.totals(srv.pool.store, srv.prices.current(), now)
+	totals, err := srv.apiKeyLedger.totals(srv.pool.store, srv.prices.current(), now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -120,7 +120,7 @@ func (s *server) adminKeys(now time.Time) ([]adminKeyView, error) {
 	if err != nil || len(keys) == 0 {
 		return nil, err
 	}
-	totals, err := s.apiKeyTotals.totals(s.pool.store, s.prices.current(), now)
+	totals, err := s.apiKeyLedger.totals(s.pool.store, s.prices.current(), now)
 	if err != nil {
 		return nil, err
 	}

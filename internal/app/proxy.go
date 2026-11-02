@@ -40,7 +40,7 @@ type server struct {
 	catalog          *modelCatalog
 	prices           *priceCatalog
 	stats            *Stats
-	apiKeyTotals     apiKeyLedger
+	apiKeyLedger     apiKeyLedger
 	logins           accountLoginStore
 	upstream         string
 	authIssuer       string

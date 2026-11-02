@@ -201,7 +201,7 @@ func (s *StateStore) usageEventsSince(start time.Time) ([]storedUsage, error) {
 }
 
 func (s *StateStore) apiKeyUsage() (map[string]responseUsage, error) {
-	records, err := s.raw.APIKeyUsage(time.Time{})
+	records, err := s.raw.APIKeyUsage()
 	if err != nil {
 		return nil, err
 	}
