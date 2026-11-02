@@ -43,35 +43,22 @@ func TestAdminAPIKeyUsageShowsMonthWithLifetimeCost(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, test := range []struct {
-		start time.Time
-		want  map[string]usageCost
-	}{
-		{start: time.Time{}, want: map[string]usageCost{
-			"standard": {apiCostNanoDollars: 4_372_050_000},
-			"fast":     {apiCostNanoDollars: 5_350_000_000},
-			"unpriced": {apiCostNanoDollars: 2_050_000, unpricedResponses: 1},
-			"unused":   {},
-		}},
-		{start: calendarMonthStart(now), want: map[string]usageCost{
-			"standard": {apiCostNanoDollars: 3_524_550_000},
-			"fast":     {apiCostNanoDollars: 5_350_000_000},
-			"unpriced": {apiCostNanoDollars: 2_050_000, unpricedResponses: 1},
-			"unused":   {},
-		}},
+	totals, err := srv.apiKeyTotals.totals(srv.pool.store, srv.prices.current(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]struct{ month, lifetime usageCost }{
+		"standard": {usageCost{apiCostNanoDollars: 3_524_550_000}, usageCost{apiCostNanoDollars: 4_372_050_000}},
+		"fast":     {usageCost{apiCostNanoDollars: 5_350_000_000}, usageCost{apiCostNanoDollars: 5_350_000_000}},
+		"unpriced": {usageCost{apiCostNanoDollars: 2_050_000, unpricedResponses: 1}, usageCost{apiCostNanoDollars: 2_050_000, unpricedResponses: 1}},
+		"unused":   {},
 	} {
-		costs, err := srv.pool.store.apiKeyCosts(srv.prices.current(), test.start)
-		if err != nil {
-			t.Fatal(err)
+		if got := totals[name]; got.monthCost != want.month || got.lifetimeCost != want.lifetime {
+			t.Fatalf("%s costs = month %+v lifetime %+v, want month %+v lifetime %+v", name, got.monthCost, got.lifetimeCost, want.month, want.lifetime)
 		}
-		for name, want := range test.want {
-			if got := costs[name]; got != want {
-				t.Fatalf("%s cost since %v = %+v, want %+v", name, test.start, got, want)
-			}
-		}
-		if _, found := costs[""]; found {
-			t.Fatal("unattributed usage included in API key costs")
-		}
+	}
+	if _, found := totals[""]; found {
+		t.Fatal("unattributed usage included in API key costs")
 	}
 	handler := srv.routes()
 	cookie, csrf := loginTestAdmin(t, handler)
@@ -157,13 +144,52 @@ func TestAPIKeyCostsSurviveStoreReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	costs, err := store.apiKeyCosts(testPriceSnapshot(t), time.Time{})
+	var ledger apiKeyLedger
+	totals, err := ledger.totals(store, testPriceSnapshot(t), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := costs["client"]; got != (usageCost{apiCostNanoDollars: 2_500_000}) {
+	if got := totals["client"].lifetimeCost; got != (usageCost{apiCostNanoDollars: 2_500_000}) {
 		t.Fatalf("restored cost = %+v, want 2500000 nano-dollars", got)
 	}
+}
+
+func TestAPIKeyLedgerFoldsNewUsageAndRollsMonthOver(t *testing.T) {
+	store, err := openStateStore(t.TempDir() + "/state.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	now := time.Date(2026, time.October, 31, 12, 0, 0, 0, time.Local)
+	if err := store.addAPIKey(storedAPIKey{Name: "client", Secret: "secret", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	prices := testPriceSnapshot(t)
+	var ledger apiKeyLedger
+	check := func(at time.Time, monthInput, monthCost, lifetimeCost int64, lastUsed time.Time) {
+		t.Helper()
+		totals, err := ledger.totals(store, prices, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := totals["client"]
+		if got.month.InputTokens != monthInput || got.monthCost.apiCostNanoDollars != monthCost ||
+			got.lifetimeCost.apiCostNanoDollars != lifetimeCost || !got.lastUsed.Equal(lastUsed) {
+			t.Fatalf("totals at %v = %+v, want month input %d cost %d, lifetime %d, last used %v", at, got, monthInput, monthCost, lifetimeCost, lastUsed)
+		}
+	}
+	record := func(at time.Time) {
+		t.Helper()
+		if err := store.recordUsage(storedUsage{At: at, APIKeyName: "client", Model: "gpt-5.4", Usage: responseUsage{InputTokens: 1_000}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record(now)
+	check(now, 1_000, 2_500_000, 2_500_000, now)
+	later := now.Add(time.Hour)
+	record(later)
+	check(later, 2_000, 5_000_000, 5_000_000, later)
+	check(time.Date(2026, time.November, 1, 0, 30, 0, 0, time.Local), 0, 0, 5_000_000, later)
 }
 
 func TestFormatRelativeDate(t *testing.T) {
