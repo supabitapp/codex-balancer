@@ -34,11 +34,15 @@ func (l *apiKeyLedger) totals(store *StateStore, prices priceSnapshot, now time.
 		l.keys = make(map[string]apiKeyTotals)
 	}
 	for {
-		rows, err := store.raw.APIKeyUsageAfter(l.lastID, apiKeyLedgerBatch)
+		rows, err := store.raw.UsageRowsAfter(l.lastID, apiKeyLedgerBatch)
 		if err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
+			l.lastID = row.ID
+			if row.APIKeyName == "" {
+				continue
+			}
 			usage := responseUsageFromState(row.Usage)
 			cost, known := prices.estimate(row.Model, row.ServiceTier, usage)
 			key := l.keys[row.APIKeyName]
@@ -51,7 +55,6 @@ func (l *apiKeyLedger) totals(store *StateStore, prices priceSnapshot, now time.
 				key.lastUsed = row.At
 			}
 			l.keys[row.APIKeyName] = key
-			l.lastID = row.ID
 		}
 		if len(rows) < apiKeyLedgerBatch {
 			return maps.Clone(l.keys), nil

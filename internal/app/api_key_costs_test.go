@@ -186,6 +186,10 @@ func TestAPIKeyLedgerFoldsNewUsageAndRollsMonthOver(t *testing.T) {
 	}
 	record(now)
 	check(now, 1_000, 2_500_000, 2_500_000, now)
+	if err := store.recordUsage(storedUsage{At: now, Model: "gpt-5.4", Usage: responseUsage{InputTokens: 1_000}}); err != nil {
+		t.Fatal(err)
+	}
+	check(now, 1_000, 2_500_000, 2_500_000, now)
 	later := now.Add(time.Hour)
 	record(later)
 	check(later, 2_000, 5_000_000, 5_000_000, later)
