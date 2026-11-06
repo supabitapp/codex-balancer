@@ -23,6 +23,7 @@ func testAccountWithCredits(id string) *Account {
 	account.secondary.minutes = 7 * 24 * 60
 	account.spent = true
 	account.credits = &creditsPayload{HasCredits: true, Balance: "10.50"}
+	account.AllowCredits = true
 	return account
 }
 
@@ -75,9 +76,8 @@ func TestCreditRoutingRejectsIneligibleAccounts(t *testing.T) {
 	}{
 		{"paused", func(a *Account) { a.Paused = true }},
 		{"reauth", func(a *Account) { a.Reauth = "login required" }},
-		{"free plan", func(a *Account) { a.planType = "free" }},
-		{"managed business", func(a *Account) { a.planType = "business" }},
-		{"enterprise", func(a *Account) { a.planType = "enterprise" }},
+		{"credits off", func(a *Account) { a.AllowCredits = false }},
+		{"free plan with credits off", func(a *Account) { a.planType, a.AllowCredits = "free", false }},
 		{"cooldown", func(a *Account) { a.cooldown = time.Now().Add(time.Hour) }},
 		{"spend cap", func(a *Account) { a.spendControl = &spendControlPayload{Reached: true} }},
 		{"overage cap", func(a *Account) { a.credits.OverageLimitReached = true }},

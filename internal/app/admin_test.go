@@ -289,6 +289,9 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 		if !strings.Contains(response.Body.String(), `<option value="`+string(mode)+`" selected>`) {
 			t.Fatalf("saved mode %s not selected in the routing control", mode)
 		}
+		if !strings.Contains(response.Body.String(), `aria-label="Use credits for account-a@example.com"`) {
+			t.Fatal("paid account row has no credits control")
+		}
 	}
 	if response := post("/admin/accounts/mode", url.Values{"account": {account.id()}, "mode": {"invalid"}}); response.Code != 422 {
 		t.Fatal("invalid routing mode accepted")
@@ -301,8 +304,12 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 		if response.Code != 200 || account.routingCandidate().allowCredits != (allow == "true") {
 			t.Fatalf("credits %s not applied: status=%d", allow, response.Code)
 		}
-		if !strings.Contains(response.Body.String(), `name="allow" value="`+strconv.FormatBool(allow != "true")+`"><button class="action" type="submit" aria-pressed="`+allow+`"`) {
-			t.Fatalf("credits %s not reflected in the workspace toggle", allow)
+		body := response.Body.String()
+		if !strings.Contains(body, `name="allow" value="true" aria-pressed="`+allow+`">on</button>`) || !strings.Contains(body, `name="allow" value="false" aria-pressed="`+strconv.FormatBool(allow != "true")+`">off</button>`) {
+			t.Fatalf("credits %s not reflected in the workspace control", allow)
+		}
+		if !strings.Contains(body, `aria-label="Routing for account-a@example.com"`) {
+			t.Fatal("workspace row has no routing control to resume a paused account")
 		}
 	}
 	account.mu.Lock()

@@ -21,7 +21,7 @@ Usage:
   codex-balancer accounts add --device-auth   Do the same with a code on another device
   codex-balancer accounts list                Show pooled accounts
   codex-balancer accounts mode <account> <mode> Set routing to normal, priority, or paused
-  codex-balancer accounts credits <account> on|off Use a free or workspace account's credits after included quota runs out
+  codex-balancer accounts credits <account> on|off Spend an account's credits after included quota runs out
   codex-balancer accounts rm <email>          Drop an account
 
 Flags:

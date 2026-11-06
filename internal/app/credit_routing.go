@@ -11,7 +11,7 @@ func (c routingCandidate) weeklyExhausted() bool {
 }
 
 func (c routingCandidate) creditAvailable(now time.Time) bool {
-	return c.routingEnabled() && !c.paused && c.reauth == "" && now.After(c.cooldown) &&
+	return c.allowCredits && !c.paused && c.reauth == "" && now.After(c.cooldown) &&
 		!spendLimitReached(c.spendControl) && !c.creditsRejected && (c.weeklyExhausted() || !c.includedRouting()) && c.credits.spendable()
 }
 

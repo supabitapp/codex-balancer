@@ -110,13 +110,14 @@ and Enterprise workspace plans are excluded from routing by default, including
 retained owners and credit fallback. A socket whose account becomes free retires
 before forwarding another message.
 
-An admin can opt one of those accounts into credit use with the Use credits
-toggle on the admin page or `codex-balancer accounts credits <account> on`. The
-account still never takes included-quota placement. It joins credit fallback
-only, without the weekly-exhaustion requirement, so its credits are spent only
-when no account in the pool has included quota. A pinned socket on it retires
-before the next portable turn once included quota is available again. Turning
-the toggle off reconnects its existing sockets.
+Credits are spent only on accounts an admin opts in with the Use credits
+control on the admin page or `codex-balancer accounts credits <account> on`.
+It is off for every account by default, whatever the plan. A free or workspace
+account that is opted in never takes included-quota placement. It joins credit
+fallback without the weekly-exhaustion requirement, so its credits are spent
+only when no account in the pool has included quota. A pinned socket on it
+retires before the next portable turn once included quota is available again.
+Turning the control off reconnects the account's existing sockets.
 
 A reported `spend_control.reached` makes an account unavailable for fresh and
 retained routing even if its rate-limit windows have capacity. A pinned socket
@@ -140,11 +141,12 @@ without visible cached models and newer client versions wait at most four
 seconds for a refresh, then serve the available catalog, staying inside
 Codex's five-second fetch timeout.
 
-When no eligible account with included quota is available, routing can use an
-account's credit balance. The account must have a known quota window lasting at
-least a week with 100% usage, plus a positive finite balance with `has_credits`
-enabled or unlimited credits. Paused, signed-out, and non-routable accounts,
-cooldowns, spend caps, and credit overage limits still exclude an account.
+When no eligible account with included quota is available, routing can use the
+credit balance of an account opted in to credits. A paid account must have a
+known quota window lasting at least a week with 100% usage. Every opted-in
+account needs a positive finite balance with `has_credits` enabled or unlimited
+credits. Paused and signed-out accounts, cooldowns, spend caps, and credit
+overage limits still exclude an account.
 
 Credit fallback retains an eligible conversation owner when possible, then
 uses the usual placement ranking. Included quota elsewhere in the pool takes

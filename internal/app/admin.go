@@ -358,7 +358,7 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 		}
 		allow := value == "true"
 		err = s.pool.setAllowCredits(account, allow)
-		notice = "Credits are used only after included quota runs out across the pool."
+		notice = "Credits enabled. They are spent only after included quota runs out across the pool."
 		if !allow {
 			if err == nil {
 				s.invalidateAccount(account.id(), routingReasonOwnerNotRoutable)

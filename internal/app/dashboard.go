@@ -69,6 +69,7 @@ type dashboardAccountView struct {
 	DOMID           string
 	ID              string
 	Mode            routingMode
+	AllowCredits    bool
 	ResetCreditID   string
 	Name            string
 	Plan            string
@@ -92,6 +93,7 @@ type dashboardWorkspaceView struct {
 	DOMID        string
 	ID           string
 	AllowCredits bool
+	Mode         routingMode
 	Name         string
 	Plan         string
 	PlanInfo     string
@@ -433,6 +435,7 @@ func (s *server) dashboardAt(now time.Time, private bool) dashboardView {
 			if private {
 				workspace.ID = account.ID
 				workspace.AllowCredits = account.AllowCredits
+				workspace.Mode = account.RoutingMode
 			}
 			workspaces = append(workspaces, workspace)
 			continue
@@ -474,6 +477,7 @@ func (s *server) dashboardAt(now time.Time, private bool) dashboardView {
 		if private {
 			view.ID = account.ID
 			view.Mode = account.RoutingMode
+			view.AllowCredits = account.AllowCredits
 			view.ResetCreditID = dashboardResetCreditID(now, account.ResetCredits)
 		}
 		accounts = append(accounts, view)
