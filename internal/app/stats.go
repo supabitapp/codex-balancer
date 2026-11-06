@@ -757,6 +757,7 @@ type accountStatsResponse struct {
 	Subscription           *subscriptionStatsResponse    `json:"subscription,omitempty"`
 	Status                 accountStatus                 `json:"status"`
 	RoutingMode            routingMode                   `json:"routing_mode"`
+	AllowCredits           bool                          `json:"allow_credits"`
 	RoutingPriority        *routingPriorityStatsResponse `json:"routing_priority,omitempty"`
 	WeeklyRemainingPercent *float64                      `json:"weekly_remaining_percent"`
 	BankedResets           *int64                        `json:"banked_resets"`
@@ -896,6 +897,7 @@ func (s *server) statsResponseAt(now time.Time, snapshot Snapshot) statsResponse
 			Subscription:           subscriptionStats(claims, plan),
 			Status:                 status,
 			RoutingMode:            candidate.mode,
+			AllowCredits:           candidate.allowCredits,
 			RoutingPriority:        routingPriority,
 			WeeklyRemainingPercent: weeklyRemaining,
 			BankedResets:           bankedResets,

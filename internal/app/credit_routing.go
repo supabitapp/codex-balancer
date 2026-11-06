@@ -12,7 +12,7 @@ func (c routingCandidate) weeklyExhausted() bool {
 
 func (c routingCandidate) creditAvailable(now time.Time) bool {
 	return c.routingEnabled() && !c.paused && c.reauth == "" && now.After(c.cooldown) &&
-		!spendLimitReached(c.spendControl) && !c.creditsRejected && c.weeklyExhausted() && c.credits.spendable()
+		!spendLimitReached(c.spendControl) && !c.creditsRejected && (c.weeklyExhausted() || !c.includedRouting()) && c.credits.spendable()
 }
 
 // A usage rejection can mean the upstream cannot spend this account's credits.

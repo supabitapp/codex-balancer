@@ -305,7 +305,7 @@ func (s *server) adminSettings(w http.ResponseWriter, r *http.Request, session a
 
 func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, session adminSession) {
 	action := r.PathValue("action")
-	if action != "pause" && action != "mode" && action != "remove" && action != "reset" && action != "refresh" {
+	if action != "pause" && action != "mode" && action != "credits" && action != "remove" && action != "reset" && action != "refresh" {
 		http.NotFound(w, r)
 		return
 	}
@@ -349,6 +349,21 @@ func (s *server) adminAccountAction(w http.ResponseWriter, r *http.Request, sess
 		if err == nil && mode == routingModePaused {
 			s.invalidateAccount(account.id(), routingReasonOwnerPaused)
 			notice = "Account paused. Existing connections are reconnecting."
+		}
+	case "credits":
+		value := r.PostForm.Get("allow")
+		if value != "true" && value != "false" {
+			s.renderAdmin(w, r, session, "Choose whether to use credits.", "", http.StatusUnprocessableEntity)
+			return
+		}
+		allow := value == "true"
+		err = s.pool.setAllowCredits(account, allow)
+		notice = "Credits are used only after included quota runs out across the pool."
+		if !allow {
+			if err == nil {
+				s.invalidateAccount(account.id(), routingReasonOwnerNotRoutable)
+			}
+			notice = "Credits disabled. Existing connections are reconnecting."
 		}
 	case "remove":
 		err = s.pool.remove(account)

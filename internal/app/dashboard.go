@@ -89,20 +89,21 @@ type dashboardAccountView struct {
 }
 
 type dashboardWorkspaceView struct {
-	DOMID       string
-	ID          string
-	Name        string
-	Plan        string
-	PlanInfo    string
-	Status      accountStatus
-	StatusInfo  string
-	Credits     string
-	CreditsInfo string
-	Limit       string
-	Used        string
-	Remaining   string
-	UsedPercent string
-	ResetIn     string
+	DOMID        string
+	ID           string
+	AllowCredits bool
+	Name         string
+	Plan         string
+	PlanInfo     string
+	Status       accountStatus
+	StatusInfo   string
+	Credits      string
+	CreditsInfo  string
+	Limit        string
+	Used         string
+	Remaining    string
+	UsedPercent  string
+	ResetIn      string
 }
 
 type dashboardStatusView struct {
@@ -431,6 +432,7 @@ func (s *server) dashboardAt(now time.Time, private bool) dashboardView {
 			workspace := newDashboardWorkspaceView(now, name, account)
 			if private {
 				workspace.ID = account.ID
+				workspace.AllowCredits = account.AllowCredits
 			}
 			workspaces = append(workspaces, workspace)
 			continue

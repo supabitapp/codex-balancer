@@ -287,7 +287,7 @@ func (r *responsesWebSocketRelay) handleResponseCreate(message websocketMessage,
 		return false
 	}
 	candidate := r.current.account.routingCandidate()
-	if r.pinned && (candidate.spent || candidate.weeklyExhausted()) && websocketRequestPortable(event) {
+	if r.pinned && (candidate.spent || candidate.weeklyExhausted() || candidate.allowCredits && !candidate.includedRouting()) && websocketRequestPortable(event) {
 		decision := r.server.pickAccount(r.thread, []string{candidate.id}, event.Model, event.ServiceTier, nil, 0)
 		if decision.account != r.current.account || !decision.creditFallback {
 			r.closeDownstream(websocket.StatusServiceRestart, "account exhausted before a new turn")

@@ -14,7 +14,7 @@ import (
 
 const (
 	ApplicationID = 0x43425853
-	schemaVersion = 9
+	schemaVersion = 10
 )
 
 const currentSchema = `CREATE TABLE accounts (
@@ -54,7 +54,7 @@ CREATE TABLE response_usage (
 	account_id TEXT REFERENCES accounts(account_id) ON DELETE SET NULL
 ) STRICT;
 CREATE INDEX response_usage_at ON response_usage (at_ns);
-CREATE INDEX response_usage_api_key ON response_usage (api_key_name);` + settingsSchema + adminSchema + modelsSchema + adminSessionsSchema
+CREATE INDEX response_usage_api_key ON response_usage (api_key_name);` + settingsSchema + adminSchema + modelsSchema + adminSessionsSchema + accountCreditsSchema
 
 const settingsSchema = `CREATE TABLE settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -74,6 +74,7 @@ type Account struct {
 	RefreshToken string
 	Paused       bool
 	RoutingMode  string
+	AllowCredits bool
 	LastRefresh  time.Time
 	LastUsed     time.Time
 	Reauth       string
@@ -248,6 +249,12 @@ func (s *Store) initialize() error {
 		}
 		version = 9
 	}
+	if version == 9 {
+		if err := s.migrateAccountCredits(); err != nil {
+			return err
+		}
+		version = 10
+	}
 	if version != schemaVersion {
 		return fmt.Errorf("state schema %d is unsupported; expected %d", version, schemaVersion)
 	}
@@ -355,7 +362,7 @@ func (s *Store) RevokeAPIKey(name string, at time.Time) (bool, error) {
 
 func (s *Store) ReadAccounts() ([]Account, error) {
 	rows, err := s.db.Query(`SELECT account_id, id_token, access_token, refresh_token, paused, routing_mode,
-		last_refresh_ns, last_used_at_ns, reauth FROM accounts ORDER BY rowid`)
+		last_refresh_ns, last_used_at_ns, reauth, allow_credits FROM accounts ORDER BY rowid`)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +376,7 @@ func scanAccounts(rows *sql.Rows) ([]Account, error) {
 		var account Account
 		var lastRefresh, lastUsed int64
 		if err := rows.Scan(&account.ID, &account.IDToken, &account.AccessToken, &account.RefreshToken,
-			&account.Paused, &account.RoutingMode, &lastRefresh, &lastUsed, &account.Reauth); err != nil {
+			&account.Paused, &account.RoutingMode, &lastRefresh, &lastUsed, &account.Reauth, &account.AllowCredits); err != nil {
 			return nil, err
 		}
 		account.LastRefresh = decodeTime(lastRefresh)
@@ -387,7 +394,7 @@ func (s *Store) MutateAccountsContext(ctx context.Context, change func([]Account
 	var accounts []Account
 	err := s.immediateContext(ctx, func(conn *sql.Conn) error {
 		rows, err := conn.QueryContext(ctx, `SELECT account_id, id_token, access_token, refresh_token,
-			paused, routing_mode, last_refresh_ns, last_used_at_ns, reauth FROM accounts ORDER BY rowid`)
+			paused, routing_mode, last_refresh_ns, last_used_at_ns, reauth, allow_credits FROM accounts ORDER BY rowid`)
 		if err != nil {
 			return err
 		}
@@ -424,13 +431,14 @@ func upsertAccount(ctx context.Context, exec sqlExecer, account Account) error {
 		return errors.New("account record has no ID")
 	}
 	_, err := exec.ExecContext(ctx, `INSERT INTO accounts (
-		account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, last_used_at_ns, reauth
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		account_id, id_token, access_token, refresh_token, paused, routing_mode, last_refresh_ns, last_used_at_ns, reauth, allow_credits
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT (account_id) DO UPDATE SET id_token = excluded.id_token, access_token = excluded.access_token,
 		refresh_token = excluded.refresh_token, paused = excluded.paused, routing_mode = excluded.routing_mode,
-		last_refresh_ns = excluded.last_refresh_ns, last_used_at_ns = excluded.last_used_at_ns, reauth = excluded.reauth`,
+		last_refresh_ns = excluded.last_refresh_ns, last_used_at_ns = excluded.last_used_at_ns, reauth = excluded.reauth,
+		allow_credits = excluded.allow_credits`,
 		account.ID, account.IDToken, account.AccessToken, account.RefreshToken, account.Paused, account.RoutingMode,
-		encodeTime(account.LastRefresh), encodeTime(account.LastUsed), account.Reauth)
+		encodeTime(account.LastRefresh), encodeTime(account.LastUsed), account.Reauth, account.AllowCredits)
 	return err
 }
 

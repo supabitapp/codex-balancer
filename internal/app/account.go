@@ -30,6 +30,7 @@ type accountState struct {
 	RefreshToken string
 	Paused       bool
 	RoutingMode  routingMode
+	AllowCredits bool
 	LastRefresh  time.Time
 	Reauth       string
 }
@@ -259,6 +260,7 @@ func (a *Account) applyPersisted(next accountState) bool {
 	}
 	a.Paused = next.Paused
 	a.RoutingMode = next.RoutingMode.normalized()
+	a.AllowCredits = next.AllowCredits
 	return a.accountState != before
 }
 

@@ -116,6 +116,7 @@ func accountsFromRecords(records []statepkg.Account) []*Account {
 			RefreshToken: record.RefreshToken,
 			Paused:       record.Paused,
 			RoutingMode:  routingMode(record.RoutingMode).normalized(),
+			AllowCredits: record.AllowCredits,
 			LastRefresh:  record.LastRefresh,
 			Reauth:       record.Reauth,
 		})
@@ -141,6 +142,7 @@ func accountRecord(account *Account) (statepkg.Account, error) {
 		RefreshToken: persisted.RefreshToken,
 		Paused:       persisted.Paused,
 		RoutingMode:  string(persisted.RoutingMode.normalized()),
+		AllowCredits: persisted.AllowCredits,
 		LastRefresh:  persisted.LastRefresh,
 		LastUsed:     lastUsed,
 		Reauth:       persisted.Reauth,

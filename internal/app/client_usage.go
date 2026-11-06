@@ -51,7 +51,7 @@ func (p *Pool) clientUsage() clientUsage {
 	var primary, secondary usageAverage
 	for _, account := range p.all() {
 		candidate := account.routingCandidate()
-		if !candidate.routingEnabled() || candidate.paused || candidate.reauth != "" {
+		if !candidate.includedRouting() || candidate.paused || candidate.reauth != "" {
 			continue
 		}
 		primary.add(candidate.primary)

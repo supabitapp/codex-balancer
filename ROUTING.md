@@ -106,9 +106,17 @@ server considers accounts in this order:
 
 Self-serve Business Pro Lite (`self_serve_business_prolite`) participates in
 normal per-account routing once quota is known. Free accounts and managed Business
-and Enterprise workspace plans are excluded from routing, including retained
-owners and credit fallback. A socket whose account becomes free retires before
-forwarding another message.
+and Enterprise workspace plans are excluded from routing by default, including
+retained owners and credit fallback. A socket whose account becomes free retires
+before forwarding another message.
+
+An admin can opt one of those accounts into credit use with the Use credits
+toggle on the admin page or `codex-balancer accounts credits <account> on`. The
+account still never takes included-quota placement. It joins credit fallback
+only, without the weekly-exhaustion requirement, so its credits are spent only
+when no account in the pool has included quota. A pinned socket on it retires
+before the next portable turn once included quota is available again. Turning
+the toggle off reconnects its existing sockets.
 
 A reported `spend_control.reached` makes an account unavailable for fresh and
 retained routing even if its rate-limit windows have capacity. A pinned socket

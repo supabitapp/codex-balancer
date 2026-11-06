@@ -50,6 +50,8 @@
 </select><noscript><button class="action" type="submit">save</button></noscript>
 </form>{{end}}
 
+{{define "credits-control"}}<form class="inline" action="/admin/accounts/credits" method="post" hx-post="/admin/accounts/credits">{{template "csrf" .CSRF}}<input type="hidden" name="account" value="{{.Row.ID}}"><input type="hidden" name="allow" value="{{not .Row.AllowCredits}}"><button class="action" type="submit" aria-pressed="{{.Row.AllowCredits}}" aria-label="{{if .Row.AllowCredits}}Stop using credits for{{else}}Use credits for{{end}} {{.Row.Name}}">{{if .Row.AllowCredits}}on{{else}}off{{end}}</button></form>{{end}}
+
 {{define "banked-reset-control"}}<form class="inline" action="/admin/accounts/reset" method="post" hx-post="/admin/accounts/reset" hx-confirm="Use one banked reset for {{.Row.Name}} now?">{{template "csrf" .CSRF}}<input type="hidden" name="account" value="{{.Row.ID}}"><input type="hidden" name="credit" value="{{.Row.ResetCreditID}}"><button class="action" type="submit" aria-label="Use banked reset for {{.Row.Name}}">use</button></form>{{end}}
 
 {{define "account-actions"}}<button class="menu-trigger" type="button" popovertarget="{{.Row.DOMID}}-menu" aria-label="Actions for {{.Row.Name}}">⋯</button>

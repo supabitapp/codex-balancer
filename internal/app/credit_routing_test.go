@@ -331,3 +331,30 @@ func TestCreditRoutingRateLimitEventClearsDepletedBalance(t *testing.T) {
 		t.Fatal("depleted balance from rate-limit event was ignored")
 	}
 }
+
+func TestOptedInFreeAccountSpendsCreditsLast(t *testing.T) {
+	free := testAccountWithPlan("free", 10, "free")
+	free.credits = &creditsPayload{HasCredits: true, Balance: "79002.78"}
+	free.AllowCredits = true
+	paid := testAccount("paid", 50)
+	pool := &Pool{accounts: []*Account{free, paid}}
+	for _, owners := range [][]string{nil, {free.id()}} {
+		if decision := pool.route(owners, nil); decision.account != paid || decision.creditFallback {
+			t.Fatalf("decision = %+v, want included quota before free credits", decision)
+		}
+	}
+	paid.spent = true
+	if decision := pool.route(nil, nil); decision.account != free || !decision.creditFallback {
+		t.Fatalf("decision = %+v, want credit fallback to the opted-in free account", decision)
+	}
+	if got := free.status(time.Now()); got != accountCredits {
+		t.Fatalf("status = %s, want credits", got)
+	}
+	free.AllowCredits = false
+	if decision := pool.route(nil, nil); decision.account != nil {
+		t.Fatalf("decision = %+v, want no route without the opt-in", decision)
+	}
+	if got := free.status(time.Now()); got != accountNotRouted {
+		t.Fatalf("status = %s, want not routed", got)
+	}
+}

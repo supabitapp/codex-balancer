@@ -48,7 +48,7 @@ func TestStateStoreCreatesOnlyMinimalSchema(t *testing.T) {
 	}
 
 	wantColumns := map[string][]string{
-		"accounts":       {"account_id", "id_token", "access_token", "refresh_token", "paused", "routing_mode", "last_refresh_ns", "last_used_at_ns", "reauth"},
+		"accounts":       {"account_id", "id_token", "access_token", "refresh_token", "paused", "routing_mode", "last_refresh_ns", "last_used_at_ns", "reauth", "allow_credits"},
 		"api_keys":       {"name", "secret", "created_at_ns", "revoked_at_ns"},
 		"response_usage": {"id", "api_key_name", "at_ns", "model", "service_tier", "input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens", "account_id"},
 		"routes":         {"key", "account_id", "updated_at_ns"},

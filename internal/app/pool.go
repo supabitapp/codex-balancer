@@ -43,6 +43,7 @@ type routingCandidate struct {
 	pressure        float64
 	lastUsed        time.Time
 	mode            routingMode
+	allowCredits    bool
 }
 
 type routingDecision struct {
@@ -181,6 +182,20 @@ func (p *Pool) updateRoutingMode(a *Account, update func(routingMode) routingMod
 	return mode, err
 }
 
+func (p *Pool) setAllowCredits(a *Account, allow bool) error {
+	id := a.id()
+	return p.mutate(func(accounts []*Account) ([]*Account, error) {
+		i := indexOf(accounts, id)
+		if i < 0 {
+			return nil, fmt.Errorf("no account %q", id)
+		}
+		state := accounts[i].persisted()
+		state.AllowCredits = allow
+		accounts[i] = accountFromState(state)
+		return accounts, nil
+	})
+}
+
 func (p *Pool) persistAccountState(state accountState) (accountState, error) {
 	return p.persistAccountStateContext(context.Background(), state)
 }
@@ -222,7 +237,7 @@ func (p *Pool) route(owners []string, skip map[string]bool) routingDecision {
 	for _, owner := range owners {
 		for i := range decision.candidates {
 			candidate := &decision.candidates[i]
-			if candidate.id != owner || !candidate.routingEnabled() || candidate.paused || candidate.reauth != "" || candidate.spent || candidate.weeklyExhausted() {
+			if candidate.id != owner || !candidate.includedRouting() || candidate.paused || candidate.reauth != "" || candidate.spent || candidate.weeklyExhausted() {
 				continue
 			}
 			if !candidate.quotaKnown() || !now.After(candidate.cooldown) {
@@ -319,19 +334,20 @@ func (a *Account) routingCandidate() routingCandidate {
 		pressure:        a.pressure(),
 		lastUsed:        a.lastUsed,
 		mode:            a.accountState.effectiveRoutingMode(),
+		allowCredits:    a.AllowCredits,
 	}
 }
 
 func (c routingCandidate) available(now time.Time) bool {
-	return c.routingEnabled() && !c.paused && c.reauth == "" && !c.spent && !c.weeklyExhausted() && c.quotaKnown() && now.After(c.cooldown)
+	return c.includedRouting() && !c.paused && c.reauth == "" && !c.spent && !c.weeklyExhausted() && c.quotaKnown() && now.After(c.cooldown)
 }
 
 func (c routingCandidate) status(now time.Time) accountStatus {
-	if !c.paused && c.reauth == "" && !c.routingEnabled() {
-		return accountNotRouted
-	}
 	if c.creditAvailable(now) {
 		return accountCredits
+	}
+	if !c.paused && c.reauth == "" && !c.includedRouting() && (!c.allowCredits || now.After(c.cooldown)) {
+		return accountNotRouted
 	}
 	status := accountStatusAt(c.paused, c.reauth, c.cooldown, c.spent || c.weeklyExhausted(), c.quotaKnown(), now)
 	if status == accountLive {
@@ -346,6 +362,10 @@ func (c routingCandidate) status(now time.Time) accountStatus {
 }
 
 func (c routingCandidate) routingEnabled() bool {
+	return c.includedRouting() || c.allowCredits
+}
+
+func (c routingCandidate) includedRouting() bool {
 	return routablePlan(c.plan)
 }
 

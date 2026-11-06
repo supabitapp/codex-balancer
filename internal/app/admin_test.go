@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -291,6 +292,24 @@ func TestAdminControlsAndSecretVisibility(t *testing.T) {
 	}
 	if response := post("/admin/accounts/mode", url.Values{"account": {account.id()}, "mode": {"invalid"}}); response.Code != 422 {
 		t.Fatal("invalid routing mode accepted")
+	}
+	account.mu.Lock()
+	account.planType = "free"
+	account.mu.Unlock()
+	for _, allow := range []string{"true", "true", "false"} {
+		response := post("/admin/accounts/credits", url.Values{"account": {account.id()}, "allow": {allow}})
+		if response.Code != 200 || account.routingCandidate().allowCredits != (allow == "true") {
+			t.Fatalf("credits %s not applied: status=%d", allow, response.Code)
+		}
+		if !strings.Contains(response.Body.String(), `name="allow" value="`+strconv.FormatBool(allow != "true")+`"><button class="action" type="submit" aria-pressed="`+allow+`"`) {
+			t.Fatalf("credits %s not reflected in the workspace toggle", allow)
+		}
+	}
+	account.mu.Lock()
+	account.planType = ""
+	account.mu.Unlock()
+	if response := post("/admin/accounts/credits", url.Values{"account": {account.id()}, "allow": {"maybe"}}); response.Code != 422 {
+		t.Fatal("invalid credits value accepted")
 	}
 	name := `laptop<script>alert(1)</script>`
 	response := post("/admin/keys/add", url.Values{"name": {name}})
