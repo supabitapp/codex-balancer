@@ -21,16 +21,19 @@ type responseAccounting struct {
 	liveThreads map[string]struct{}
 	turns       []websocketTurn
 	account     *responseAccount
+	requested   string
+	effort      string
 }
 
 func (r *responseAccounting) startTurn(event websocketEnvelope) {
 	metadata := requestTurnMetadata("", event.ClientMetadata)
 	statsThread := statsThreadKey(r.thread, metadata)
 	counted := event.Generate == nil || *event.Generate
+	r.trackEffort(event)
 	r.turns = append(r.turns, websocketTurn{
 		sent:        time.Now(),
 		model:       event.Model,
-		effort:      event.Reasoning.Effort,
+		effort:      r.effort,
 		serviceTier: event.ServiceTier,
 		metadata:    metadata,
 		counted:     counted,
@@ -40,6 +43,16 @@ func (r *responseAccounting) startTurn(event websocketEnvelope) {
 	attrs := []any{"thread", statsThread, "service_tier", event.ServiceTier}
 	attrs = append(attrs, routingLogAttrs(r.account.account.routingCandidate(), time.Now())...)
 	r.server.log.Debug("response turn received", attrs...)
+}
+
+func (r *responseAccounting) trackEffort(event websocketEnvelope) {
+	requested := event.Reasoning.Effort
+	if update := event.Input.reasoningEffortUpdate(); update != "" {
+		r.effort = update
+	} else if event.PreviousResponseID == "" || requested != r.requested {
+		r.effort = requested
+	}
+	r.requested = requested
 }
 
 func (r *responseAccounting) responseCreated() bool {

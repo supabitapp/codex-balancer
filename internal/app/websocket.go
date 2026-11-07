@@ -71,6 +71,7 @@ type websocketEnvelope struct {
 	Generate           *bool                      `json:"generate"`
 	Model              string                     `json:"model"`
 	Reasoning          responseReasoning          `json:"reasoning"`
+	Input              responseInput              `json:"input"`
 	ServiceTier        string                     `json:"service_tier"`
 	PreviousResponseID string                     `json:"previous_response_id"`
 	ClientMetadata     map[string]string          `json:"client_metadata"`

@@ -84,6 +84,7 @@ func validateHTTPResponse(data []byte) (websocketEnvelope, bool, error) {
 	var request struct {
 		Model              string            `json:"model"`
 		Reasoning          responseReasoning `json:"reasoning"`
+		Input              responseInput     `json:"input"`
 		ServiceTier        string            `json:"service_tier"`
 		PreviousResponseID string            `json:"previous_response_id"`
 		ClientMetadata     map[string]string `json:"client_metadata"`
@@ -92,7 +93,7 @@ func validateHTTPResponse(data []byte) (websocketEnvelope, bool, error) {
 		return websocketEnvelope{}, false, errors.New("invalid routing fields")
 	}
 	return websocketEnvelope{
-		Model: request.Model, Reasoning: request.Reasoning, ServiceTier: request.ServiceTier,
+		Model: request.Model, Reasoning: request.Reasoning, Input: request.Input, ServiceTier: request.ServiceTier,
 		PreviousResponseID: request.PreviousResponseID, ClientMetadata: request.ClientMetadata,
 	}, stream, nil
 }

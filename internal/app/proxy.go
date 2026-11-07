@@ -245,6 +245,30 @@ type responseReasoning struct {
 	Effort string `json:"effort"`
 }
 
+type responseInputItem struct {
+	Type      string            `json:"type"`
+	Reasoning responseReasoning `json:"reasoning"`
+}
+
+type responseInput []responseInputItem
+
+func (i *responseInput) UnmarshalJSON(data []byte) error {
+	var items []responseInputItem
+	if json.Unmarshal(data, &items) == nil {
+		*i = items
+	}
+	return nil
+}
+
+func (i responseInput) reasoningEffortUpdate() string {
+	for index := len(i) - 1; index >= 0; index-- {
+		if i[index].Type == "configuration_update" && i[index].Reasoning.Effort != "" {
+			return i[index].Reasoning.Effort
+		}
+	}
+	return ""
+}
+
 type responseErrorPayload struct {
 	Type    string          `json:"type"`
 	Code    string          `json:"code"`
