@@ -619,7 +619,7 @@ func TestDashboardSeparatesManagedWorkspacesAndShowsSpendControl(t *testing.T) {
 	body := string(payload)
 	for _, expected := range []string{
 		`<section id="workspace-section">`,
-		`<h2>Business &amp; Enterprise <span id="workspace-summary">2 not routed</span></h2>`,
+		`<h2>Business &amp; Enterprise <span id="workspace-summary"><span>2 not routed</span></span></h2>`,
 		`<th>Credit limit</th>`,
 		`<th>Remaining</th>`,
 		`<span class="status-mark status-not_routed">○</span> not routed`,

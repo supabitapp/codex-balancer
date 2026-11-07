@@ -69,12 +69,14 @@
 
 {{define "overview"}}{{range .Overview}}<div id="{{.DOMID}}"><dt>{{.Name}}</dt><dd>{{if and $.Admin (eq .Name "fast mode")}}{{template "fast-mode-control" $}}{{else if .Info}}<span id="{{.DOMID}}-tooltip" class="has-tooltip" data-tooltip="{{.Info}}"{{if .InfoStrong}} data-tooltip-strong="{{.InfoStrong}}"{{end}} aria-describedby="dashboard-tooltip" tabindex="0">{{.Value}}</span>{{else}}{{.Value}}{{end}}</dd></div>{{end}}{{end}}
 
-{{define "summary"}}{{range $index, $item := .Summary}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}{{end}}
+{{define "summary"}}{{template "counts" .Summary}}{{end}}
+
+{{define "counts"}}{{range $index, $item := .}}{{if $index}}<span class="dot">·</span>{{end}}<span>{{$item.Count}} {{$item.Label}}</span>{{end}}{{end}}
 
 {{define "workspace-section"}}<section id="workspace-section"{{if not .Workspaces}} hidden{{end}}>{{template "workspace-section-content" .}}</section>{{end}}
 
 {{define "workspace-section-content"}}
-<h2>Business &amp; Enterprise <span id="workspace-summary">{{len .Workspaces}} not routed</span></h2>
+<h2>Business &amp; Enterprise <span id="workspace-summary">{{template "counts" .WorkspaceSummary}}</span></h2>
 <div id="workspaces" class="scroll">
 {{template "workspaces" .}}
 </div>

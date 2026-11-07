@@ -51,13 +51,14 @@ var dashboardUpdateTemplates = []string{
 }
 
 type dashboardView struct {
-	Admin      *dashboardAdminView
-	Summary    []dashboardCount
-	Accounts   []dashboardAccountView
-	Workspaces []dashboardWorkspaceView
-	Overview   []dashboardMetric
-	Threads    []dashboardThreadView
-	Events     []dashboardEventView
+	Admin            *dashboardAdminView
+	Summary          []dashboardCount
+	WorkspaceSummary []dashboardCount
+	Accounts         []dashboardAccountView
+	Workspaces       []dashboardWorkspaceView
+	Overview         []dashboardMetric
+	Threads          []dashboardThreadView
+	Events           []dashboardEventView
 }
 
 type dashboardCount struct {
@@ -421,6 +422,7 @@ func (s *server) dashboardAt(now time.Time, private bool) dashboardView {
 	names := make(map[string]string, len(stats.Accounts))
 	accounts := make([]dashboardAccountView, 0, len(stats.Accounts))
 	workspaces := make([]dashboardWorkspaceView, 0)
+	workspaceCounts := map[accountStatus]int{}
 	for i, account := range stats.Accounts {
 		name := account.Email
 		if private && account.privateEmail != "" {
@@ -438,6 +440,7 @@ func (s *server) dashboardAt(now time.Time, private bool) dashboardView {
 				workspace.Mode = account.RoutingMode
 			}
 			workspaces = append(workspaces, workspace)
+			workspaceCounts[account.Status]++
 			continue
 		}
 		counts[account.Status]++
@@ -483,23 +486,8 @@ func (s *server) dashboardAt(now time.Time, private bool) dashboardView {
 		accounts = append(accounts, view)
 	}
 
-	summary := make([]dashboardCount, 0, 6)
-	for _, item := range []struct {
-		status accountStatus
-		label  string
-	}{
-		{accountLive, "live"},
-		{accountPriority, "priority"},
-		{accountCredits, "credits"},
-		{accountChecking, "checking"},
-		{accountCooling, "cooling"},
-		{accountPaused, "paused"},
-		{accountNeedsReauth, "need reauth"},
-	} {
-		if count := counts[item.status]; count > 0 {
-			summary = append(summary, dashboardCount{Count: count, Label: item.label})
-		}
-	}
+	summary := dashboardSummary(counts)
+	workspaceSummary := dashboardSummary(workspaceCounts)
 
 	threadViews := make([]dashboardThreadView, 0, len(snapshot.Threads))
 	for _, thread := range snapshot.Threads {
@@ -553,13 +541,36 @@ func (s *server) dashboardAt(now time.Time, private bool) dashboardView {
 		overview[i].DOMID = dashboardDOMID("metric", overview[i].Name)
 	}
 	return dashboardView{
-		Summary:    summary,
-		Accounts:   accounts,
-		Workspaces: workspaces,
-		Overview:   overview,
-		Threads:    threadViews,
-		Events:     events,
+		Summary:          summary,
+		WorkspaceSummary: workspaceSummary,
+		Accounts:         accounts,
+		Workspaces:       workspaces,
+		Overview:         overview,
+		Threads:          threadViews,
+		Events:           events,
 	}
+}
+
+func dashboardSummary(counts map[accountStatus]int) []dashboardCount {
+	summary := make([]dashboardCount, 0, len(counts))
+	for _, item := range []struct {
+		status accountStatus
+		label  string
+	}{
+		{accountLive, "live"},
+		{accountPriority, "priority"},
+		{accountCredits, "credits"},
+		{accountChecking, "checking"},
+		{accountCooling, "cooling"},
+		{accountPaused, "paused"},
+		{accountNeedsReauth, "need reauth"},
+		{accountNotRouted, "not routed"},
+	} {
+		if count := counts[item.status]; count > 0 {
+			summary = append(summary, dashboardCount{Count: count, Label: item.label})
+		}
+	}
+	return summary
 }
 
 func newDashboardWorkspaceView(now time.Time, name string, account accountStatsResponse) dashboardWorkspaceView {
