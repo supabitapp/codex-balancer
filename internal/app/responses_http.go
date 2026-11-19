@@ -19,12 +19,37 @@ const (
 	maxHTTPResponseBody = 256 << 20
 	maxHTTPOutput       = 256 << 20
 	httpResponseIOWait  = 30 * time.Second
+	httpBodyReadLimit   = 10 * time.Minute
 	httpIdleWait        = 6 * time.Minute
 )
 
+type progressDeadlineBody struct {
+	io.ReadCloser
+	controller *http.ResponseController
+	limit      time.Time
+}
+
+func withProgressReadDeadline(controller *http.ResponseController, body io.ReadCloser) io.ReadCloser {
+	limit := time.Now().Add(httpBodyReadLimit)
+	controller.SetReadDeadline(time.Now().Add(httpResponseIOWait))
+	return progressDeadlineBody{ReadCloser: body, controller: controller, limit: limit}
+}
+
+func (b progressDeadlineBody) Read(data []byte) (int, error) {
+	n, err := b.ReadCloser.Read(data)
+	if n > 0 {
+		deadline := time.Now().Add(httpResponseIOWait)
+		if deadline.After(b.limit) {
+			deadline = b.limit
+		}
+		b.controller.SetReadDeadline(deadline)
+	}
+	return n, err
+}
+
 func (s *server) responsesHTTP(w http.ResponseWriter, request *http.Request) {
 	controller := http.NewResponseController(w)
-	controller.SetReadDeadline(time.Now().Add(httpResponseIOWait))
+	request.Body = withProgressReadDeadline(controller, request.Body)
 	apiKey, authorized := s.authorizeAPIKey(request)
 	observed := observation(request.Context())
 	observed.event(request.Context(), "authorization", attribute.Bool("authorized", authorized), attribute.Bool("auth_required", s.lookupAPIKey != nil))

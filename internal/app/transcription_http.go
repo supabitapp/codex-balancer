@@ -37,7 +37,7 @@ type transcriptionUpload struct {
 
 func (s *server) transcribe(w http.ResponseWriter, r *http.Request) {
 	controller := http.NewResponseController(w)
-	controller.SetReadDeadline(time.Now().Add(httpResponseIOWait))
+	r.Body = withProgressReadDeadline(controller, r.Body)
 	if _, authorized := s.authorizeAPIKey(r); !authorized {
 		w.Header().Set("Connection", "close")
 		writeHTTPResponseError(w, http.StatusUnauthorized, "missing or invalid bearer key")
