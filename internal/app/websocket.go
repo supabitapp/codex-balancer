@@ -8,13 +8,18 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
 )
 
-const responsesWebSocketBeta = "responses_websockets=2026-02-06"
+const (
+	responsesWebSocketBeta           = "responses_websockets=2026-02-06"
+	codexWebSocketMessageLimitHeader = "X-Codex-Websocket-Max-Message-Bytes"
+	fastModeRewriteHeadroom          = 1 << 10
+)
 
 var (
 	errNoAccountAvailable    = errors.New("no account available")
@@ -125,6 +130,7 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	if dial.resp != nil {
 		copyWebSocketHeaders(w.Header(), dial.resp.Header)
 	}
+	advertiseWebSocketMessageLimit(w.Header(), mode)
 	s.pool.clientUsage().writeHeaders(w.Header())
 	downstream, err := websocket.Accept(w, r, nil)
 	if err != nil {
@@ -137,6 +143,17 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 	downstream.SetReadLimit(maxWebSocketMessage)
 	dial.conn.SetReadLimit(maxWebSocketMessage)
 	newResponsesWebSocketRelay(s, websocketDownstream{Conn: downstream, responsesRedactor: redactor}, r, dial, route, apiKey, mode, changed).run()
+}
+
+func advertiseWebSocketMessageLimit(headers http.Header, mode fastMode) {
+	limit := maxWebSocketMessage
+	if upstream, err := strconv.Atoi(headers.Get(codexWebSocketMessageLimitHeader)); err == nil && upstream >= 0 {
+		limit = min(limit, upstream)
+	}
+	if mode.rewrites() {
+		limit = max(limit-fastModeRewriteHeadroom, 0)
+	}
+	headers.Set(codexWebSocketMessageLimitHeader, strconv.Itoa(limit))
 }
 
 func (s *server) websocketHandshake(w http.ResponseWriter, r *http.Request) bool {
