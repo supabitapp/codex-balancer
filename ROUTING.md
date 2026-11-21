@@ -389,6 +389,15 @@ The balancer forwards the original typed error event unchanged. Codex owns the
 socket reset, reconnects to the retained account, and replays the request. The
 balancer does not add a second reconnect path.
 
+## WebSocket message size
+
+Upstream advertises its per-message limit in the
+`x-codex-websocket-max-message-bytes` handshake header (128 MiB). Codex sends
+larger requests over HTTP without uploading them first. The balancer forwards
+the lower of the upstream limit and its own 256 MiB read limit, or its own limit
+when upstream sends none. While fast mode is `on` or `off`, it advertises 1 KiB
+less, because adding `service_tier` to a request makes it slightly larger.
+
 ## Failure policy
 
 - For a handshake network error or `5xx`, return that attempt without an

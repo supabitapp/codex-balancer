@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,8 +43,12 @@ func (m fastMode) description() string {
 	}
 }
 
+func (m fastMode) rewrites() bool {
+	return m == fastModeOn || m == fastModeOff
+}
+
 func (m fastMode) override(data []byte, tier string) ([]byte, string, error) {
-	if m != fastModeOn && m != fastModeOff {
+	if !m.rewrites() {
 		return data, tier, nil
 	}
 	if m == fastModeOn && canonicalServiceTier(tier) == priceModeUltrafast {
@@ -58,8 +63,13 @@ func (m fastMode) override(data []byte, tier string) ([]byte, string, error) {
 		return nil, "", err
 	}
 	fields["service_tier"], _ = json.Marshal(tier)
-	data, err := json.Marshal(fields)
-	return data, tier, err
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(fields); err != nil {
+		return nil, "", err
+	}
+	return bytes.TrimSuffix(encoded.Bytes(), []byte("\n")), tier, nil
 }
 
 // Closing a policy's notification channel reaches every relay that captured it,
