@@ -147,11 +147,11 @@ func (s *server) responsesWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func advertiseWebSocketMessageLimit(headers http.Header, mode fastMode) {
 	limit := maxWebSocketMessage
-	if upstream, err := strconv.Atoi(headers.Get(codexWebSocketMessageLimitHeader)); err == nil && upstream > 0 {
+	if upstream, err := strconv.Atoi(headers.Get(codexWebSocketMessageLimitHeader)); err == nil && upstream >= 0 {
 		limit = min(limit, upstream)
 	}
 	if mode.rewrites() {
-		limit -= fastModeRewriteHeadroom
+		limit = max(limit-fastModeRewriteHeadroom, 0)
 	}
 	headers.Set(codexWebSocketMessageLimitHeader, strconv.Itoa(limit))
 }

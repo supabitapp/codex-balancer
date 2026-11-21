@@ -22,6 +22,9 @@ func TestWebSocketAdvertisesMessageLimitWithinProxyLimits(t *testing.T) {
 		{"missing", "", fastModeDefault, maxWebSocketMessage},
 		{"invalid", "lots", fastModeDefault, maxWebSocketMessage},
 		{"above proxy", strconv.Itoa(1 << 30), fastModeDefault, maxWebSocketMessage},
+		{"zero", "0", fastModeDefault, 0},
+		{"negative", "-1", fastModeDefault, maxWebSocketMessage},
+		{"below headroom", "1", fastModeOn, 0},
 		{"fast rewrite", "134217728", fastModeOn, 128<<20 - fastModeRewriteHeadroom},
 		{"standard rewrite", "134217728", fastModeOff, 128<<20 - fastModeRewriteHeadroom},
 	} {
