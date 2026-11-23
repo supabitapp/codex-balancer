@@ -1592,3 +1592,27 @@ func waitForWebSocketCounts(t *testing.T, server *server, want map[string]int64)
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestResponsesWebSocketHeadersDropEdgeProxyHeaders(t *testing.T) {
+	inbound := http.Header{
+		"User-Agent":       {"codex"},
+		"Session_id":       {"session"},
+		"X-Codex-Window":   {"1"},
+		"Cdn-Loop":         {"cloudflare"},
+		"Cf-Connecting-Ip": {"203.0.113.1"},
+		"Cf-Ray":           {"abc-SIN"},
+		"X-Forwarded-For":  {"203.0.113.1"},
+		"X-Real-Ip":        {"203.0.113.1"},
+	}
+	headers, _ := responsesWebSocketHeaders(inbound, testAccount("a", 0))
+	for _, name := range []string{"Cdn-Loop", "Cf-Connecting-Ip", "Cf-Ray", "X-Forwarded-For", "X-Real-Ip"} {
+		if value := headers.Get(name); value != "" {
+			t.Fatalf("%s forwarded upstream: %q", name, value)
+		}
+	}
+	for _, name := range []string{"User-Agent", "Session_id", "X-Codex-Window", "OpenAI-Beta", "Authorization"} {
+		if headers.Get(name) == "" {
+			t.Fatalf("%s missing from upstream headers: %v", name, headers)
+		}
+	}
+}

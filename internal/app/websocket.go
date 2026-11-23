@@ -235,10 +235,7 @@ func responsesWebSocketURL(upstream string) (string, error) {
 }
 
 func responsesWebSocketHeaders(inbound http.Header, account *Account) (http.Header, authorizationRevision) {
-	headers := http.Header{}
-	copyWebSocketHeaders(headers, inbound)
-	headers.Del("Accept")
-	headers.Del("Content-Type")
+	headers := httpResponseRequestHeaders(inbound)
 	account.mu.Lock()
 	token := account.AccessToken
 	digest := accessTokenDigest(token)
